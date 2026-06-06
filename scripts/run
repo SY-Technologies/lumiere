@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR="${1:-build}"
+shift 2>/dev/null || :
+"$BUILD_DIR"/lumiere "$@"
