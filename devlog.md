@@ -1,5 +1,6 @@
 # I am Creating a (Francophone) Programming Language
 
+# Lumière — Devlog #1: The idea
 >Yeah, when I grow up, you know what I wanna be? Take a seat, let me tell you my ridiculous dreams
 — NF, When I Grow Up
 
@@ -20,3 +21,66 @@ Maybe this project will never see the light of day. Maybe it will not work. But 
 My first task is to design the syntax. I have gone back and forth on names more times than I would like to admit. But in the end, only one felt right:
 
 **Lumière.**
+
+
+# Lumière — Devlog #2: Designing the Syntax
+
+> *"I admit the lyrics are weak, I been workin' on 'em, I'll be good eventually, I understand you gotta crawl before you get to your feet" — NF, When I Grow Up*
+
+
+I have my first draft of keywords in. In a way, it was easy because this project has been brewing in my brain since last year. My mind tends to be fertile for this kind of thing and honestly I had a lot of fun with it. That said, the lyrics are weak right now and I know it. The lexer does not exist yet. The parser is a blank page. But hey, you gotta crawl before you get to your feet, and this is me crawling.
+
+The guiding principle was simple: keep the keyword set small. Go, Python, and Java were my main inspirations here. The fewer reserved words a language has, the less a new learner has to memorize before they can be productive, everything else lives in the standard library. I also wanted every keyword to be semantically meaningful in French. Not cryptic, not abbreviated, not lazy. If you can read French and you see a keyword, you should immediately understand what it does.
+
+I also went back and forth a lot on whether to include OOP constructs at all. It is a real design question because a full object model is not exactly a small keyword commitment. But I am biased toward OOP, I think in classes, I reach for interfaces naturally, and in the end I took my own bait. So Lumière has `classe`, `interface`, `réalise`, `remplace`, `public`, and `privé`. Familiar to anyone coming from Java, Kotlin, or C++.
+
+Now, the two things that actually made me spin my wheels.
+
+## The "this" Problem
+
+In most languages this is trivial. Python calls it `self`, C++ and Java call it `this`, Kotlin too. In French the natural equivalent is `soi`, which means oneself. I went with it initially. Then I stared at it next to `soit`, the variable declaration keyword, and immediately felt uneasy. Two keywords, one letter apart, both common. That is a bug waiting to happen and a readability trap.
+
+I landed on `ici`. It means "here", as in here, on this object. Is it perfect? No, and I will admit that. But it is unambiguous, it is short, and it does not collide with anything else. `ici` is only valid inside a bound method, at the top level or inside a free function it simply does not exist. It is the best I got for now, and I can live with that.
+
+## Booleans
+
+This one genuinely surprised me, I did not expect to spin my wheels here. The problem is that French has perfectly good words for true and false, `vrai` and `faux`, but I kept second guessing myself. Boolean keywords appear constantly, they sit in every condition, and I wanted them to feel native without throwing off a developer coming from another language.
+
+In the end I just came back to `vrai` and `faux` and committed. They are clean, they are short, they mean exactly what they say. I love them. No regrets.
+
+## The Full Keyword Table
+
+| Mot-clé      | Signification                          | Équivalent              |
+|--------------|----------------------------------------|-------------------------|
+| `soit`       | Variable declaration                   | `let / var / auto`      |
+| `fixe`       | Immutability modifier                  | `const / val`           |
+| `fonction`   | Function or method definition          | `fn / fun / def`        |
+| `retourne`   | Return a value                         | `return`                |
+| `classe`     | Class definition                       | `class`                 |
+| `interface`  | Interface definition                   | `interface`             |
+| `réalise`    | Implement an interface                 | `implements`            |
+| `remplace`   | Override a parent method               | `override`              |
+| `public`     | Visible outside the class              | `public`                |
+| `privé`      | Visible only inside the class          | `private`               |
+| `si`         | Conditional — if                       | `if`                    |
+| `sinon`      | Conditional — else                     | `else`                  |
+| `pour`       | For loop                               | `for`                   |
+| `chaque`     | Each — used with pour                  | `each`                  |
+| `dans`       | In — iteration keyword                 | `in`                    |
+| `tant que`   | While loop                             | `while`                 |
+| `vrai`       | Boolean true                           | `true`                  |
+| `faux`       | Boolean false                          | `false`                 |
+| `rien`       | Null / absence of value                | `null / nil / None`     |
+| `ici`        | Current receiver inside a class method | `self / this`           |
+| `en`         | Type cast operator                     | `as / cast`             |
+| `et`         | Logical AND                            | `&& / and`              |
+| `ou`         | Logical OR                             | `\|\| / or`             |
+| `non`        | Logical NOT                            | `! / not`               |
+| `arrêter`    | Break out of a loop                    | `break`                 |
+| `continuer`  | Continue to next iteration             | `continue`              |
+| `importer`   | Import a module                        | `import / use`          |
+| `comme`      | Import alias                           | `as`                    |
+| `essayer`    | Try block                              | `try`                   |
+| `attraper`   | Catch block                            | `catch`                 |
+| `finalement` | Finally block                          | `finally`               |
+| `lancer`     | Throw an error                         | `throw`                 |
