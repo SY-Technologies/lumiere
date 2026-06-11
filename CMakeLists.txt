@@ -27,10 +27,13 @@ endif()
 # -----------------------------
 
 add_library(lumiere ${LUMIERE_LIBRARY_TYPE}
-    src/lexer.cpp
-    src/token.cpp
-    src/parser.cpp
-    src/interpreter.cpp
+    src/lexer/lexer.cpp
+    src/lexer/token.cpp
+    src/lexer/scanner.cpp
+    src/lexer/tokenizer.cpp
+    src/parser/parser.cpp
+    src/interpreter/tree_walker.cpp
+    src/interpreter/vm.cpp
 )
 
 add_library(LUMIERE::lumiere ALIAS lumiere)
@@ -47,7 +50,9 @@ target_include_directories(lumiere
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
-        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/src/lexer
+        ${PROJECT_SOURCE_DIR}/src/parser
+        ${PROJECT_SOURCE_DIR}/src/interpreter
 )
 
 if(LUMIERE_ENABLE_WARNINGS)
