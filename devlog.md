@@ -84,3 +84,16 @@ In the end I just came back to `vrai` and `faux` and committed. They are clean, 
 | `attraper`   | Catch block                            | `catch`                 |
 | `finalement` | Finally block                          | `finally`               |
 | `lancer`     | Throw an error                         | `throw`                 |
+
+# Lumière - Devlog #3: Designing the Syntax (Wednesday, June 10th)
+-------------
+>Anybody wanna hear me rap? (No)
+>Come on, let me play a couple tracks (no)
+>Come on, I can spit it really fast (no)
+>You think I should throw this in the trash? (No)
+--NF, When I Grow Up
+---------------------
+
+At this point, I've read a lot of blog articles and book chapters trying to develop my knowledge of language design as much as possible. I landed on [this book](https://craftinginterpreters.com/), which I've enjoyed a lot so far and have been drawing serious ideas from. One of the key things I've learned is the performance difference between a tree-walking interpreter and bytecode compilation. Because I'm primarily doing this project to learn, I decided to design my architecture in a way that supports both tree-walking interpretation and bytecode compilation via a bespoke VM. For now, though, I'm implementing the tree-walking approach first.
+
+Another decision I made was to build the lexer and parser by hand. Back in university, we used ANTLR to get both for free after defining the grammar, but I think there's a lot of learning value in doing it from scratch. To keep things modular, I broke the lexer down into three parts: the Scanner, the Tokenizer, and the Lexer. The Scanner is responsible for taking the Lumière source code and moving through it character by character. The Tokenizer works hand-in-hand with the Scanner to detect and create tokens from the source code. The Lexer then composes these two to achieve its overall goal.
