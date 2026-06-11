@@ -1,0 +1,5 @@
+-- mon premier programme
+fonction principal() {
+    soit message = "Bonjour, monde!"
+    afficher(message)
+}
