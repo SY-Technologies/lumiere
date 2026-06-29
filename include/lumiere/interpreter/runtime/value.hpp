@@ -198,7 +198,7 @@ struct Value
 
     const std::string &as_texte() const
     {
-        return std::get<4>(data);
+        return std::get<std::string>(data);
     }
 
     std::shared_ptr<ListeData> as_liste() const
@@ -280,6 +280,8 @@ struct RuntimeFunctionBody
 
 struct LumiereFunction
 {
+    // Type of a native function handler: takes the runtime and native arguments,
+    // returns a Value.
     using NativeHandler = std::function<Value(IRuntime &, const NativeArgs &)>;
 
     std::string                     name;
@@ -289,7 +291,12 @@ struct LumiereFunction
     std::size_t                     min_arity = 0;
     std::size_t                     max_arity = 0;
 
+    //all functions that are not methods always have a receiver that is 'rien'
     bool is_method() const { return !receiver.is_rien(); }
+    // True when this function is implemented directly by a built-in C++ handler
+    // rather than executed from a Lumiere function body.
+    // A native function is a built-in function whose behavior is provided by the interpreter/runtime 
+    // itself, not by Lumiere source code.
     bool is_native() const { return static_cast<bool>(native_handler); }
 };
 

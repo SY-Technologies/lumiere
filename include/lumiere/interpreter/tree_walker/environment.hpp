@@ -138,6 +138,8 @@ private:
 class ScopeGuard
 {
 public:
+    // Reference to the caller's current environment pointer, so reassigning it
+    // here updates the original variable rather than a local copy.
     ScopeGuard(Environment *&current, std::shared_ptr<Environment> &current_owner)
         : m_current(current),
           m_current_owner(current_owner),
@@ -159,9 +161,21 @@ public:
     ScopeGuard &operator=(const ScopeGuard &) = delete;
 
 private:
+    // Reference to the caller's current Environment pointer, so the guard can
+    // switch the active scope and later restore it.
     Environment *&m_current;
+
+    // Reference to the caller's shared owner of the current Environment.
+    // This keeps the active scope alive and lets the guard restore it.
+    // without the owner, reassigning the pointer would leave the object out of reach and dangling
     std::shared_ptr<Environment> &m_current_owner;
-    Environment  *m_previous;
+
+    // Saved raw pointer to the previously active Environment before entering
+    // the new scope.
+    Environment *m_previous;
+
+    // Saved shared owner of the previously active Environment, used to keep
+    // the old scope alive and restore ownership when the guard is destroyed.
     std::shared_ptr<Environment> m_previous_owner;
 };
 
