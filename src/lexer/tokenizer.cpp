@@ -35,21 +35,6 @@ namespace lumiere
                 m_scanner.advance();
                 break;
 
-            case '-':
-                if (m_scanner.peek_next() == '-')
-                {
-                    // single-line comment -- consume until end of line
-                    while (!m_scanner.is_at_end() && m_scanner.peek() != '\n')
-                    {
-                        m_scanner.advance();
-                    }
-                }
-                else
-                {
-                    return; // it's a MOINS operator, not a comment
-                }
-                break;
-
             case '/':
                 if (m_scanner.peek_next() == '/')
                 {
@@ -267,6 +252,41 @@ namespace lumiere
             return error_token("'tant' sans 'que' — vouliez-vous dire 'tant que' ?");
         }
 
+        // special case: "agir" must be followed by whitespace and "selon"
+        if (word == "agir")
+        {
+            auto saved = m_scanner.save();
+
+            while (!m_scanner.is_at_end() && (m_scanner.peek() == ' ' || m_scanner.peek() == '\t'))
+            {
+                m_scanner.advance();
+            }
+
+            if (!m_scanner.is_at_end() && m_scanner.peek() == 's')
+            {
+                const std::string expected = "selon";
+                bool matches = true;
+
+                for (char ch : expected)
+                {
+                    if (m_scanner.is_at_end() || m_scanner.peek() != ch)
+                    {
+                        matches = false;
+                        break;
+                    }
+                    m_scanner.advance();
+                }
+
+                if (matches && (m_scanner.is_at_end() || !is_alpha_continue(static_cast<unsigned char>(m_scanner.peek()))))
+                {
+                    return make_token(TokenType::AGIR_SELON);
+                }
+            }
+
+            m_scanner.restore(saved);
+            return error_token("'agir' sans 'selon' — vouliez-vous dire 'agir selon' ?");
+        }
+
         return make_token(keyword_type(word));
     }
 
@@ -322,9 +342,11 @@ namespace lumiere
 
             // other
             {"ici", TokenType::ICI},
+            {"super", TokenType::SUPER},
             {"en", TokenType::EN},
             {"importer", TokenType::IMPORTER},
             {"comme", TokenType::COMME},
+            {"est", TokenType::EST},
 
             // logical operators
             {"et", TokenType::ET},

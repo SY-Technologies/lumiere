@@ -38,6 +38,7 @@ namespace lumiere
         CHAQUE,
         DANS,
         TANT_QUE,
+        AGIR_SELON,
         ARRETER,
         CONTINUER,
 
@@ -49,9 +50,11 @@ namespace lumiere
 
         // Keywords — other
         ICI,
+        SUPER,
         EN,
         IMPORTER,
         COMME,
+        EST,
 
         // Operators — arithmetic
         PLUS,

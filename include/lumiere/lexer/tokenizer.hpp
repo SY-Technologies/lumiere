@@ -44,8 +44,8 @@ namespace lumiere
          * Handles:
          *   - spaces, tabs, carriage returns
          *   - newlines (increments m_line, resets m_column)
-         *   - single-line comments starting with -- or //
-         *   - block comments delimited by  slash start and start slash
+         *   - single-line comments starting with //
+         *   - block comments delimited by slash-star and star-slash
          */
         void skip_whitespace_and_comments();
 
@@ -89,8 +89,8 @@ namespace lumiere
          * UTF-8 multibyte sequences for accented characters. Delegates to
          * keyword_type() to determine whether the result is a keyword or IDENT.
          *
-         * Also handles the two-word token TANT_QUE by peeking ahead after
-         * scanning "tant".
+         * Also handles the two-word tokens TANT_QUE and AGIR_SELON by
+         * peeking ahead after scanning "tant" or "agir".
          *
          * @return The appropriate keyword token, or IDENT.
          */
