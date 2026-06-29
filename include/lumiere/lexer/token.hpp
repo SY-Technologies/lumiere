@@ -50,7 +50,7 @@ namespace lumiere
 
         // Keywords — other
         ICI,
-        SUPER,
+        PARENT,
         EN,
         IMPORTER,
         COMME,

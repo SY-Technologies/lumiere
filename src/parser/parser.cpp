@@ -1083,8 +1083,8 @@ namespace lumiere
             return std::make_unique<IdentifierExpr>(previous());
         }
 
-        // ── Super
-        if (match({TokenType::SUPER}))
+        // ── Parent
+        if (match({TokenType::PARENT}))
         {
             return std::make_unique<IdentifierExpr>(previous());
         }

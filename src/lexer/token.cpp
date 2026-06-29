@@ -48,7 +48,7 @@ namespace lumiere
 
             // Keywords — other
             {TokenType::ICI, "ICI"},
-            {TokenType::SUPER, "SUPER"},
+            {TokenType::PARENT, "PARENT"},
             {TokenType::EN, "EN"},
             {TokenType::IMPORTER, "IMPORTER"},
             {TokenType::COMME, "COMME"},

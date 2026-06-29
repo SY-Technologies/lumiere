@@ -342,7 +342,7 @@ namespace lumiere
 
             // other
             {"ici", TokenType::ICI},
-            {"super", TokenType::SUPER},
+            {"parent", TokenType::PARENT},
             {"en", TokenType::EN},
             {"importer", TokenType::IMPORTER},
             {"comme", TokenType::COMME},
