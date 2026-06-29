@@ -36,6 +36,7 @@ namespace lumiere
             {TokenType::CHAQUE, "CHAQUE"},
             {TokenType::DANS, "DANS"},
             {TokenType::TANT_QUE, "TANT_QUE"},
+            {TokenType::AGIR_SELON, "AGIR_SELON"},
             {TokenType::ARRETER, "ARRETER"},
             {TokenType::CONTINUER, "CONTINUER"},
 
@@ -47,9 +48,11 @@ namespace lumiere
 
             // Keywords — other
             {TokenType::ICI, "ICI"},
+            {TokenType::PARENT, "PARENT"},
             {TokenType::EN, "EN"},
             {TokenType::IMPORTER, "IMPORTER"},
             {TokenType::COMME, "COMME"},
+            {TokenType::EST, "EST"},
 
             // Operators — arithmetic
             {TokenType::PLUS, "PLUS"},
