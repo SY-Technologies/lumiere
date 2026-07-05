@@ -11,6 +11,9 @@ namespace lumiere
 namespace
 {
 
+// These trim helpers are plain C++ string utilities. They intentionally use
+// std::isspace over raw bytes, so the whitespace rules here are C/C++ rules,
+// not a richer Unicode-aware text model.
 std::string trim_left_copy(const std::string &text)
 {
     std::size_t begin = 0;

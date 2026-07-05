@@ -3,6 +3,10 @@
 namespace lumiere
 {
 
+// These helpers intentionally keep stdlib entrypoints strict and uniform.
+// Most stdlib files delegate argument-count and basic type checks here so
+// maintainers do not have to hand-roll slightly different error behavior in
+// every module.
 void stdlib_expect_positional(IRuntime &runtime,
                               const std::vector<RuntimeArgument> &args,
                               std::size_t expected,

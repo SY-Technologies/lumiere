@@ -1,5 +1,20 @@
--- mon premier programme
+// Programme de bienvenue avec une petite fonction utilitaire.
+
+fonction calculer_moyenne(nombres: Liste[Entier]) -> Décimal {
+    soit somme: Entier = 0
+
+    pour chaque nombre dans nombres {
+        somme = somme + nombre
+    }
+
+    retourne somme / nombres.taille()
+}
+
 fonction principal() {
-    soit message = "Bonjour, monde!"
-    afficher(message)
+    afficher("Bonjour, monde!")
+
+    soit nombres = [43, 43, 53, 3, 13, 5, 132]
+    soit moyenne = calculer_moyenne(nombres)
+
+    afficher("La moyenne des nombres est: " + moyenne)
 }

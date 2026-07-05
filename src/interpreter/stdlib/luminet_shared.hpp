@@ -157,6 +157,21 @@ namespace lumiere
                                    const std::string &context,
                                    const RuntimeSite &site);
     std::string socket_error_text(const std::string &context);
+    void close_socket_fd(int &fd);
+    ssize_t socket_send_bytes(int fd, const void *data, std::size_t size, int flags = 0);
+    ssize_t socket_sendto_bytes(int fd,
+                                const void *data,
+                                std::size_t size,
+                                int flags,
+                                const sockaddr *addr,
+                                socklen_t addrlen);
+    ssize_t socket_recv_bytes(int fd, void *buffer, std::size_t size, int flags = 0);
+    ssize_t socket_recvfrom_bytes(int fd,
+                                  void *buffer,
+                                  std::size_t size,
+                                  int flags,
+                                  sockaddr *addr,
+                                  socklen_t *addrlen);
     void raise_network_error(IRuntime &runtime,
                              const RuntimeSite &site,
                              const std::string &context,
