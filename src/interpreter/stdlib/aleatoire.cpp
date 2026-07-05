@@ -12,6 +12,8 @@ namespace
 
 struct AleatoireModuleState : RuntimeModuleState
 {
+    // The generator lives in module state so repeated imports share the same
+    // pseudorandom stream, and graine() can deterministically reset it.
     std::mt19937_64 generator{std::random_device{}()};
 };
 
@@ -21,7 +23,6 @@ void register_aleatoire_module(Module &module, const NativeFunctionFactory &make
 {
     auto state = std::make_shared<AleatoireModuleState>();
     module.state = state;
-
     stdlib_bind_public_function(
         module,
         make_native_function,

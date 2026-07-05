@@ -9,6 +9,8 @@ namespace
 
 std::string path_to_text(const std::filesystem::path &path)
 {
+    // Normalize separators when crossing back into Lumiere Texte values so
+    // tests and user code do not depend on host-platform path spelling.
     std::filesystem::path normalized = path;
     normalized.make_preferred();
     return normalized.string();

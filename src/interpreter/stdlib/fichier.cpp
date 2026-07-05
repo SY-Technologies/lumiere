@@ -15,6 +15,8 @@ namespace
 
 std::string format_file_time_utc(const std::filesystem::file_time_type &time)
 {
+    // Lumiere exposes file timestamps as stable UTC text so tests and callers
+    // do not depend on the machine's local timezone configuration.
     const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
         time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
     const std::time_t raw_time = std::chrono::system_clock::to_time_t(system_time);
@@ -262,7 +264,9 @@ void register_fichier_module(Module &module, const NativeFunctionFactory &make_n
                 {
                     values->elements.push_back(Value::texte(entry));
                 }
-                return Value::liste(std::move(values));
+                Value result = Value::liste(std::move(values));
+                runtime.annotate_value(result, "Liste[Texte]", call_site);
+                return result;
             }
             catch (const std::filesystem::filesystem_error &error)
             {
@@ -293,7 +297,9 @@ void register_fichier_module(Module &module, const NativeFunctionFactory &make_n
                 {
                     values->elements.push_back(Value::texte(entry));
                 }
-                return Value::liste(std::move(values));
+                Value result = Value::liste(std::move(values));
+                runtime.annotate_value(result, "Liste[Texte]", call_site);
+                return result;
             }
             catch (const std::filesystem::filesystem_error &error)
             {

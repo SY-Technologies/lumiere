@@ -14,6 +14,9 @@ namespace
 
 using TimePointMs = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>;
 
+// Temps uses lightweight typed objects instead of introducing dedicated C++
+// runtime classes for durations and instants. The "__type" / "__millis"
+// convention is the contract that every helper in this file relies on.
 std::shared_ptr<LumiereObject> make_typed_object(const std::string &type_name, int64_t millis)
 {
     auto object = std::make_shared<LumiereObject>();

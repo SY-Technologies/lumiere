@@ -250,7 +250,6 @@ void register_lumitest_module(Module &module,
                               std::shared_ptr<LumiTestModuleState> state)
 {
     module.state = state;
-
     auto root = std::make_shared<LumiereObject>();
     auto context_object = std::make_shared<LumiereObject>();
     const Value context_value = Value::objet(context_object);
