@@ -8,6 +8,8 @@ namespace
 
 bool is_continuation(unsigned char byte)
 {
+    // Continuation bytes always have the `10xxxxxx` shape. We keep this check
+    // separate because every multi-byte branch relies on it.
     return (byte & 0xC0) == 0x80;
 }
 
@@ -24,6 +26,8 @@ std::optional<std::size_t> decode_one(std::string_view text, std::size_t offset,
     std::size_t width = 0;
     char32_t value = 0;
 
+    // The leading byte tells us both how many bytes this character occupies
+    // and which payload bits belong to the scalar value itself.
     if (first <= 0x7F)
     {
         width = 1;
@@ -49,6 +53,7 @@ std::optional<std::size_t> decode_one(std::string_view text, std::size_t offset,
         return std::nullopt;
     }
 
+    // Reject truncated input before reading continuation bytes.
     if (offset + width > text.size())
     {
         return std::nullopt;
@@ -61,9 +66,13 @@ std::optional<std::size_t> decode_one(std::string_view text, std::size_t offset,
         {
             return std::nullopt;
         }
+        // Each continuation byte contributes six payload bits.
         value = (value << 6) | (byte & 0x3F);
     }
 
+    // Reject non-canonical encodings and Unicode values that are not valid
+    // scalar values. This keeps one character mapped to one canonical UTF-8
+    // byte sequence and avoids accepting UTF-16 surrogate halves.
     if ((width == 2 && value < 0x80) ||
         (width == 3 && value < 0x800) ||
         (width == 4 && value < 0x10000) ||
@@ -81,6 +90,8 @@ std::optional<char32_t> decode_single_character(std::string_view text)
 {
     char32_t character = 0;
     const std::optional<std::size_t> next = decode_one(text, 0, character);
+    // A valid first character is not enough here: callers use this helper for
+    // places where the entire string must be exactly one Unicode character.
     if (!next.has_value() || *next != text.size())
     {
         return std::nullopt;
@@ -101,6 +112,8 @@ std::optional<char32_t> character_at(std::string_view text, std::size_t index)
         {
             return std::nullopt;
         }
+        // `current` counts Unicode characters, not byte positions, so callers
+        // can index user-visible symbols in multi-byte text.
         if (current == index)
         {
             return character;
@@ -125,6 +138,8 @@ std::optional<std::size_t> character_count(std::string_view text)
         {
             return std::nullopt;
         }
+        // Advancing by the returned byte offset lets us count characters
+        // without materializing substrings or decoding twice.
         offset = *next;
         ++count;
     }
@@ -142,6 +157,8 @@ std::string encode_character(char32_t character)
     }
     else if (character <= 0x7FF)
     {
+        // For multi-byte encodings, the leading byte carries the high payload
+        // bits and the remaining bytes store six bits each in `10xxxxxx` form.
         result.push_back(static_cast<char>(0xC0 | ((character >> 6) & 0x1F)));
         result.push_back(static_cast<char>(0x80 | (character & 0x3F)));
     }
