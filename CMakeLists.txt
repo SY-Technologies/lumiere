@@ -16,17 +16,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LUMIERE_BUILD_SHARED  "Build Lumière as a shared library (OFF builds static)." OFF)
 option(LUMIERE_ENABLE_WARNINGS "Enable strict compiler warnings." ON)
-
-set(LUMIERE_LIBRARY_TYPE STATIC)
-if(LUMIERE_BUILD_SHARED)
-    set(LUMIERE_LIBRARY_TYPE SHARED)
+set(LUMIERE_ENABLE_LUMINET_DEFAULT ON)
+if(WIN32)
+    set(LUMIERE_ENABLE_LUMINET_DEFAULT OFF)
 endif()
+option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABLE_LUMINET_DEFAULT})
 
-# -----------------------------
-# Library target
-# -----------------------------
-
-add_library(lumiere ${LUMIERE_LIBRARY_TYPE}
+set(LUMIERE_LIBRARY_SOURCES
     src/lexer/lexer.cpp
     src/lexer/token.cpp
     src/lexer/scanner.cpp
@@ -42,17 +38,6 @@ add_library(lumiere ${LUMIERE_LIBRARY_TYPE}
     src/interpreter/stdlib/aleatoire.cpp
     src/interpreter/stdlib/lumitest.cpp
     src/interpreter/stdlib/luminet.cpp
-    src/interpreter/stdlib/luminet/foundation.cpp
-    src/interpreter/stdlib/luminet/protocol.cpp
-    src/interpreter/stdlib/luminet/http_values.cpp
-    src/interpreter/stdlib/luminet/canal_runtime.cpp
-    src/interpreter/stdlib/luminet/tcp_runtime.cpp
-    src/interpreter/stdlib/luminet/http_server.cpp
-    src/interpreter/stdlib/luminet/udp_runtime.cpp
-    src/interpreter/stdlib/luminet/shared.cpp
-    src/interpreter/stdlib/luminet/address_dns.cpp
-    src/interpreter/stdlib/luminet/tcp_udp.cpp
-    src/interpreter/stdlib/luminet/http_canal.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp
@@ -65,6 +50,33 @@ add_library(lumiere ${LUMIERE_LIBRARY_TYPE}
     src/interpreter/runtime/value.cpp
     src/interpreter/vm/vm.cpp
 )
+
+if(LUMIERE_ENABLE_LUMINET)
+    list(APPEND LUMIERE_LIBRARY_SOURCES
+        src/interpreter/stdlib/luminet/foundation.cpp
+        src/interpreter/stdlib/luminet/protocol.cpp
+        src/interpreter/stdlib/luminet/http_values.cpp
+        src/interpreter/stdlib/luminet/canal_runtime.cpp
+        src/interpreter/stdlib/luminet/tcp_runtime.cpp
+        src/interpreter/stdlib/luminet/http_server.cpp
+        src/interpreter/stdlib/luminet/udp_runtime.cpp
+        src/interpreter/stdlib/luminet/shared.cpp
+        src/interpreter/stdlib/luminet/address_dns.cpp
+        src/interpreter/stdlib/luminet/tcp_udp.cpp
+        src/interpreter/stdlib/luminet/http_canal.cpp
+    )
+endif()
+
+set(LUMIERE_LIBRARY_TYPE STATIC)
+if(LUMIERE_BUILD_SHARED)
+    set(LUMIERE_LIBRARY_TYPE SHARED)
+endif()
+
+# -----------------------------
+# Library target
+# -----------------------------
+
+add_library(lumiere ${LUMIERE_LIBRARY_TYPE} ${LUMIERE_LIBRARY_SOURCES})
 
 add_library(LUMIERE::lumiere ALIAS lumiere)
 
@@ -93,6 +105,8 @@ if(LUMIERE_ENABLE_WARNINGS)
         target_compile_options(lumiere PRIVATE /W4)
     endif()
 endif()
+
+target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMINET=$<BOOL:${LUMIERE_ENABLE_LUMINET}>)
 
 # -----------------------------
 # CLI executable

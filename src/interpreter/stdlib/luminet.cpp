@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
+#include "lumiere/interpreter/stdlib/helpers.hpp"
 
 #if LUMIERE_ENABLE_LUMINET
 #include "luminet_shared.hpp"
