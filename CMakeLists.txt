@@ -105,6 +105,7 @@ add_executable(LUMIERE::lumiere_cli ALIAS lumiere_cli)
 set_target_properties(lumiere_cli PROPERTIES OUTPUT_NAME lumiere)
 
 target_link_libraries(lumiere_cli PRIVATE LUMIERE::lumiere)
+target_compile_definitions(lumiere_cli PRIVATE LUMIERE_VERSION="${PROJECT_VERSION}")
 
 # -----------------------------
 # Install + package export
@@ -142,6 +143,18 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/LUMIEREConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LUMIERE
 )
+
+set(CPACK_PACKAGE_NAME "lumiere")
+set(CPACK_PACKAGE_VENDOR "Lumiere")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Lumiere language runtime and tooling")
+set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/README.md")
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+include(CPack)
 
 # -----------------------------
 # Tests
@@ -202,6 +215,7 @@ if(BUILD_TESTING)
         target_compile_definitions(lumiere_unit_tests
             PRIVATE
                 LUMIERE_CLI_PATH="$<TARGET_FILE:lumiere_cli>"
+                LUMIERE_VERSION="${PROJECT_VERSION}"
         )
 
         target_link_libraries(lumiere_unit_tests

@@ -18,3 +18,7 @@ compile_commands.json
 # direnv (local overrides only)
 .envrc.local
 .envrc.private
+
+/cmake-build-debug
+/docs/
+/examples/
