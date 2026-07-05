@@ -32,8 +32,38 @@ add_library(lumiere ${LUMIERE_LIBRARY_TYPE}
     src/lexer/scanner.cpp
     src/lexer/tokenizer.cpp
     src/parser/parser.cpp
-    src/interpreter/tree_walker.cpp
-    src/interpreter/vm.cpp
+    src/parser/utf8.cpp
+    src/interpreter/stdlib_helpers.cpp
+    src/interpreter/stdlib/chemin.cpp
+    src/interpreter/stdlib/fichier.cpp
+    src/interpreter/stdlib/texte.cpp
+    src/interpreter/stdlib/maths.cpp
+    src/interpreter/stdlib/temps.cpp
+    src/interpreter/stdlib/aleatoire.cpp
+    src/interpreter/stdlib/lumitest.cpp
+    src/interpreter/stdlib/luminet.cpp
+    src/interpreter/stdlib/luminet/foundation.cpp
+    src/interpreter/stdlib/luminet/protocol.cpp
+    src/interpreter/stdlib/luminet/http_values.cpp
+    src/interpreter/stdlib/luminet/canal_runtime.cpp
+    src/interpreter/stdlib/luminet/tcp_runtime.cpp
+    src/interpreter/stdlib/luminet/http_server.cpp
+    src/interpreter/stdlib/luminet/udp_runtime.cpp
+    src/interpreter/stdlib/luminet/shared.cpp
+    src/interpreter/stdlib/luminet/address_dns.cpp
+    src/interpreter/stdlib/luminet/tcp_udp.cpp
+    src/interpreter/stdlib/luminet/http_canal.cpp
+    src/interpreter/tree_walker/tree_walker.cpp
+    src/interpreter/tree_walker/tree_walker_core.cpp
+    src/interpreter/tree_walker/tree_walker_expr.cpp
+    src/interpreter/tree_walker/tree_walker_modules.cpp
+    src/interpreter/tree_walker/tree_walker_objects.cpp
+    src/interpreter/tree_walker/tree_walker_runtime.cpp
+    src/interpreter/tree_walker/tree_walker_sequences.cpp
+    src/interpreter/tree_walker/tree_walker_stmt.cpp
+    src/interpreter/tree_walker/tree_walker_types.cpp
+    src/interpreter/runtime/value.cpp
+    src/interpreter/vm/vm.cpp
 )
 
 add_library(LUMIERE::lumiere ALIAS lumiere)
@@ -52,6 +82,7 @@ target_include_directories(lumiere
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src/lexer
         ${PROJECT_SOURCE_DIR}/src/parser
+        ${PROJECT_SOURCE_DIR}/src/interpreter/tree_walker
         ${PROJECT_SOURCE_DIR}/src/interpreter
 )
 
@@ -120,35 +151,70 @@ include(CTest)
 
 if(BUILD_TESTING)
     include(FetchContent)
-    FetchContent_Declare(
-        googletest
-        URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.zip
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
-
-    add_executable(lumiere_unit_tests
+    set(LUMIERE_TEST_SOURCES
         tests/test_lexer.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp
+        tests/test_cli_integration.cpp
     )
 
-    target_compile_definitions(lumiere_unit_tests
-        PRIVATE
-            LUMIERE_INTERPRETER_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/interpreter"
-            LUMIERE_PARSER_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/parser"
-    )
+    set(LUMIERE_HAS_TEST_CASES FALSE)
+    foreach(test_source IN LISTS LUMIERE_TEST_SOURCES)
+        if(EXISTS "${PROJECT_SOURCE_DIR}/${test_source}")
+            file(SIZE "${PROJECT_SOURCE_DIR}/${test_source}" test_source_size)
+            if(test_source_size GREATER 0)
+                set(LUMIERE_HAS_TEST_CASES TRUE)
+                break()
+            endif()
+        endif()
+    endforeach()
 
-    target_link_libraries(lumiere_unit_tests
-        PRIVATE
-            LUMIERE::lumiere
-            GTest::gtest_main
-    )
+    if(LUMIERE_HAS_TEST_CASES)
+        FetchContent_Declare(
+            googletest
+            URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.zip
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
 
-    include(GoogleTest)
-    gtest_discover_tests(lumiere_unit_tests)
+        add_executable(lumiere_unit_tests
+            ${LUMIERE_TEST_SOURCES}
+        )
+
+        add_dependencies(lumiere_unit_tests lumiere_cli)
+
+        if(EXISTS "${PROJECT_SOURCE_DIR}/tests/fixtures/interpreter")
+            target_compile_definitions(lumiere_unit_tests
+                PRIVATE
+                    LUMIERE_INTERPRETER_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/interpreter"
+            )
+        endif()
+
+        if(EXISTS "${PROJECT_SOURCE_DIR}/tests/fixtures/parser")
+            target_compile_definitions(lumiere_unit_tests
+                PRIVATE
+                    LUMIERE_PARSER_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/parser"
+            )
+        endif()
+
+        target_compile_definitions(lumiere_unit_tests
+            PRIVATE
+                LUMIERE_CLI_PATH="$<TARGET_FILE:lumiere_cli>"
+        )
+
+        target_link_libraries(lumiere_unit_tests
+            PRIVATE
+                LUMIERE::lumiere
+                GTest::gtest_main
+        )
+
+        include(GoogleTest)
+        gtest_discover_tests(lumiere_unit_tests)
+    else()
+        message(STATUS "Skipping lumiere_unit_tests: test sources are empty.")
+    endif()
 endif()
 
 # -----------------------------
