@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/runtime/value.hpp"
+#include "lumiere/parser/utf8.hpp"
 
 #include <sstream>
 
@@ -36,7 +37,7 @@ std::string Value::to_string() const
         out << (as_logique() ? "vrai" : "faux");
         break;
     case Type::SYMBOLE:
-        out << static_cast<char>(as_symbole());
+        out << utf8::encode_character(as_symbole());
         break;
     case Type::TEXTE:
         out << as_texte();

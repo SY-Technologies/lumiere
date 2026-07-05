@@ -280,8 +280,10 @@ struct RuntimeFunctionBody
 
 struct LumiereFunction
 {
-    // Type of a native function handler: takes the runtime and native arguments,
-    // returns a Value.
+    // Generic runtime callback signature for native callables.
+    // This is the backend-facing signature used by `LumiereFunction` itself:
+    // the callee receives the active runtime plus the normalized call bundle
+    // (`receiver`, evaluated arguments, and source site).
     using NativeHandler = std::function<Value(IRuntime &, const NativeArgs &)>;
 
     std::string                     name;
@@ -293,10 +295,16 @@ struct LumiereFunction
 
     //all functions that are not methods always have a receiver that is 'rien'
     bool is_method() const { return !receiver.is_rien(); }
-    // True when this function is implemented directly by a built-in C++ handler
-    // rather than executed from a Lumiere function body.
-    // A native function is a built-in function whose behavior is provided by the interpreter/runtime 
-    // itself, not by Lumiere source code.
+    // True when this function is implemented directly by a C++ handler instead
+    // of by walking a Lumiere AST body.
+    //
+    // Examples of native functions:
+    // - builtins such as `afficher(...)`
+    // - stdlib methods exposed from C++ such as `texte.majuscules()`
+    //
+    // Examples of non-native functions:
+    // - `fonction principal() { ... }`
+    // - `soit doubler = fonction(x: Entier) -> Entier { retourne x * 2 }`
     bool is_native() const { return static_cast<bool>(native_handler); }
 };
 
