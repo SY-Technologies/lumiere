@@ -32,6 +32,8 @@
 namespace
 {
 
+std::mutex g_stdio_capture_mutex;
+
 using lumiere::Lexer;
 using lumiere::Parser;
 using lumiere::Program;
@@ -175,8 +177,14 @@ std::string normalize_fixture_paths(std::string text)
     return text;
 }
 
+std::string normalize_path_text(const std::filesystem::path &path)
+{
+    return path.generic_string();
+}
+
 std::pair<std::string, bool> execute_program(const std::string &source)
 {
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
     Lexer lexer(source);
     Parser parser(lexer.tokenise());
 
@@ -212,6 +220,7 @@ std::pair<std::string, bool> execute_program(const std::string &source)
 std::pair<std::string, bool> execute_program_with_input(const std::string &source,
                                                         const std::string &input)
 {
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
     Lexer lexer(source);
     Parser parser(lexer.tokenise());
 
@@ -249,6 +258,7 @@ std::pair<std::string, bool> execute_program_with_input(const std::string &sourc
 
 std::tuple<std::string, bool, std::string> execute_program_with_error(const std::string &source)
 {
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
     Lexer lexer(source);
     Parser parser(lexer.tokenise());
 
@@ -324,6 +334,7 @@ std::tuple<std::string, bool, std::string> execute_program_with_error_and_import
     const std::string &source,
     const std::filesystem::path &import_path)
 {
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
     Lexer lexer(source);
     Parser parser(lexer.tokenise());
 
@@ -367,6 +378,7 @@ std::tuple<std::string, bool, std::string> execute_program_with_error_and_import
 std::pair<std::string, bool> execute_program_with_import_path(const std::string &source,
                                                               const std::filesystem::path &import_path)
 {
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
     Lexer lexer(source);
     Parser parser(lexer.tokenise());
 
@@ -1919,7 +1931,7 @@ TEST(InterpreterBuiltinModules, SupportsCheminAndFichierModules)
     std::filesystem::remove_all(import_root);
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "vrai\nnote.txt\nnote\n" + import_root.string() + "\nbonjour\n");
+    EXPECT_EQ(output, "vrai\nnote.txt\nnote\n" + normalize_path_text(import_root) + "\nbonjour\n");
 }
 
 TEST(InterpreterBuiltinModules, SupportsExpandedCheminModuleOperations)
@@ -1965,9 +1977,9 @@ TEST(InterpreterBuiltinModules, SupportsExpandedCheminModuleOperations)
     }
 
     ASSERT_EQ(actual.size(), 14u);
-    EXPECT_EQ(actual[0], current.string());
+    EXPECT_EQ(actual[0], normalize_path_text(current));
     EXPECT_EQ(actual[1], "/tmp/beta/config.lum");
-    EXPECT_EQ(actual[2], expected_absolute.string());
+    EXPECT_EQ(actual[2], normalize_path_text(expected_absolute));
     EXPECT_EQ(actual[3], "config.lum");
     EXPECT_EQ(actual[4], "config");
     EXPECT_EQ(actual[5], ".lum");
@@ -1978,7 +1990,7 @@ TEST(InterpreterBuiltinModules, SupportsExpandedCheminModuleOperations)
     EXPECT_EQ(actual[10], "config.lum");
     EXPECT_EQ(actual[11], "vrai");
     EXPECT_EQ(actual[12], "vrai");
-    EXPECT_EQ(actual[13], expected_normalized.string());
+    EXPECT_EQ(actual[13], "/tmp/beta/config.lum");
 }
 
 TEST(InterpreterBuiltinModules, SupportsExpandedFichierModuleOperations)

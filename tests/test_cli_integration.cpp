@@ -74,10 +74,9 @@ CommandResult run_cli(const std::string &args,
     const std::filesystem::path stderr_path = working_dir / "stderr.txt";
 #ifdef _WIN32
     const std::string command =
-        "cmd /C " +
-        shell_quote(shell_quote(LUMIERE_CLI_PATH) + " " + args +
-                    " > " + shell_quote(stdout_path.string()) +
-                    " 2> " + shell_quote(stderr_path.string()));
+        "cmd /C \"\"" + std::string(LUMIERE_CLI_PATH) + "\" " + args +
+        " > \"" + stdout_path.string() +
+        "\" 2> \"" + stderr_path.string() + "\"\"";
 #else
     const std::string command =
         shell_quote(LUMIERE_CLI_PATH) + " " + args +
