@@ -8,6 +8,9 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef interface
+#undef interface
+#endif
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
