@@ -9,11 +9,14 @@ namespace
 
 std::string path_to_text(const std::filesystem::path &path)
 {
-    // Normalize separators when crossing back into Lumiere Texte values so
-    // tests and user code do not depend on host-platform path spelling.
-    std::filesystem::path normalized = path;
-    normalized.make_preferred();
-    return normalized.string();
+    // Expose paths in a stable slash-separated form so Lumiere programs do not
+    // depend on the host platform's separator spelling.
+    return path.generic_string();
+}
+
+bool is_lumiere_absolute(const std::filesystem::path &path)
+{
+    return path.is_absolute() || (!path.root_directory().empty() && path.root_name().empty());
 }
 
 }
@@ -133,7 +136,7 @@ void register_chemin_module(Module &module, const NativeFunctionFactory &make_na
             {
                 const std::string part_text = path_to_text(part);
                 if (!part_text.empty() &&
-                    part_text != std::string(1, std::filesystem::path::preferred_separator))
+                    part_text != "/")
                 {
                     parts->elements.push_back(Value::texte(part_text));
                 }
@@ -152,7 +155,7 @@ void register_chemin_module(Module &module, const NativeFunctionFactory &make_na
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Chemin.est_absolu", call_site);
-            return Value::logique(path.is_absolute());
+            return Value::logique(is_lumiere_absolute(path));
         });
 
     stdlib_bind_public_function(

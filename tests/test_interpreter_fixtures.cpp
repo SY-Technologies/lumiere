@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <mutex>
 #ifdef _WIN32
 #define NOMINMAX
 #include <winsock2.h>
@@ -47,11 +48,30 @@ using lumiere::TreeWalker;
 using TestSocket = SOCKET;
 constexpr TestSocket kInvalidTestSocket = INVALID_SOCKET;
 using TestRecvSize = int;
+
+void initialize_test_socket_platform()
+{
+    static std::once_flag winsock_once;
+    std::call_once(winsock_once, []() {
+        WSADATA wsa_data{};
+        ::WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    });
+}
 #else
 using TestSocket = int;
 constexpr TestSocket kInvalidTestSocket = -1;
 using TestRecvSize = ssize_t;
+
+void initialize_test_socket_platform()
+{
+}
 #endif
+
+TestSocket test_open_socket(int family, int type, int protocol)
+{
+    initialize_test_socket_platform();
+    return ::socket(family, type, protocol);
+}
 
 bool test_socket_valid(TestSocket socket)
 {
@@ -2849,7 +2869,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         if (!test_socket_valid(server_fd))
         {
             return "socket";
@@ -3075,7 +3095,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         if (!test_socket_valid(server_fd))
         {
             return "socket";
@@ -3161,7 +3181,7 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         if (!test_socket_valid(server_fd))
         {
             return "socket";
@@ -3256,7 +3276,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
         "  serveur.écouter(\"127.0.0.1\", " ;
 
     auto server_future = std::async(std::launch::async, [source_prefix = server_source, promise = std::move(port_promise)]() mutable {
-        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3276,7 +3296,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    const TestSocket client_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
     ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -3323,7 +3343,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise), html_path]() mutable {
-        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3356,7 +3376,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    const TestSocket client_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
     ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -3397,7 +3417,7 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
-        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3430,7 +3450,7 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    const TestSocket client_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
     ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -3486,7 +3506,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
         "  serveur.écouter(\"127.0.0.1\", ";
 
     auto server_future = std::async(std::launch::async, [source_prefix = server_source, promise = std::move(port_promise)]() mutable {
-        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3538,7 +3558,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
         "}\n";
 
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
-        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3570,7 +3590,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    const TestSocket client_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
     ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -3633,7 +3653,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         if (!test_socket_valid(server_fd))
         {
             return "socket";
@@ -3715,7 +3735,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
         if (!test_socket_valid(server_fd))
         {
             return "socket";
