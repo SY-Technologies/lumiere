@@ -1,6 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUILD_DIR="${1:-build}"
-shift 2>/dev/null || :
-"$BUILD_DIR"/lumiere "$@"
+BUILD_DIR="build"
+USE_VM=0
+FILE=""
+ARGS=()
+
+while (($# > 0)); do
+    case "$1" in
+        --build-dir)
+            BUILD_DIR="${2:?missing value for --build-dir}"
+            shift 2
+            ;;
+        --vm)
+            USE_VM=1
+            shift
+            ;;
+        --)
+            shift
+            while (($# > 0)); do
+                ARGS+=("$1")
+                shift
+            done
+            ;;
+        *)
+            if [[ -z "$FILE" ]]; then
+                FILE="$1"
+            else
+                ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$FILE" ]]; then
+    echo "usage: scripts/run [--build-dir dir] [--vm] <file.lum>" >&2
+    exit 1
+fi
+
+CMD=("$BUILD_DIR/lumiere" "--run")
+if [[ "$USE_VM" -eq 1 ]]; then
+    CMD+=("--vm")
+fi
+CMD+=("$FILE")
+CMD+=("${ARGS[@]}")
+
+"${CMD[@]}"
