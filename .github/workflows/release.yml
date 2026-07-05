@@ -19,19 +19,26 @@ jobs:
           - os: ubuntu-latest
             label: linux-x86_64
             cpack_generator: TGZ
+            cmake_extra_args: ""
           - os: macos-13
             label: macos-x86_64
             cpack_generator: TGZ
+            cmake_extra_args: ""
           - os: macos-latest
             label: macos-arm64
             cpack_generator: TGZ
+            cmake_extra_args: ""
+          - os: windows-latest
+            label: windows-x86_64
+            cpack_generator: ZIP
+            cmake_extra_args: "-DLUMIERE_ENABLE_LUMINET=OFF"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON ${{ matrix.cmake_extra_args }}
 
       - name: Build
         run: cmake --build build --config Release

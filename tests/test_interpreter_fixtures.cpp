@@ -4,12 +4,18 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#ifdef _WIN32
+#define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sstream>
-#include <string>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
+#include <sstream>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -27,6 +33,12 @@ using lumiere::Parser;
 using lumiere::Program;
 using lumiere::RuntimeError;
 using lumiere::TreeWalker;
+
+#if !LUMIERE_ENABLE_LUMINET
+#define SKIP_IF_LUMINET_DISABLED() GTEST_SKIP() << "LumiNet is disabled on this platform"
+#else
+#define SKIP_IF_LUMINET_DISABLED() do {} while (false)
+#endif
 
 std::string read_text_file(const std::filesystem::path &path)
 {
@@ -48,6 +60,30 @@ std::string trim_trailing_whitespace(std::string text)
 bool file_exists(const std::filesystem::path &path)
 {
     return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
+}
+
+std::string normalize_fixture_paths(std::string text)
+{
+    std::replace(text.begin(), text.end(), '\\', '/');
+    const std::string marker = "/tests/fixtures/interpreter/";
+    std::size_t marker_pos = text.find(marker);
+    while (marker_pos != std::string::npos)
+    {
+        std::size_t start = marker_pos;
+        while (start > 0)
+        {
+            const char ch = text[start - 1];
+            if (ch == '"' || ch == '(' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t')
+            {
+                break;
+            }
+            --start;
+        }
+
+        text.erase(start, marker_pos - start);
+        marker_pos = text.find(marker, start + marker.size());
+    }
+    return text;
 }
 
 std::pair<std::string, bool> execute_program(const std::string &source)
@@ -367,8 +403,8 @@ TEST(InterpreterFixtures, MatchesFixtureExpectations)
         if (std::filesystem::exists(stderr_path))
         {
             EXPECT_FALSE(completed) << case_dir.string();
-            EXPECT_EQ(trim_trailing_whitespace(error_message),
-                      trim_trailing_whitespace(read_text_file(stderr_path)))
+            EXPECT_EQ(trim_trailing_whitespace(normalize_fixture_paths(error_message)),
+                      trim_trailing_whitespace(normalize_fixture_paths(read_text_file(stderr_path))))
                 << case_dir.string();
         }
         else if (std::filesystem::exists(stderr_contains_path))
@@ -2700,6 +2736,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidAleatoireUsage)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetAdresseAndDns)
 {
+    SKIP_IF_LUMINET_DISABLED();
     const auto [output, completed, error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
@@ -2739,6 +2776,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetAdresseAndDns)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -2830,6 +2868,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 {
+    SKIP_IF_LUMINET_DISABLED();
     const int port = 19124;
     const std::string receiver_source =
         "importer LumiNet\n"
@@ -2869,6 +2908,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 
 TEST(InterpreterBuiltinModules, RejectsInvalidLumiNetUsage)
 {
+    SKIP_IF_LUMINET_DISABLED();
     struct Case
     {
         std::string source;
@@ -2963,6 +3003,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidLumiNetUsage)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3049,6 +3090,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
 
 TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3126,6 +3168,7 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3204,6 +3247,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlContentType)
 {
+    SKIP_IF_LUMINET_DISABLED();
     const std::filesystem::path html_path = std::filesystem::temp_directory_path() / "lumiere_http_server_page.html";
     {
         std::ofstream html_file(html_path, std::ios::binary | std::ios::trunc);
@@ -3285,6 +3329,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
 
 TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
@@ -3356,6 +3401,7 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3417,6 +3463,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3521,6 +3568,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 
 TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrade)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3603,6 +3651,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
 {
+    SKIP_IF_LUMINET_DISABLED();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
