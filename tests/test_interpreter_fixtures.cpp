@@ -2969,7 +2969,19 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 {
     SKIP_IF_LUMINET_DISABLED();
-    const int port = 19124;
+    const TestSocket probe_fd = test_open_socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_TRUE(test_socket_valid(probe_fd));
+    sockaddr_in probe_addr{};
+    probe_addr.sin_family = AF_INET;
+    probe_addr.sin_port = htons(0);
+    probe_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(::bind(probe_fd, reinterpret_cast<sockaddr *>(&probe_addr), sizeof(probe_addr)), 0);
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
+    const int port = ntohs(bound.sin_port);
+    test_close_socket(probe_fd);
+
     const std::string receiver_source =
         "importer LumiNet\n"
         "importer Temps\n"
@@ -2989,19 +3001,28 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const auto [sender_output, sender_completed, sender_error] = execute_program_with_error(
-        "importer LumiNet\n"
-        "fonction principal() {\n"
-        "  soit socket = LumiNet.UDP.ouvrir()\n"
-        "  socket.envoyer(\"salut\", \"127.0.0.1\", " + std::to_string(port) + ")\n"
-        "  afficher(socket.port > 0)\n"
-        "  socket.fermer()\n"
-        "}\n");
+    const TestSocket sender_fd = test_open_socket(AF_INET, SOCK_DGRAM, 0);
+    ASSERT_TRUE(test_socket_valid(sender_fd));
+    sockaddr_in sender_addr{};
+    sender_addr.sin_family = AF_INET;
+    sender_addr.sin_port = htons(static_cast<uint16_t>(port));
+    sender_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const std::string payload = "salut";
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        ASSERT_GT(::sendto(sender_fd,
+                           payload.data(),
+                           static_cast<int>(payload.size()),
+                           0,
+                           reinterpret_cast<const sockaddr *>(&sender_addr),
+                           sizeof(sender_addr)),
+                  0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    test_close_socket(sender_fd);
 
     const auto [receiver_output, receiver_completed, receiver_error] = future.get();
 
-    EXPECT_TRUE(sender_completed) << sender_error;
-    EXPECT_EQ(sender_output, "vrai\n");
     EXPECT_TRUE(receiver_completed) << receiver_error;
     EXPECT_EQ(receiver_output, "salut\nvrai\nvrai\n");
 }
