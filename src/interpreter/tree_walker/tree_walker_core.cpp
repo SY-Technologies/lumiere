@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <limits>
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/parser/utf8.hpp"
 
 namespace lumiere
 {
@@ -174,13 +175,13 @@ namespace lumiere
     {
         if (!callee.is_fonction())
         {
-            raise_runtime_error(args.site, "la valeur appelée n'est pas une fonction");
+            raise_runtime_error(args.site, "appel impossible: la valeur cible doit etre une Fonction");
         }
 
         const auto function = callee.as_fonction();
         if (function == nullptr)
         {
-            raise_runtime_error(args.site, "fonction invalide");
+            raise_runtime_error(args.site, "appel impossible: la fonction cible est invalide");
         }
 
         if (function->is_native())
@@ -190,7 +191,7 @@ namespace lumiere
 
         if (args.arguments == nullptr)
         {
-            raise_runtime_error(args.site, "arguments d'appel absents");
+            raise_runtime_error(args.site, "appel impossible: les arguments evalues sont absents");
         }
 
         return call_user_function(function, *args.arguments, args.site);
@@ -428,9 +429,9 @@ namespace lumiere
         {
             if (min_count == max_count)
             {
-                throw_runtime_error(call_site, signature + " requiert exactement " + std::to_string(min_count) + " argument(s)");
+                throw_runtime_error(call_site, signature + " attend exactement " + std::to_string(min_count) + " argument(s)");
             }
-            throw_runtime_error(call_site, signature + " requiert entre " + std::to_string(min_count) +
+            throw_runtime_error(call_site, signature + " attend entre " + std::to_string(min_count) +
                                                " et " + std::to_string(max_count) + " arguments");
         }
 
@@ -438,7 +439,7 @@ namespace lumiere
         {
             if (!arg.name.empty())
             {
-                throw_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
+                throw_runtime_error(call_site, signature + " n'accepte pas d'arguments nommes");
             }
         }
     }
@@ -638,7 +639,7 @@ namespace lumiere
     {
         if (!is_iterable_value(iterable))
         {
-            throw_runtime_error(site, "cet object n'est pas iterable");
+            throw_runtime_error(site, "cette valeur n'est pas iterable");
         }
 
         if (const auto *elements = sequence_elements(iterable))
@@ -649,14 +650,23 @@ namespace lumiere
         if (iterable.is_texte())
         {
             std::vector<Value> items;
-            for (unsigned char ch : iterable.as_texte())
+            const std::string &text = iterable.as_texte();
+            std::size_t offset = 0;
+            while (offset < text.size())
             {
-                items.push_back(Value::symbole(static_cast<char32_t>(ch)));
+                char32_t character = 0;
+                const std::optional<std::size_t> next = utf8::decode_one(text, offset, character);
+                if (!next.has_value())
+                {
+                    throw_runtime_error(site, "texte UTF-8 invalide");
+                }
+                items.push_back(Value::symbole(character));
+                offset = *next;
             }
             return items;
         }
 
-        throw_runtime_error(site, "cet object n'est pas iterable");
+        throw_runtime_error(site, "cette valeur n'est pas iterable");
     }
 
     bool TreeWalker::matches_catch_clause(const CatchClause &clause, const Value &thrown_value) const
@@ -673,7 +683,7 @@ namespace lumiere
     {
         if (!value.is_entier())
         {
-            throw_runtime_error(token, "une valeur de type Entier est requise");
+            throw_runtime_error(token, "une valeur de type Entier est attendue");
         }
         return value.as_entier();
     }
@@ -689,14 +699,14 @@ namespace lumiere
             return static_cast<double>(value.as_entier());
         }
 
-        throw_runtime_error(token, "une valeur numerique est requise");
+        throw_runtime_error(token, "une valeur numerique est attendue");
     }
 
     std::string TreeWalker::assert_texte(const Value &value, const Token &token) const
     {
         if (!value.is_texte())
         {
-            throw_runtime_error(token, "une valeur de type Texte est requise");
+            throw_runtime_error(token, "une valeur de type Texte est attendue");
         }
         return value.as_texte();
     }
