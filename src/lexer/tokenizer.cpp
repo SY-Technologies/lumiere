@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include "lumiere/lexer/tokenizer.hpp"
 #include "lumiere/lexer/scanner.hpp"
+#include "lumiere/parser/utf8.hpp"
 
 namespace lumiere
 {
@@ -175,18 +176,24 @@ namespace lumiere
             return error_token("symbole non terminé — caractère attendu");
         }
 
-        // consume the character — could be a UTF-8 multibyte sequence
-        m_scanner.advance();
-
-        // consume any remaining bytes of a multibyte sequence
-        while (!m_scanner.is_at_end() && (static_cast<unsigned char>(m_scanner.peek()) >= 0x80))
+        std::string symbol_bytes;
+        while (!m_scanner.is_at_end() && m_scanner.peek() != '\'')
         {
-            m_scanner.advance();
+            if (m_scanner.peek() == '\n')
+            {
+                return error_token("symbole non terminé — \"'\" attendu");
+            }
+            symbol_bytes.push_back(m_scanner.advance());
         }
 
         if (m_scanner.is_at_end() || m_scanner.peek() != '\'')
         {
             return error_token("symbole non terminé — \"'\" attendu");
+        }
+
+        if (!utf8::decode_single_character(symbol_bytes).has_value())
+        {
+            return error_token("symbole invalide — un seul caractère Unicode est attendu");
         }
 
         m_scanner.advance(); // consume closing '
