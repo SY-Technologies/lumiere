@@ -1,5 +1,6 @@
 #include "../luminet_shared.hpp"
 
+#include <cerrno>
 #include <functional>
 #include <memory>
 #include <netdb.h>
@@ -79,8 +80,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
         if (state->fd >= 0)
         {
             ::shutdown(state->fd, SHUT_RDWR);
-            ::close(state->fd);
-            state->fd = -1;
+            close_socket_fd(state->fd);
         }
         return Value::rien();
     };
@@ -126,8 +126,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 {
                     break;
                 }
-                ::close(listen_fd);
-                listen_fd = -1;
+                close_socket_fd(listen_fd);
             }
             if (listen_fd < 0)
             {
@@ -144,6 +143,10 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 const int client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
                 if (client_fd < 0)
                 {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
                     if (state->stopped)
                     {
                         break;
@@ -151,147 +154,155 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                     raise_network_error(runtime, native_args.site, "ServeurHTTP.écouter", socket_error_text("acceptation"));
                 }
 
-                const std::string raw = recv_http_message(runtime, client_fd, "ServeurHTTP.écouter", native_args.site);
-                HttpRequestData request = parse_http_request(runtime, raw, "ServeurHTTP.écouter", native_args.site);
-                auto writer_state = std::make_shared<HttpResponseWriterState>();
-                writer_state->fd = client_fd;
-                Value request_value;
-                Value response_value;
-
-                HttpRoute *matched_route = nullptr;
-                std::vector<std::pair<std::string, std::string>> route_params;
-                for (auto &route : state->routes)
+                int active_client_fd = client_fd;
+                try
                 {
-                    if (route.method == request.method &&
-                        match_route_pattern(route.pattern, request.path, route_params))
+                    const std::string raw = recv_http_message(runtime, active_client_fd, "ServeurHTTP.écouter", native_args.site);
+                    HttpRequestData request = parse_http_request(runtime, raw, "ServeurHTTP.écouter", native_args.site);
+                    auto writer_state = std::make_shared<HttpResponseWriterState>();
+                    writer_state->fd = active_client_fd;
+                    Value request_value;
+                    Value response_value;
+
+                    HttpRoute *matched_route = nullptr;
+                    std::vector<std::pair<std::string, std::string>> route_params;
+                    for (auto &route : state->routes)
                     {
-                        matched_route = &route;
-                        request.route_params = route_params;
-                        break;
+                        if (route.method == request.method &&
+                            match_route_pattern(route.pattern, request.path, route_params))
+                        {
+                            matched_route = &route;
+                            request.route_params = route_params;
+                            break;
+                        }
                     }
-                }
 
-                request_value = make_http_request_value(runtime, request, make_native_function, native_args.site);
-                response_value = make_http_response_writer_value(runtime, writer_state, make_native_function, native_args.site);
+                    request_value = make_http_request_value(runtime, request, make_native_function, native_args.site);
+                    response_value = make_http_response_writer_value(runtime, writer_state, make_native_function, native_args.site);
 
-                Value canal_handler = Value::rien();
-                for (const auto &route : state->canal_routes)
-                {
-                    std::vector<std::pair<std::string, std::string>> ws_params;
-                    if (match_route_pattern(route.first, request.path, ws_params))
+                    Value canal_handler = Value::rien();
+                    for (const auto &route : state->canal_routes)
                     {
-                        request.route_params = ws_params;
-                        canal_handler = route.second;
-                        request_value = make_http_request_value(runtime, request, make_native_function, native_args.site);
-                        break;
+                        std::vector<std::pair<std::string, std::string>> ws_params;
+                        if (match_route_pattern(route.first, request.path, ws_params))
+                        {
+                            request.route_params = ws_params;
+                            canal_handler = route.second;
+                            request_value = make_http_request_value(runtime, request, make_native_function, native_args.site);
+                            break;
+                        }
                     }
-                }
 
-                if (canal_handler.is_fonction())
-                {
-                    const std::string upgrade = to_lower_ascii(header_value_or_empty(request.headers, "Upgrade"));
-                    const bool has_upgrade = header_contains_token(request.headers, "Connection", "Upgrade");
-                    const std::string key = header_value_or_empty(request.headers, "Sec-WebSocket-Key");
-                    if (request.method != "GET" || upgrade != "websocket" || !has_upgrade || key.empty())
+                    if (canal_handler.is_fonction())
                     {
-                        send_http_response(runtime, writer_state, 400, "Requête Canal invalide", {}, "ServeurHTTP.canal", native_args.site);
-                        ::close(client_fd);
+                        const std::string upgrade = to_lower_ascii(header_value_or_empty(request.headers, "Upgrade"));
+                        const bool has_upgrade = header_contains_token(request.headers, "Connection", "Upgrade");
+                        const std::string key = header_value_or_empty(request.headers, "Sec-WebSocket-Key");
+                        if (request.method != "GET" || upgrade != "websocket" || !has_upgrade || key.empty())
+                        {
+                            send_http_response(runtime, writer_state, 400, "Requête Canal invalide", {}, "ServeurHTTP.canal", native_args.site);
+                            close_socket_fd(active_client_fd);
+                            continue;
+                        }
+                        const std::string handshake =
+                            "HTTP/1.1 101 Switching Protocols\r\n"
+                            "Upgrade: websocket\r\n"
+                            "Connection: Upgrade\r\n"
+                            "Sec-WebSocket-Accept: " + websocket_accept_key(key) + "\r\n\r\n";
+                        send_all(runtime,
+                                 active_client_fd,
+                                 reinterpret_cast<const unsigned char *>(handshake.data()),
+                                 handshake.size(),
+                                 "ServeurHTTP.canal",
+                                 native_args.site);
+                        writer_state->sent = true;
+
+                        auto canal_state = std::make_shared<CanalClientState>();
+                        canal_state->fd = active_client_fd;
+                        canal_state->client_side = false;
+                        canal_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
+                        Value canal_client = make_canal_client_value(runtime, canal_state, make_native_function, native_args.site);
+                        std::vector<RuntimeArgument> cb_args = {RuntimeArgument{"", canal_client}};
+                        runtime.call(canal_handler, NativeArgs{nullptr, &cb_args, native_args.site});
+                        run_canal_loop(runtime, canal_state, false, Value::rien(), Value::rien(), Value::rien(), canal_client, native_args.site);
+                        if (canal_state->fd >= 0)
+                        {
+                            close_socket_fd(canal_state->fd);
+                        }
+                        active_client_fd = -1;
                         continue;
                     }
-                    const std::string handshake =
-                        "HTTP/1.1 101 Switching Protocols\r\n"
-                        "Upgrade: websocket\r\n"
-                        "Connection: Upgrade\r\n"
-                        "Sec-WebSocket-Accept: " + websocket_accept_key(key) + "\r\n\r\n";
-                    send_all(runtime,
-                             client_fd,
-                             reinterpret_cast<const unsigned char *>(handshake.data()),
-                             handshake.size(),
-                             "ServeurHTTP.canal",
-                             native_args.site);
-                    writer_state->sent = true;
 
-                    auto canal_state = std::make_shared<CanalClientState>();
-                    canal_state->fd = client_fd;
-                    canal_state->client_side = false;
-                    canal_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
-                    Value canal_client = make_canal_client_value(runtime, canal_state, make_native_function, native_args.site);
-                    std::vector<RuntimeArgument> cb_args = {RuntimeArgument{"", canal_client}};
-                    runtime.call(canal_handler, NativeArgs{nullptr, &cb_args, native_args.site});
-                    run_canal_loop(runtime, canal_state, false, Value::rien(), Value::rien(), Value::rien(), canal_client, native_args.site);
-                    if (canal_state->fd >= 0)
-                    {
-                        ::close(canal_state->fd);
-                        canal_state->fd = -1;
-                    }
-                    continue;
-                }
-
-                std::function<void(std::size_t)> run_chain;
-                run_chain = [&](std::size_t index) {
-                    if (writer_state->sent)
-                    {
-                        return;
-                    }
-                    if (index < state->middleware.size())
-                    {
-                        auto proceeded = std::make_shared<bool>(false);
-                        Value suivant = Value::fonction(make_native_function(
-                            [proceeded](IRuntime &inner_runtime, const NativeArgs &inner_args) -> Value {
-                                stdlib_expect_positional(inner_runtime, *inner_args.arguments, 0, "Middleware.suivant", inner_args.site);
-                                *proceeded = true;
-                                return Value::rien();
-                            }));
-                        std::vector<RuntimeArgument> cb_args = {
-                            RuntimeArgument{"", request_value},
-                            RuntimeArgument{"", response_value},
-                            RuntimeArgument{"", suivant},
-                        };
-                        runtime.call(state->middleware[index], NativeArgs{nullptr, &cb_args, native_args.site});
-                        if (*proceeded)
+                    std::function<void(std::size_t)> run_chain;
+                    run_chain = [&](std::size_t index) {
+                        if (writer_state->sent)
                         {
-                            run_chain(index + 1);
+                            return;
                         }
-                        return;
-                    }
+                        if (index < state->middleware.size())
+                        {
+                            auto proceeded = std::make_shared<bool>(false);
+                            Value suivant = Value::fonction(make_native_function(
+                                [proceeded](IRuntime &inner_runtime, const NativeArgs &inner_args) -> Value {
+                                    stdlib_expect_positional(inner_runtime, *inner_args.arguments, 0, "Middleware.suivant", inner_args.site);
+                                    *proceeded = true;
+                                    return Value::rien();
+                                }));
+                            std::vector<RuntimeArgument> cb_args = {
+                                RuntimeArgument{"", request_value},
+                                RuntimeArgument{"", response_value},
+                                RuntimeArgument{"", suivant},
+                            };
+                            runtime.call(state->middleware[index], NativeArgs{nullptr, &cb_args, native_args.site});
+                            if (*proceeded)
+                            {
+                                run_chain(index + 1);
+                            }
+                            return;
+                        }
 
-                    if (matched_route != nullptr)
+                        if (matched_route != nullptr)
+                        {
+                            std::vector<RuntimeArgument> cb_args = {
+                                RuntimeArgument{"", request_value},
+                                RuntimeArgument{"", response_value},
+                            };
+                            runtime.call(matched_route->handler, NativeArgs{nullptr, &cb_args, native_args.site});
+                            return;
+                        }
+
+                        send_http_response(runtime,
+                                           writer_state,
+                                           404,
+                                           "Introuvable",
+                                           {},
+                                           "ServeurHTTP.écouter",
+                                           native_args.site);
+                    };
+
+                    run_chain(0);
+                    if (!writer_state->sent)
                     {
-                        std::vector<RuntimeArgument> cb_args = {
-                            RuntimeArgument{"", request_value},
-                            RuntimeArgument{"", response_value},
-                        };
-                        runtime.call(matched_route->handler, NativeArgs{nullptr, &cb_args, native_args.site});
-                        return;
+                        send_http_response(runtime,
+                                           writer_state,
+                                           204,
+                                           "",
+                                           {},
+                                           "ServeurHTTP.écouter",
+                                           native_args.site);
                     }
-
-                    send_http_response(runtime,
-                                       writer_state,
-                                       404,
-                                       "Introuvable",
-                                       {},
-                                       "ServeurHTTP.écouter",
-                                       native_args.site);
-                };
-
-                run_chain(0);
-                if (!writer_state->sent)
-                {
-                    send_http_response(runtime,
-                                       writer_state,
-                                       204,
-                                       "",
-                                       {},
-                                       "ServeurHTTP.écouter",
-                                       native_args.site);
+                    close_socket_fd(active_client_fd);
                 }
-                ::close(client_fd);
+                catch (...)
+                {
+                    close_socket_fd(active_client_fd);
+                    throw;
+                }
             }
 
             if (state->fd >= 0)
             {
-                ::close(state->fd);
-                state->fd = -1;
+                close_socket_fd(state->fd);
             }
 
             return Value::rien();

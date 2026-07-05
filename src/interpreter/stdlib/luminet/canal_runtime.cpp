@@ -1,5 +1,6 @@
 #include "../luminet_shared.hpp"
 
+#include <cerrno>
 #include <memory>
 #include <netdb.h>
 #include <string>
@@ -167,8 +168,7 @@ Value make_canal_client_value(IRuntime &runtime,
             state->closed = true;
             if (state->fd >= 0)
             {
-                ::close(state->fd);
-                state->fd = -1;
+                close_socket_fd(state->fd);
             }
             return Value::rien();
         });
@@ -229,8 +229,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
         if (state->fd >= 0)
         {
             ::shutdown(state->fd, SHUT_RDWR);
-            ::close(state->fd);
-            state->fd = -1;
+            close_socket_fd(state->fd);
         }
         return Value::rien();
     };
@@ -273,8 +272,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                 {
                     break;
                 }
-                ::close(listen_fd);
-                listen_fd = -1;
+                close_socket_fd(listen_fd);
             }
             if (listen_fd < 0)
             {
@@ -290,6 +288,10 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                 const int client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
                 if (client_fd < 0)
                 {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
                     if (state->stopped)
                     {
                         break;
@@ -297,60 +299,68 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                     raise_network_error(runtime, native_args.site, "ServeurCanal.écouter", socket_error_text("acceptation"));
                 }
 
-                const std::string raw = recv_http_message(runtime, client_fd, "ServeurCanal.écouter", native_args.site);
-                const HttpRequestData request = parse_http_request(runtime, raw, "ServeurCanal.écouter", native_args.site);
-                const std::string upgrade = to_lower_ascii(header_value_or_empty(request.headers, "Upgrade"));
-                const bool has_upgrade = header_contains_token(request.headers, "Connection", "Upgrade");
-                const std::string key = header_value_or_empty(request.headers, "Sec-WebSocket-Key");
-                if (request.method != "GET" || upgrade != "websocket" || !has_upgrade || key.empty())
+                int active_client_fd = client_fd;
+                try
                 {
-                    const std::string response =
-                        "HTTP/1.1 400 Bad Request\r\n"
-                        "Content-Length: 0\r\n"
-                        "Connection: close\r\n\r\n";
+                    const std::string raw = recv_http_message(runtime, active_client_fd, "ServeurCanal.écouter", native_args.site);
+                    const HttpRequestData request = parse_http_request(runtime, raw, "ServeurCanal.écouter", native_args.site);
+                    const std::string upgrade = to_lower_ascii(header_value_or_empty(request.headers, "Upgrade"));
+                    const bool has_upgrade = header_contains_token(request.headers, "Connection", "Upgrade");
+                    const std::string key = header_value_or_empty(request.headers, "Sec-WebSocket-Key");
+                    if (request.method != "GET" || upgrade != "websocket" || !has_upgrade || key.empty())
+                    {
+                        const std::string response =
+                            "HTTP/1.1 400 Bad Request\r\n"
+                            "Content-Length: 0\r\n"
+                            "Connection: close\r\n\r\n";
+                        send_all(runtime,
+                                 active_client_fd,
+                                 reinterpret_cast<const unsigned char *>(response.data()),
+                                 response.size(),
+                                 "ServeurCanal.écouter",
+                                 native_args.site);
+                        close_socket_fd(active_client_fd);
+                        continue;
+                    }
+                    const std::string handshake =
+                        "HTTP/1.1 101 Switching Protocols\r\n"
+                        "Upgrade: websocket\r\n"
+                        "Connection: Upgrade\r\n"
+                        "Sec-WebSocket-Accept: " + websocket_accept_key(key) + "\r\n\r\n";
                     send_all(runtime,
-                             client_fd,
-                             reinterpret_cast<const unsigned char *>(response.data()),
-                             response.size(),
+                             active_client_fd,
+                             reinterpret_cast<const unsigned char *>(handshake.data()),
+                             handshake.size(),
                              "ServeurCanal.écouter",
                              native_args.site);
-                    ::close(client_fd);
-                    continue;
-                }
-                const std::string handshake =
-                    "HTTP/1.1 101 Switching Protocols\r\n"
-                    "Upgrade: websocket\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Sec-WebSocket-Accept: " + websocket_accept_key(key) + "\r\n\r\n";
-                send_all(runtime,
-                         client_fd,
-                         reinterpret_cast<const unsigned char *>(handshake.data()),
-                         handshake.size(),
-                         "ServeurCanal.écouter",
-                         native_args.site);
 
-                auto client_state = std::make_shared<CanalClientState>();
-                client_state->fd = client_fd;
-                client_state->client_side = false;
-                client_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
-                Value client = make_canal_client_value(runtime, client_state, make_native_function, native_args.site);
-                if (state->on_connection.is_fonction())
-                {
-                    std::vector<RuntimeArgument> cb_args = {RuntimeArgument{"", client}};
-                    runtime.call(state->on_connection, NativeArgs{nullptr, &cb_args, native_args.site});
+                    auto client_state = std::make_shared<CanalClientState>();
+                    client_state->fd = active_client_fd;
+                    client_state->client_side = false;
+                    client_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
+                    Value client = make_canal_client_value(runtime, client_state, make_native_function, native_args.site);
+                    if (state->on_connection.is_fonction())
+                    {
+                        std::vector<RuntimeArgument> cb_args = {RuntimeArgument{"", client}};
+                        runtime.call(state->on_connection, NativeArgs{nullptr, &cb_args, native_args.site});
+                    }
+                    run_canal_loop(runtime, client_state, true, state->on_message, state->on_disconnect, state->on_error, client, native_args.site);
+                    if (client_state->fd >= 0)
+                    {
+                        close_socket_fd(client_state->fd);
+                    }
+                    active_client_fd = -1;
                 }
-                run_canal_loop(runtime, client_state, true, state->on_message, state->on_disconnect, state->on_error, client, native_args.site);
-                if (client_state->fd >= 0)
+                catch (...)
                 {
-                    ::close(client_state->fd);
-                    client_state->fd = -1;
+                    close_socket_fd(active_client_fd);
+                    throw;
                 }
             }
 
             if (state->fd >= 0)
             {
-                ::close(state->fd);
-                state->fd = -1;
+                close_socket_fd(state->fd);
             }
             return Value::rien();
         });

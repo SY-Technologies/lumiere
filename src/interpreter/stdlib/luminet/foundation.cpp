@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 
 namespace lumiere
 {
@@ -53,6 +54,85 @@ int64_t expect_duration_millis(IRuntime &runtime,
 std::string socket_error_text(const std::string &context)
 {
     return context + ": " + std::strerror(errno);
+}
+
+void close_socket_fd(int &fd)
+{
+    if (fd >= 0)
+    {
+        ::close(fd);
+        fd = -1;
+    }
+}
+
+ssize_t socket_send_bytes(int fd, const void *data, std::size_t size, int flags)
+{
+    for (;;)
+    {
+#ifdef MSG_NOSIGNAL
+        const ssize_t result = ::send(fd, data, size, flags | MSG_NOSIGNAL);
+#else
+        const ssize_t result = ::send(fd, data, size, flags);
+#endif
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        return result;
+    }
+}
+
+ssize_t socket_sendto_bytes(int fd,
+                            const void *data,
+                            std::size_t size,
+                            int flags,
+                            const sockaddr *addr,
+                            socklen_t addrlen)
+{
+    for (;;)
+    {
+#ifdef MSG_NOSIGNAL
+        const ssize_t result = ::sendto(fd, data, size, flags | MSG_NOSIGNAL, addr, addrlen);
+#else
+        const ssize_t result = ::sendto(fd, data, size, flags, addr, addrlen);
+#endif
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        return result;
+    }
+}
+
+ssize_t socket_recv_bytes(int fd, void *buffer, std::size_t size, int flags)
+{
+    for (;;)
+    {
+        const ssize_t result = ::recv(fd, buffer, size, flags);
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        return result;
+    }
+}
+
+ssize_t socket_recvfrom_bytes(int fd,
+                              void *buffer,
+                              std::size_t size,
+                              int flags,
+                              sockaddr *addr,
+                              socklen_t *addrlen)
+{
+    for (;;)
+    {
+        const ssize_t result = ::recvfrom(fd, buffer, size, flags, addr, addrlen);
+        if (result < 0 && errno == EINTR)
+        {
+            continue;
+        }
+        return result;
+    }
 }
 
 void raise_network_error(IRuntime &runtime,

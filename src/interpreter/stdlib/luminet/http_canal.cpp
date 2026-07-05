@@ -86,53 +86,59 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             {
                 break;
             }
-            ::close(fd);
-            fd = -1;
+            close_socket_fd(fd);
         }
         if (fd < 0)
         {
             raise_network_error(runtime, native_args.site, signature, socket_error_text("connexion"));
         }
-
-        std::ostringstream request;
-        request << method << " " << parsed.target << " HTTP/1.1\r\n";
-        request << "Host: " << parsed.host << "\r\n";
-        request << "Connection: close\r\n";
-        bool has_length = false;
-        for (const auto &header : headers)
+        try
         {
-            if (to_lower_ascii(header.first) == "content-length")
+            std::ostringstream request;
+            request << method << " " << parsed.target << " HTTP/1.1\r\n";
+            request << "Host: " << parsed.host << "\r\n";
+            request << "Connection: close\r\n";
+            bool has_length = false;
+            for (const auto &header : headers)
             {
-                has_length = true;
+                if (to_lower_ascii(header.first) == "content-length")
+                {
+                    has_length = true;
+                }
+                request << header.first << ": " << header.second << "\r\n";
             }
-            request << header.first << ": " << header.second << "\r\n";
-        }
-        if (!body.empty() && !has_length)
-        {
-            request << "Content-Length: " << body.size() << "\r\n";
-        }
-        request << "\r\n";
-        request << body;
-        const std::string payload = request.str();
-        send_all(runtime,
-                 fd,
-                 reinterpret_cast<const unsigned char *>(payload.data()),
-                 payload.size(),
-                 signature,
-                 native_args.site);
-        const std::string raw_response = recv_http_message(runtime, fd, signature, native_args.site);
-        ::close(fd);
+            if (!body.empty() && !has_length)
+            {
+                request << "Content-Length: " << body.size() << "\r\n";
+            }
+            request << "\r\n";
+            request << body;
+            const std::string payload = request.str();
+            send_all(runtime,
+                     fd,
+                     reinterpret_cast<const unsigned char *>(payload.data()),
+                     payload.size(),
+                     signature,
+                     native_args.site);
+            const std::string raw_response = recv_http_message(runtime, fd, signature, native_args.site);
+            close_socket_fd(fd);
 
-        const std::size_t header_end = raw_response.find("\r\n\r\n");
-        if (header_end == std::string::npos)
-        {
-            runtime.raise_runtime_error(native_args.site, signature + " a reçu une réponse HTTP invalide");
+            const std::size_t header_end = raw_response.find("\r\n\r\n");
+            if (header_end == std::string::npos)
+            {
+                runtime.raise_runtime_error(native_args.site, signature + " a reçu une réponse HTTP invalide");
+            }
+            const std::string response_head = raw_response.substr(0, header_end);
+            const int64_t status = parse_http_status_line(runtime, response_head, signature, native_args.site);
+            const std::vector<std::pair<std::string, std::string>> response_headers = parse_http_headers_block(response_head);
+            const std::string response_body = raw_response.substr(header_end + 4);
+            return make_http_response_value(runtime, status, response_body, response_headers, make_native_function, native_args.site);
         }
-        const std::string response_head = raw_response.substr(0, header_end);
-        const int64_t status = parse_http_status_line(runtime, response_head, signature, native_args.site);
-        const std::vector<std::pair<std::string, std::string>> response_headers = parse_http_headers_block(response_head);
-        const std::string response_body = raw_response.substr(header_end + 4);
-        return make_http_response_value(runtime, status, response_body, response_headers, make_native_function, native_args.site);
+        catch (...)
+        {
+            close_socket_fd(fd);
+            throw;
+        }
     };
 
     bind_object_method(http, make_native_function, "requête",
@@ -206,48 +212,55 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 {
                     break;
                 }
-                ::close(fd);
-                fd = -1;
+                close_socket_fd(fd);
             }
             if (fd < 0)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.Canal.connecter", socket_error_text("connexion"));
             }
-            const std::string client_key = "dGhlIHNhbXBsZSBub25jZQ==";
-            const std::string request =
-                "GET " + parsed.target + " HTTP/1.1\r\n"
-                "Host: " + parsed.host + "\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                "Sec-WebSocket-Key: " + client_key + "\r\n"
-                "Sec-WebSocket-Version: 13\r\n\r\n";
-            send_all(runtime, fd,
-                     reinterpret_cast<const unsigned char *>(request.data()),
-                     request.size(),
-                     "LumiNet.Canal.connecter",
-                     native_args.site);
-            const std::string response = recv_http_message(runtime, fd, "LumiNet.Canal.connecter", native_args.site);
-            const std::size_t header_end = response.find("\r\n\r\n");
-            if (header_end == std::string::npos)
+            try
             {
-                runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: réponse websocket invalide");
+                const std::string client_key = "dGhlIHNhbXBsZSBub25jZQ==";
+                const std::string request =
+                    "GET " + parsed.target + " HTTP/1.1\r\n"
+                    "Host: " + parsed.host + "\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: " + client_key + "\r\n"
+                    "Sec-WebSocket-Version: 13\r\n\r\n";
+                send_all(runtime, fd,
+                         reinterpret_cast<const unsigned char *>(request.data()),
+                         request.size(),
+                         "LumiNet.Canal.connecter",
+                         native_args.site);
+                const std::string response = recv_http_message(runtime, fd, "LumiNet.Canal.connecter", native_args.site);
+                const std::size_t header_end = response.find("\r\n\r\n");
+                if (header_end == std::string::npos)
+                {
+                    runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: réponse websocket invalide");
+                }
+                const std::string response_head = response.substr(0, header_end);
+                const int64_t status = parse_http_status_line(runtime, response_head, "LumiNet.Canal.connecter", native_args.site);
+                const std::vector<std::pair<std::string, std::string>> response_headers = parse_http_headers_block(response_head);
+                const std::string accept = header_value_or_empty(response_headers, "Sec-WebSocket-Accept");
+                const std::string upgrade = to_lower_ascii(header_value_or_empty(response_headers, "Upgrade"));
+                const bool has_upgrade = header_contains_token(response_headers, "Connection", "Upgrade");
+                if (status != 101 || upgrade != "websocket" || !has_upgrade || accept != websocket_accept_key(client_key))
+                {
+                    runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: poignée de main websocket refusée");
+                }
+                auto state = std::make_shared<CanalClientState>();
+                state->fd = fd;
+                state->client_side = true;
+                state->address = parsed.host;
+                state->pending_bytes.assign(response.begin() + static_cast<std::ptrdiff_t>(header_end + 4), response.end());
+                return make_canal_client_value(runtime, state, make_native_function, native_args.site);
             }
-            const std::string response_head = response.substr(0, header_end);
-            const int64_t status = parse_http_status_line(runtime, response_head, "LumiNet.Canal.connecter", native_args.site);
-            const std::vector<std::pair<std::string, std::string>> response_headers = parse_http_headers_block(response_head);
-            const std::string accept = header_value_or_empty(response_headers, "Sec-WebSocket-Accept");
-            const std::string upgrade = to_lower_ascii(header_value_or_empty(response_headers, "Upgrade"));
-            const bool has_upgrade = header_contains_token(response_headers, "Connection", "Upgrade");
-            if (status != 101 || upgrade != "websocket" || !has_upgrade || accept != websocket_accept_key(client_key))
+            catch (...)
             {
-                runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: poignée de main websocket refusée");
+                close_socket_fd(fd);
+                throw;
             }
-            auto state = std::make_shared<CanalClientState>();
-            state->fd = fd;
-            state->client_side = true;
-            state->address = parsed.host;
-            state->pending_bytes.assign(response.begin() + static_cast<std::ptrdiff_t>(header_end + 4), response.end());
-            return make_canal_client_value(runtime, state, make_native_function, native_args.site);
         });
     bind_object_method(canal, make_native_function, "Serveur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {

@@ -1,5 +1,6 @@
 #include "../luminet_shared.hpp"
 
+#include <cerrno>
 #include <memory>
 #include <netdb.h>
 #include <string>
@@ -30,8 +31,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.fermer", native_args.site);
             if (!state->closed && state->fd >= 0)
             {
-                ::close(state->fd);
-                state->fd = -1;
+                close_socket_fd(state->fd);
                 state->closed = true;
             }
             return Value::rien();
@@ -77,7 +77,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.lire", native_args.site);
             std::string result;
             char buffer[4096];
-            const ssize_t received = ::recv(state->fd, buffer, sizeof(buffer), 0);
+            const ssize_t received = socket_recv_bytes(state->fd, buffer, sizeof(buffer));
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "ConnexionTCP.lire", socket_error_text("lecture"));
@@ -98,7 +98,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             char ch = '\0';
             while (true)
             {
-                const ssize_t received = ::recv(state->fd, &ch, 1, 0);
+                const ssize_t received = socket_recv_bytes(state->fd, &ch, 1);
                 if (received < 0)
                 {
                     raise_network_error(runtime, native_args.site, "ConnexionTCP.lire_ligne", socket_error_text("lecture"));
@@ -130,7 +130,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
                 runtime.raise_runtime_error(native_args.site, "ConnexionTCP.lire_octets requiert un nombre non négatif");
             }
             std::vector<unsigned char> buffer(static_cast<std::size_t>(count));
-            const ssize_t received = ::recv(state->fd, buffer.data(), buffer.size(), 0);
+            const ssize_t received = socket_recv_bytes(state->fd, buffer.data(), buffer.size());
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "ConnexionTCP.lire_octets", socket_error_text("lecture"));
@@ -172,8 +172,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
         if (state->fd >= 0)
         {
             ::shutdown(state->fd, SHUT_RDWR);
-            ::close(state->fd);
-            state->fd = -1;
+            close_socket_fd(state->fd);
         }
         return Value::rien();
     };
@@ -224,8 +223,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 {
                     break;
                 }
-                ::close(listen_fd);
-                listen_fd = -1;
+                close_socket_fd(listen_fd);
             }
 
             if (listen_fd < 0)
@@ -243,6 +241,10 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 const int client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
                 if (client_fd < 0)
                 {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
                     if (state->stopped)
                     {
                         break;
@@ -252,17 +254,25 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
 
                 auto client_state = std::make_shared<TcpConnectionState>();
                 client_state->fd = client_fd;
-                const std::string address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
-                const int64_t client_port = port_from_sockaddr(reinterpret_cast<sockaddr *>(&client_addr));
-                Value client = make_tcp_connection_value(client_state, address, client_port, make_native_function);
-                std::vector<RuntimeArgument> callback_args = {RuntimeArgument{"", client}};
-                runtime.call(state->on_connection, NativeArgs{nullptr, &callback_args, native_args.site});
+                try
+                {
+                    const std::string address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
+                    const int64_t client_port = port_from_sockaddr(reinterpret_cast<sockaddr *>(&client_addr));
+                    Value client = make_tcp_connection_value(client_state, address, client_port, make_native_function);
+                    std::vector<RuntimeArgument> callback_args = {RuntimeArgument{"", client}};
+                    runtime.call(state->on_connection, NativeArgs{nullptr, &callback_args, native_args.site});
+                }
+                catch (...)
+                {
+                    close_socket_fd(client_state->fd);
+                    client_state->closed = true;
+                    throw;
+                }
             }
 
             if (state->fd >= 0)
             {
-                ::close(state->fd);
-                state->fd = -1;
+                close_socket_fd(state->fd);
             }
             return Value::rien();
         }));

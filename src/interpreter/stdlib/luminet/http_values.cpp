@@ -1,5 +1,6 @@
 #include "../luminet_shared.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -7,6 +8,90 @@
 
 namespace lumiere
 {
+
+namespace
+{
+
+bool contains_http_separator_or_control(const std::string &text)
+{
+    for (unsigned char ch : text)
+    {
+        if (ch <= 31 || ch == 127)
+        {
+            return true;
+        }
+        switch (ch)
+        {
+        case '(':
+        case ')':
+        case '<':
+        case '>':
+        case '@':
+        case ',':
+        case ';':
+        case ':':
+        case '\\':
+        case '"':
+        case '/':
+        case '[':
+        case ']':
+        case '?':
+        case '=':
+        case '{':
+        case '}':
+        case ' ':
+        case '\t':
+            return true;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+void validate_http_header(IRuntime &runtime,
+                          const std::string &name,
+                          const std::string &value,
+                          const std::string &context,
+                          const RuntimeSite &site)
+{
+    if (name.empty() || contains_http_separator_or_control(name))
+    {
+        runtime.raise_runtime_error(site, context + " requiert un nom d'en-tête HTTP valide");
+    }
+    if (value.find('\r') != std::string::npos || value.find('\n') != std::string::npos)
+    {
+        runtime.raise_runtime_error(site, context + " requiert une valeur d'en-tête HTTP sur une seule ligne");
+    }
+}
+
+std::string http_reason_phrase(int64_t status)
+{
+    switch (status)
+    {
+    case 200: return "OK";
+    case 201: return "Created";
+    case 204: return "No Content";
+    case 301: return "Moved Permanently";
+    case 302: return "Found";
+    case 400: return "Bad Request";
+    case 401: return "Unauthorized";
+    case 403: return "Forbidden";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    case 408: return "Request Timeout";
+    case 409: return "Conflict";
+    case 413: return "Payload Too Large";
+    case 500: return "Internal Server Error";
+    case 501: return "Not Implemented";
+    case 502: return "Bad Gateway";
+    case 503: return "Service Unavailable";
+    case 504: return "Gateway Timeout";
+    default: return "HTTP Response";
+    }
+}
+
+} // namespace
 
 Value make_http_response_value(IRuntime &runtime,
                                int64_t status,
@@ -95,17 +180,62 @@ Value make_http_request_value(IRuntime &runtime,
 
 std::string guess_content_type(const std::string &path)
 {
-    if (path.size() >= 5 && path.substr(path.size() - 5) == ".html")
+    const std::string lower = to_lower_ascii(path);
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".htm")
     {
         return "text/html; charset=utf-8";
     }
-    if (path.size() >= 5 && path.substr(path.size() - 5) == ".json")
+    if (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".html")
+    {
+        return "text/html; charset=utf-8";
+    }
+    if (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".json")
     {
         return "application/json";
     }
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".txt")
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".txt")
     {
         return "text/plain; charset=utf-8";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".css")
+    {
+        return "text/css; charset=utf-8";
+    }
+    if (lower.size() >= 3 && lower.substr(lower.size() - 3) == ".js")
+    {
+        return "text/javascript; charset=utf-8";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".mjs")
+    {
+        return "text/javascript; charset=utf-8";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".svg")
+    {
+        return "image/svg+xml";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".png")
+    {
+        return "image/png";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".jpg")
+    {
+        return "image/jpeg";
+    }
+    if (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".jpeg")
+    {
+        return "image/jpeg";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".gif")
+    {
+        return "image/gif";
+    }
+    if (lower.size() >= 5 && lower.substr(lower.size() - 5) == ".webp")
+    {
+        return "image/webp";
+    }
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".ico")
+    {
+        return "image/x-icon";
     }
     return "application/octet-stream";
 }
@@ -125,8 +255,22 @@ void send_http_response(IRuntime &runtime,
 
     bool has_type = false;
     bool has_length = false;
+    for (const auto &header : state->headers)
+    {
+        validate_http_header(runtime, header.first, header.second, context, site);
+        const std::string lower = to_lower_ascii(header.first);
+        if (lower == "content-length" || lower == "connection")
+        {
+            runtime.raise_runtime_error(site, context + " ne permet pas de surcharger les en-têtes Content-Length ou Connection");
+        }
+        if (lower == "content-type")
+        {
+            has_type = true;
+        }
+    }
     for (const auto &header : headers)
     {
+        validate_http_header(runtime, header.first, header.second, context, site);
         const std::string lower = to_lower_ascii(header.first);
         if (lower == "content-type")
         {
@@ -145,14 +289,14 @@ void send_http_response(IRuntime &runtime,
     {
         headers.push_back({"Content-Length", std::to_string(body.size())});
     }
-    headers.push_back({"Connection", "close"});
 
     std::ostringstream response;
-    response << "HTTP/1.1 " << status << " OK\r\n";
+    response << "HTTP/1.1 " << status << " " << http_reason_phrase(status) << "\r\n";
     for (const auto &header : state->headers)
     {
         headers.push_back(header);
     }
+    headers.push_back({"Connection", "close"});
     for (const auto &header : headers)
     {
         response << header.first << ": " << header.second << "\r\n";
@@ -182,10 +326,10 @@ Value make_http_response_writer_value(IRuntime &runtime,
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.définir_entête", native_args.site);
-            state->headers.push_back({
-                stdlib_expect_text(inner_runtime, args[0].value, "RéponseServeurHTTP.définir_entête", native_args.site),
-                stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.définir_entête", native_args.site),
-            });
+            const std::string name = stdlib_expect_text(inner_runtime, args[0].value, "RéponseServeurHTTP.définir_entête", native_args.site);
+            const std::string value = stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.définir_entête", native_args.site);
+            validate_http_header(inner_runtime, name, value, "RéponseServeurHTTP.définir_entête", native_args.site);
+            state->headers.push_back({name, value});
             return Value::rien();
         }));
 
@@ -223,10 +367,14 @@ Value make_http_response_writer_value(IRuntime &runtime,
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
             const int64_t status = stdlib_expect_integer(inner_runtime, args[0].value, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
             const std::string path = stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
+            if (!std::filesystem::is_regular_file(path))
+            {
+                inner_runtime.raise_runtime_error(native_args.site, "RéponseServeurHTTP.envoyer_fichier requiert un fichier régulier");
+            }
             std::ifstream file(path, std::ios::binary);
             if (!file.is_open())
             {
-                raise_network_error(inner_runtime, native_args.site, "RéponseServeurHTTP.envoyer_fichier", "impossible d'ouvrir le fichier demandé");
+                inner_runtime.raise_runtime_error(native_args.site, "RéponseServeurHTTP.envoyer_fichier a échoué: impossible d'ouvrir le fichier demandé");
             }
             std::ostringstream buffer;
             buffer << file.rdbuf();

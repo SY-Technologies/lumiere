@@ -10,6 +10,14 @@
 namespace lumiere
 {
 
+namespace
+{
+
+constexpr std::size_t kMaxHttpHeaderBytes = 64 * 1024;
+constexpr std::size_t kMaxHttpBodyBytes = 10 * 1024 * 1024;
+
+}
+
 void apply_timeout(IRuntime &runtime,
                    int fd,
                    int64_t timeout_ms,
@@ -112,10 +120,14 @@ void send_all(IRuntime &runtime,
     std::size_t sent = 0;
     while (sent < size)
     {
-        const ssize_t written = ::send(fd, data + sent, size - sent, 0);
+        const ssize_t written = socket_send_bytes(fd, data + sent, size - sent);
         if (written < 0)
         {
             raise_network_error(runtime, site, context, socket_error_text("envoi"));
+        }
+        if (written == 0)
+        {
+            runtime.raise_runtime_error(site, context + " a échoué: connexion fermée pendant l'envoi");
         }
         sent += static_cast<std::size_t>(written);
     }
@@ -414,16 +426,24 @@ std::string recv_http_message(IRuntime &runtime,
 
     while (true)
     {
-        const ssize_t received = ::recv(fd, buffer, sizeof(buffer), 0);
+        const ssize_t received = socket_recv_bytes(fd, buffer, sizeof(buffer));
         if (received < 0)
         {
             raise_network_error(runtime, site, context, socket_error_text("lecture"));
         }
         if (received == 0)
         {
+            if (required_size != std::string::npos && data.size() < required_size)
+            {
+                runtime.raise_runtime_error(site, context + " a reçu un message HTTP tronqué");
+            }
             break;
         }
         data.append(buffer, buffer + received);
+        if (header_end == std::string::npos && data.size() > kMaxHttpHeaderBytes)
+        {
+            runtime.raise_runtime_error(site, context + " a reçu des en-têtes HTTP trop volumineux");
+        }
 
         if (header_end == std::string::npos)
         {
@@ -448,6 +468,10 @@ std::string recv_http_message(IRuntime &runtime,
                     {
                         runtime.raise_runtime_error(site, context + " a reçu un en-tête Content-Length invalide");
                     }
+                }
+                if (content_length > kMaxHttpBodyBytes)
+                {
+                    runtime.raise_runtime_error(site, context + " a reçu un corps HTTP trop volumineux");
                 }
                 required_size = header_end + 4 + content_length;
             }
@@ -476,7 +500,7 @@ bool recv_exact_bytes(int fd,
     }
     while (offset < size)
     {
-        const ssize_t received = ::recv(fd, buffer + offset, size - offset, 0);
+        const ssize_t received = socket_recv_bytes(fd, buffer + offset, size - offset);
         if (received <= 0)
         {
             return false;
@@ -543,7 +567,7 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     }
     else
     {
-        const ssize_t header_peek = ::recv(fd, header, 1, MSG_PEEK);
+        const ssize_t header_peek = socket_recv_bytes(fd, header, 1, MSG_PEEK);
         if (header_peek == 0)
         {
             return std::nullopt;
