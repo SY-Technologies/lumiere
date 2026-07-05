@@ -57,3 +57,12 @@ The full set of reserved keywords. Everything else is a library identifier.
 > `ici` means “here, on this object.” It is only available inside a bound method call. At top level, inside ordinary functions, or before a method is bound to an object, `ici` is not defined.
 
 ---
+
+## 3. Comments
+
+Lumière supports the same comment forms as Java and JavaScript:
+
+- `// comment` for single-line comments
+- `/* comment */` for block comments
+
+`--` and `---` are not comments. They are lexed as minus operators.

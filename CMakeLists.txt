@@ -61,9 +61,16 @@ if(LUMIERE_ENABLE_LUMINET)
         src/interpreter/stdlib/luminet/address_dns.cpp
         src/interpreter/stdlib/luminet/tcp_udp.cpp
         src/interpreter/stdlib/luminet/http_canal.cpp
-        src/interpreter/stdlib/luminet/luminet_platform_posix.cpp
-        src/interpreter/stdlib/luminet/luminet_platform_windows.cpp
     )
+    if(WIN32)
+        list(APPEND LUMIERE_LIBRARY_SOURCES
+            src/interpreter/stdlib/luminet/luminet_platform_windows.cpp
+        )
+    else()
+        list(APPEND LUMIERE_LIBRARY_SOURCES
+            src/interpreter/stdlib/luminet/luminet_platform_posix.cpp
+        )
+    endif()
 endif()
 
 set(LUMIERE_LIBRARY_TYPE STATIC)

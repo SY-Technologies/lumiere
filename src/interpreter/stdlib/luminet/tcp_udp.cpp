@@ -125,7 +125,7 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
             addr.sin_port = htons(static_cast<uint16_t>(port));
             if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
             {
-                int mutable_fd = fd;
+                SocketHandle mutable_fd = fd;
                 close_socket_fd(mutable_fd);
                 raise_network_error(runtime, native_args.site, "LumiNet.UDP.ouvrir", socket_error_text("liaison"));
             }
@@ -134,7 +134,7 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
             socklen_t bound_len = sizeof(bound);
             if (::getsockname(fd, reinterpret_cast<sockaddr *>(&bound), &bound_len) != 0)
             {
-                int mutable_fd = fd;
+                SocketHandle mutable_fd = fd;
                 close_socket_fd(mutable_fd);
                 raise_network_error(runtime, native_args.site, "LumiNet.UDP.ouvrir", socket_error_text("port"));
             }

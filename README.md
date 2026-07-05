@@ -2,6 +2,12 @@
 
 A programming language interpreter (WIP).
 
+## Docs
+
+Project notes live in [`docs/`](./docs/README.md). They are short design documents about both Lumiere internals and the C++ techniques used to build them.
+
+For a practical "what works today" reference, see [`docs/implemented-language-overview.md`](./docs/implemented-language-overview.md).
+
 ## Prerequisites
 
 - CMake ≥ 3.23
@@ -34,6 +40,13 @@ Or with direnv:
 run <file>
 ```
 
+Helpful CLI checks:
+
+```bash
+build/lumiere --help
+build/lumiere --version
+```
+
 ## Tests
 
 ```bash
@@ -57,3 +70,12 @@ direnv allow .
 ```
 
 After that, `build`, `run`, and `tests` are available in your shell when inside the project directory.
+
+## Releases
+
+Multi-OS release scaffolding is documented in [`docs/release-scaffolding.md`](./docs/release-scaffolding.md).
+
+In short:
+
+- CI builds and tests on Linux, macOS, and Windows.
+- Tagged releases package artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`.
