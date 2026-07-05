@@ -32,6 +32,7 @@ void register_luminet_module(Module &module, const NativeFunctionFactory &make_n
         "indisponible",
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             runtime.raise_runtime_error(native_args.site, "LumiNet n'est pas disponible sur cette plateforme");
+            return Value::rien();
         });
 #endif
 }

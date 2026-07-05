@@ -5,7 +5,6 @@
 #include <chrono>
 #include <sstream>
 #include <string>
-#include <sys/socket.h>
 
 namespace lumiere
 {
@@ -19,7 +18,7 @@ constexpr std::size_t kMaxHttpBodyBytes = 10 * 1024 * 1024;
 }
 
 void apply_timeout(IRuntime &runtime,
-                   int fd,
+                   SocketHandle fd,
                    int64_t timeout_ms,
                    const std::string &context,
                    const RuntimeSite &site)
@@ -29,11 +28,8 @@ void apply_timeout(IRuntime &runtime,
         runtime.raise_runtime_error(site, context + " requiert une durée non négative");
     }
 
-    timeval tv{};
-    tv.tv_sec = static_cast<time_t>(timeout_ms / 1000);
-    tv.tv_usec = static_cast<suseconds_t>((timeout_ms % 1000) * 1000);
-    if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0 ||
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0)
+    initialize_socket_platform();
+    if (!platform_socket_set_timeout(fd, timeout_ms))
     {
         raise_network_error(runtime, site, context, socket_error_text("délai"));
     }
@@ -111,7 +107,7 @@ std::vector<unsigned char> expect_byte_vector(IRuntime &runtime,
 }
 
 void send_all(IRuntime &runtime,
-              int fd,
+              SocketHandle fd,
               const unsigned char *data,
               std::size_t size,
               const std::string &context,
@@ -120,7 +116,7 @@ void send_all(IRuntime &runtime,
     std::size_t sent = 0;
     while (sent < size)
     {
-        const ssize_t written = socket_send_bytes(fd, data + sent, size - sent);
+        const SocketSize written = socket_send_bytes(fd, data + sent, size - sent);
         if (written < 0)
         {
             raise_network_error(runtime, site, context, socket_error_text("envoi"));
@@ -415,7 +411,7 @@ HttpRequestData parse_http_request(IRuntime &runtime,
 }
 
 std::string recv_http_message(IRuntime &runtime,
-                              int fd,
+                              SocketHandle fd,
                               const std::string &context,
                               const RuntimeSite &site)
 {
@@ -426,7 +422,7 @@ std::string recv_http_message(IRuntime &runtime,
 
     while (true)
     {
-        const ssize_t received = socket_recv_bytes(fd, buffer, sizeof(buffer));
+        const SocketSize received = socket_recv_bytes(fd, buffer, sizeof(buffer));
         if (received < 0)
         {
             raise_network_error(runtime, site, context, socket_error_text("lecture"));
@@ -485,7 +481,7 @@ std::string recv_http_message(IRuntime &runtime,
     return data;
 }
 
-bool recv_exact_bytes(int fd,
+bool recv_exact_bytes(SocketHandle fd,
                       std::vector<unsigned char> &pending_bytes,
                       unsigned char *buffer,
                       std::size_t size)
@@ -500,7 +496,7 @@ bool recv_exact_bytes(int fd,
     }
     while (offset < size)
     {
-        const ssize_t received = socket_recv_bytes(fd, buffer + offset, size - offset);
+        const SocketSize received = socket_recv_bytes(fd, buffer + offset, size - offset);
         if (received <= 0)
         {
             return false;
@@ -511,7 +507,7 @@ bool recv_exact_bytes(int fd,
 }
 
 bool send_websocket_frame(IRuntime &runtime,
-                          int fd,
+                          SocketHandle fd,
                           uint8_t opcode,
                           const std::vector<unsigned char> &payload,
                           bool mask,
@@ -552,7 +548,7 @@ bool send_websocket_frame(IRuntime &runtime,
 }
 
 std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
-                                                   int fd,
+                                                   SocketHandle fd,
                                                    std::vector<unsigned char> &pending_bytes,
                                                    const std::string &context,
                                                    const RuntimeSite &site)
@@ -567,7 +563,7 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     }
     else
     {
-        const ssize_t header_peek = socket_recv_bytes(fd, header, 1, MSG_PEEK);
+        const SocketSize header_peek = socket_recv_bytes(fd, header, 1, MSG_PEEK);
         if (header_peek == 0)
         {
             return std::nullopt;

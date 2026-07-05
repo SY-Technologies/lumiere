@@ -2,16 +2,10 @@
 
 #include <algorithm>
 #include <array>
-#include <arpa/inet.h>
-#include <cerrno>
-#include <cstring>
 #include <memory>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -53,86 +47,46 @@ int64_t expect_duration_millis(IRuntime &runtime,
 
 std::string socket_error_text(const std::string &context)
 {
-    return context + ": " + std::strerror(errno);
+    return context + ": " + socket_last_error_message();
 }
 
-void close_socket_fd(int &fd)
+void close_socket_fd(SocketHandle &fd)
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-        fd = -1;
-    }
+    close_socket_handle(fd);
 }
 
-ssize_t socket_send_bytes(int fd, const void *data, std::size_t size, int flags)
+SocketSize socket_send_bytes(SocketHandle fd, const void *data, std::size_t size, int flags)
 {
-    for (;;)
-    {
-#ifdef MSG_NOSIGNAL
-        const ssize_t result = ::send(fd, data, size, flags | MSG_NOSIGNAL);
-#else
-        const ssize_t result = ::send(fd, data, size, flags);
-#endif
-        if (result < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        return result;
-    }
+    initialize_socket_platform();
+    return platform_socket_send(fd, data, size, flags);
 }
 
-ssize_t socket_sendto_bytes(int fd,
-                            const void *data,
-                            std::size_t size,
-                            int flags,
-                            const sockaddr *addr,
-                            socklen_t addrlen)
+SocketSize socket_sendto_bytes(SocketHandle fd,
+                               const void *data,
+                               std::size_t size,
+                               int flags,
+                               const sockaddr *addr,
+                               socklen_t addrlen)
 {
-    for (;;)
-    {
-#ifdef MSG_NOSIGNAL
-        const ssize_t result = ::sendto(fd, data, size, flags | MSG_NOSIGNAL, addr, addrlen);
-#else
-        const ssize_t result = ::sendto(fd, data, size, flags, addr, addrlen);
-#endif
-        if (result < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        return result;
-    }
+    initialize_socket_platform();
+    return platform_socket_sendto(fd, data, size, flags, addr, addrlen);
 }
 
-ssize_t socket_recv_bytes(int fd, void *buffer, std::size_t size, int flags)
+SocketSize socket_recv_bytes(SocketHandle fd, void *buffer, std::size_t size, int flags)
 {
-    for (;;)
-    {
-        const ssize_t result = ::recv(fd, buffer, size, flags);
-        if (result < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        return result;
-    }
+    initialize_socket_platform();
+    return platform_socket_recv(fd, buffer, size, flags);
 }
 
-ssize_t socket_recvfrom_bytes(int fd,
-                              void *buffer,
-                              std::size_t size,
-                              int flags,
-                              sockaddr *addr,
-                              socklen_t *addrlen)
+SocketSize socket_recvfrom_bytes(SocketHandle fd,
+                                 void *buffer,
+                                 std::size_t size,
+                                 int flags,
+                                 sockaddr *addr,
+                                 socklen_t *addrlen)
 {
-    for (;;)
-    {
-        const ssize_t result = ::recvfrom(fd, buffer, size, flags, addr, addrlen);
-        if (result < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        return result;
-    }
+    initialize_socket_platform();
+    return platform_socket_recvfrom(fd, buffer, size, flags, addr, addrlen);
 }
 
 void raise_network_error(IRuntime &runtime,

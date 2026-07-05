@@ -1,11 +1,7 @@
 #include "../luminet_shared.hpp"
 
-#include <cerrno>
 #include <memory>
-#include <netdb.h>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -23,13 +19,13 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
     object->fields["est_connecté"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.est_connecté", native_args.site);
-            return Value::logique(!state->closed && state->fd >= 0);
+            return Value::logique(!state->closed && socket_handle_valid(state->fd));
         }));
 
     object->fields["fermer"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.fermer", native_args.site);
-            if (!state->closed && state->fd >= 0)
+            if (!state->closed && socket_handle_valid(state->fd))
             {
                 close_socket_fd(state->fd);
                 state->closed = true;
@@ -77,7 +73,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.lire", native_args.site);
             std::string result;
             char buffer[4096];
-            const ssize_t received = socket_recv_bytes(state->fd, buffer, sizeof(buffer));
+            const SocketSize received = socket_recv_bytes(state->fd, buffer, sizeof(buffer));
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "ConnexionTCP.lire", socket_error_text("lecture"));
@@ -98,7 +94,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             char ch = '\0';
             while (true)
             {
-                const ssize_t received = socket_recv_bytes(state->fd, &ch, 1);
+                const SocketSize received = socket_recv_bytes(state->fd, &ch, 1);
                 if (received < 0)
                 {
                     raise_network_error(runtime, native_args.site, "ConnexionTCP.lire_ligne", socket_error_text("lecture"));
@@ -130,7 +126,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
                 runtime.raise_runtime_error(native_args.site, "ConnexionTCP.lire_octets requiert un nombre non négatif");
             }
             std::vector<unsigned char> buffer(static_cast<std::size_t>(count));
-            const ssize_t received = socket_recv_bytes(state->fd, buffer.data(), buffer.size());
+            const SocketSize received = socket_recv_bytes(state->fd, buffer.data(), buffer.size());
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "ConnexionTCP.lire_octets", socket_error_text("lecture"));
@@ -169,9 +165,9 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
     const auto stop_handler = [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
         stdlib_expect_positional(runtime, *native_args.arguments, 0, "ServeurTCP.arrêter", native_args.site);
         state->stopped = true;
-        if (state->fd >= 0)
+        if (socket_handle_valid(state->fd))
         {
-            ::shutdown(state->fd, SHUT_RDWR);
+            platform_socket_shutdown(state->fd);
             close_socket_fd(state->fd);
         }
         return Value::rien();
@@ -208,16 +204,16 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
             }
 
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-            int listen_fd = -1;
+            SocketHandle listen_fd = kInvalidSocketHandle;
             for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
             {
+                initialize_socket_platform();
                 listen_fd = ::socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
-                if (listen_fd < 0)
+                if (!socket_handle_valid(listen_fd))
                 {
                     continue;
                 }
-                int reuse = 1;
-                ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+                platform_socket_enable_reuse_address(listen_fd);
                 if (::bind(listen_fd, entry->ai_addr, entry->ai_addrlen) == 0 &&
                     ::listen(listen_fd, 16) == 0)
                 {
@@ -226,7 +222,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 close_socket_fd(listen_fd);
             }
 
-            if (listen_fd < 0)
+            if (!socket_handle_valid(listen_fd))
             {
                 raise_network_error(runtime, native_args.site, "ServeurTCP.écouter", socket_error_text("écoute"));
             }
@@ -238,10 +234,10 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
             {
                 sockaddr_storage client_addr{};
                 socklen_t client_len = sizeof(client_addr);
-                const int client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-                if (client_fd < 0)
+                const SocketHandle client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+                if (!socket_handle_valid(client_fd))
                 {
-                    if (errno == EINTR)
+                    if (socket_error_is_interrupted(socket_last_error_code()))
                     {
                         continue;
                     }
@@ -270,7 +266,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 }
             }
 
-            if (state->fd >= 0)
+            if (socket_handle_valid(state->fd))
             {
                 close_socket_fd(state->fd);
             }

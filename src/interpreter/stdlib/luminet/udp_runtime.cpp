@@ -1,12 +1,7 @@
 #include "../luminet_shared.hpp"
 
-#include <arpa/inet.h>
 #include <memory>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -21,7 +16,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
     object->fields["fermer"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "SocketUDP.fermer", native_args.site);
-            if (!state->closed && state->fd >= 0)
+            if (!state->closed && socket_handle_valid(state->fd))
             {
                 close_socket_fd(state->fd);
                 state->closed = true;
@@ -64,7 +59,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer", gai_strerror(rc));
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-            const ssize_t sent = socket_sendto_bytes(state->fd, text.data(), text.size(), 0, result->ai_addr, result->ai_addrlen);
+            const SocketSize sent = socket_sendto_bytes(state->fd, text.data(), text.size(), 0, result->ai_addr, result->ai_addrlen);
             if (sent < 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer", socket_error_text("envoi"));
@@ -95,7 +90,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer_octets", gai_strerror(rc));
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-            const ssize_t sent = socket_sendto_bytes(state->fd, bytes.data(), bytes.size(), 0, result->ai_addr, result->ai_addrlen);
+            const SocketSize sent = socket_sendto_bytes(state->fd, bytes.data(), bytes.size(), 0, result->ai_addr, result->ai_addrlen);
             if (sent < 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer_octets", socket_error_text("envoi"));
@@ -113,8 +108,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             {
                 runtime.raise_runtime_error(native_args.site, "SocketUDP.diffuser requiert un port entre 0 et 65535");
             }
-            int enabled = 1;
-            if (::setsockopt(state->fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled)) != 0)
+            if (!platform_socket_enable_broadcast(state->fd))
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.diffuser", socket_error_text("diffusion"));
             }
@@ -122,7 +116,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             addr.sin_family = AF_INET;
             addr.sin_port = htons(static_cast<uint16_t>(port));
             addr.sin_addr.s_addr = INADDR_BROADCAST;
-            const ssize_t sent = socket_sendto_bytes(state->fd, text.data(), text.size(), 0, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+            const SocketSize sent = socket_sendto_bytes(state->fd, text.data(), text.size(), 0, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
             if (sent < 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.diffuser", socket_error_text("diffusion"));
@@ -136,7 +130,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             std::vector<char> buffer(65536);
             sockaddr_storage from{};
             socklen_t from_len = sizeof(from);
-            const ssize_t received = socket_recvfrom_bytes(state->fd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr *>(&from), &from_len);
+            const SocketSize received = socket_recvfrom_bytes(state->fd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr *>(&from), &from_len);
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.recevoir", socket_error_text("réception"));
@@ -152,7 +146,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             std::vector<unsigned char> buffer(65536);
             sockaddr_storage from{};
             socklen_t from_len = sizeof(from);
-            const ssize_t received = socket_recvfrom_bytes(state->fd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr *>(&from), &from_len);
+            const SocketSize received = socket_recvfrom_bytes(state->fd, buffer.data(), buffer.size(), 0, reinterpret_cast<sockaddr *>(&from), &from_len);
             if (received < 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.recevoir_octets", socket_error_text("réception"));

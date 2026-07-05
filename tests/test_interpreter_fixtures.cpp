@@ -43,6 +43,72 @@ using lumiere::TreeWalker;
 #define SKIP_IF_LUMINET_DISABLED() do {} while (false)
 #endif
 
+#ifdef _WIN32
+using TestSocket = SOCKET;
+constexpr TestSocket kInvalidTestSocket = INVALID_SOCKET;
+using TestRecvSize = int;
+#else
+using TestSocket = int;
+constexpr TestSocket kInvalidTestSocket = -1;
+using TestRecvSize = ssize_t;
+#endif
+
+bool test_socket_valid(TestSocket socket)
+{
+#ifdef _WIN32
+    return socket != INVALID_SOCKET;
+#else
+    return socket >= 0;
+#endif
+}
+
+void test_close_socket(TestSocket socket)
+{
+#ifdef _WIN32
+    if (socket != INVALID_SOCKET)
+    {
+        ::closesocket(socket);
+    }
+#else
+    if (socket >= 0)
+    {
+        ::close(socket);
+    }
+#endif
+}
+
+int test_set_reuseaddr(TestSocket socket)
+{
+    int reuse = 1;
+#ifdef _WIN32
+    return ::setsockopt(socket,
+                        SOL_SOCKET,
+                        SO_REUSEADDR,
+                        reinterpret_cast<const char *>(&reuse),
+                        static_cast<int>(sizeof(reuse)));
+#else
+    return ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+}
+
+TestRecvSize test_recv(TestSocket socket, void *buffer, std::size_t size, int flags = 0)
+{
+#ifdef _WIN32
+    return ::recv(socket, static_cast<char *>(buffer), static_cast<int>(size), flags);
+#else
+    return ::recv(socket, buffer, size, flags);
+#endif
+}
+
+int test_send(TestSocket socket, const void *buffer, std::size_t size, int flags = 0)
+{
+#ifdef _WIN32
+    return ::send(socket, static_cast<const char *>(buffer), static_cast<int>(size), flags);
+#else
+    return ::send(socket, buffer, size, flags);
+#endif
+}
+
 std::string read_text_file(const std::filesystem::path &path)
 {
     std::ifstream file(path);
@@ -2783,14 +2849,13 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0)
+        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
         {
             return "socket";
         }
 
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        test_set_reuseaddr(server_fd);
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -2799,7 +2864,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 
         if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "bind";
         }
 
@@ -2807,23 +2872,23 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
         socklen_t bound_len = sizeof(bound);
         if (::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "getsockname";
         }
         promise.set_value(ntohs(bound.sin_port));
 
         if (::listen(server_fd, 1) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "listen";
         }
 
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0)
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "accept";
         }
 
@@ -2831,7 +2896,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
         char ch = '\0';
         while (true)
         {
-            const ssize_t received = ::recv(client_fd, &ch, 1, 0);
+            const TestRecvSize received = test_recv(client_fd, &ch, 1, 0);
             if (received <= 0)
             {
                 break;
@@ -2846,8 +2911,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
             }
         }
 
-        ::close(client_fd);
-        ::close(server_fd);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
         return line;
     });
 
@@ -3010,20 +3075,19 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0)
+        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
         {
             return "socket";
         }
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        test_set_reuseaddr(server_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "bind";
         }
         sockaddr_in bound{};
@@ -3032,22 +3096,22 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
         promise.set_value(ntohs(bound.sin_port));
         if (::listen(server_fd, 1) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "listen";
         }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0)
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "accept";
         }
         std::string request;
         char buffer[4096];
         while (true)
         {
-            const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
             if (received <= 0)
             {
                 break;
@@ -3066,9 +3130,9 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
             "Connection: close\r\n"
             "\r\n"
             "bonjour";
-        ::send(client_fd, response.data(), response.size(), 0);
-        ::close(client_fd);
-        ::close(server_fd);
+        test_send(client_fd, response.data(), response.size(), 0);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
         return request;
     });
 
@@ -3097,20 +3161,19 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0)
+        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
         {
             return "socket";
         }
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        test_set_reuseaddr(server_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "bind";
         }
         sockaddr_in bound{};
@@ -3119,15 +3182,15 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
         promise.set_value(ntohs(bound.sin_port));
         if (::listen(server_fd, 1) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "listen";
         }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0)
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "accept";
         }
 
@@ -3135,7 +3198,7 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
         char buffer[4096];
         while (request.find("\r\n\r\n") == std::string::npos)
         {
-            const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
             if (received <= 0)
             {
                 break;
@@ -3149,9 +3212,9 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
             "Connection: close\r\n"
             "\r\n"
             "short";
-        ::send(client_fd, response.data(), response.size(), 0);
-        ::close(client_fd);
-        ::close(server_fd);
+        test_send(client_fd, response.data(), response.size(), 0);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
         return request;
     });
 
@@ -3193,9 +3256,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
         "  serveur.écouter(\"127.0.0.1\", " ;
 
     auto server_future = std::async(std::launch::async, [source_prefix = server_source, promise = std::move(port_promise)]() mutable {
-        const int probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
@@ -3205,7 +3267,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
         socklen_t bound_len = sizeof(bound);
         ::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
         const int port = ntohs(bound.sin_port);
-        ::close(probe_fd);
+        test_close_socket(probe_fd);
         promise.set_value(port);
         const std::string source = source_prefix + std::to_string(port) + ")\n}\n";
         return execute_program_without_capture_with_error(source);
@@ -3214,8 +3276,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(client_fd, 0);
+    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
@@ -3227,19 +3289,19 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
         "Authorization: jeton\r\n"
         "Connection: close\r\n"
         "\r\n";
-    ASSERT_GT(::send(client_fd, request.data(), request.size(), 0), 0);
+    ASSERT_GT(test_send(client_fd, request.data(), request.size(), 0), 0);
     std::string response;
     char buffer[4096];
     while (true)
     {
-        const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+        const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
         if (received <= 0)
         {
             break;
         }
         response.append(buffer, buffer + received);
     }
-    ::close(client_fd);
+    test_close_socket(client_fd);
 
     const auto [server_completed, server_error] = server_future.get();
     EXPECT_TRUE(server_completed) << server_error;
@@ -3261,9 +3323,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise), html_path]() mutable {
-        const int probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
@@ -3273,7 +3334,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
         socklen_t bound_len = sizeof(bound);
         ::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
         const int port = ntohs(bound.sin_port);
-        ::close(probe_fd);
+        test_close_socket(probe_fd);
         promise.set_value(port);
 
         const std::string source =
@@ -3295,8 +3356,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(client_fd, 0);
+    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
@@ -3307,19 +3368,19 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n";
-    ASSERT_GT(::send(client_fd, request.data(), request.size(), 0), 0);
+    ASSERT_GT(test_send(client_fd, request.data(), request.size(), 0), 0);
     std::string response;
     char buffer[4096];
     while (true)
     {
-        const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+        const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
         if (received <= 0)
         {
             break;
         }
         response.append(buffer, buffer + received);
     }
-    ::close(client_fd);
+    test_close_socket(client_fd);
 
     const auto [server_completed, server_error] = server_future.get();
     EXPECT_TRUE(server_completed) << server_error;
@@ -3336,9 +3397,8 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
-        const int probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
@@ -3348,7 +3408,7 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
         socklen_t bound_len = sizeof(bound);
         ::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
         const int port = ntohs(bound.sin_port);
-        ::close(probe_fd);
+        test_close_socket(probe_fd);
         promise.set_value(port);
 
         const std::string source =
@@ -3370,8 +3430,8 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    const int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(client_fd, 0);
+    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
@@ -3382,19 +3442,19 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
         "Host: 127.0.0.1\r\n"
         "Connection: close\r\n"
         "\r\n";
-    ASSERT_GT(::send(client_fd, request.data(), request.size(), 0), 0);
+    ASSERT_GT(test_send(client_fd, request.data(), request.size(), 0), 0);
     std::string response;
     char buffer[4096];
     while (true)
     {
-        const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+        const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
         if (received <= 0)
         {
             break;
         }
         response.append(buffer, buffer + received);
     }
-    ::close(client_fd);
+    test_close_socket(client_fd);
 
     const auto [server_completed, server_error] = server_future.get();
     EXPECT_TRUE(server_completed) << server_error;
@@ -3426,9 +3486,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
         "  serveur.écouter(\"127.0.0.1\", ";
 
     auto server_future = std::async(std::launch::async, [source_prefix = server_source, promise = std::move(port_promise)]() mutable {
-        const int probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
@@ -3438,7 +3497,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
         socklen_t bound_len = sizeof(bound);
         ::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
         const int port = ntohs(bound.sin_port);
-        ::close(probe_fd);
+        test_close_socket(probe_fd);
         promise.set_value(port);
         return execute_program_without_capture_with_error(source_prefix + std::to_string(port) + ")\n}\n");
     });
@@ -3479,9 +3538,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
         "}\n";
 
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
-        const int probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        int reuse = 1;
-        ::setsockopt(probe_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        const TestSocket probe_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        test_set_reuseaddr(probe_fd);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(0);
@@ -3491,7 +3549,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
         socklen_t bound_len = sizeof(bound);
         ::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
         const int port = ntohs(bound.sin_port);
-        ::close(probe_fd);
+        test_close_socket(probe_fd);
         promise.set_value(port);
         const std::string source =
             "importer LumiNet\n"
@@ -3512,8 +3570,8 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 
     const int port = port_future.get();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    const int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(client_fd, 0);
+    const TestSocket client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(client_fd));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(static_cast<uint16_t>(port));
@@ -3527,12 +3585,12 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
         "Sec-WebSocket-Version: 13\r\n"
         "\r\n";
-    ASSERT_GT(::send(client_fd, request.data(), request.size(), 0), 0);
+    ASSERT_GT(test_send(client_fd, request.data(), request.size(), 0), 0);
     std::string response;
     char buffer[4096];
     while (response.find("\r\n\r\n") == std::string::npos)
     {
-        const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+        const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
         ASSERT_GT(received, 0);
         response.append(buffer, buffer + received);
     }
@@ -3548,7 +3606,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
     }
     else
     {
-        ASSERT_EQ(::recv(client_fd, header, sizeof(header), 0), 2);
+        ASSERT_EQ(test_recv(client_fd, header, sizeof(header), 0), 2);
     }
     const std::size_t payload_size = header[1] & 0x7f;
     std::string payload = leftover;
@@ -3557,13 +3615,13 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
         const std::size_t missing = payload_size - payload.size();
         const std::size_t previous = payload.size();
         payload.resize(payload_size);
-        ASSERT_EQ(::recv(client_fd, payload.data() + previous, missing, 0), static_cast<ssize_t>(missing));
+        ASSERT_EQ(test_recv(client_fd, payload.data() + previous, missing, 0), static_cast<TestRecvSize>(missing));
     }
     else if (payload.size() > payload_size)
     {
         payload.resize(payload_size);
     }
-    ::close(client_fd);
+    test_close_socket(client_fd);
     const auto [server_completed, server_error] = server_future.get();
     EXPECT_TRUE(server_completed) << server_error;
     EXPECT_EQ(payload, "prêt");
@@ -3575,14 +3633,13 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0)
+        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
         {
             return "socket";
         }
 
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        test_set_reuseaddr(server_fd);
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3590,7 +3647,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "bind";
         }
 
@@ -3601,16 +3658,16 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
 
         if (::listen(server_fd, 1) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "listen";
         }
 
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0)
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "accept";
         }
 
@@ -3618,7 +3675,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
         char buffer[4096];
         while (request.find("\r\n\r\n") == std::string::npos)
         {
-            const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
             if (received <= 0)
             {
                 break;
@@ -3632,9 +3689,9 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
             "Content-Length: 0\r\n"
             "Connection: close\r\n"
             "\r\n";
-        ::send(client_fd, response.data(), response.size(), 0);
-        ::close(client_fd);
-        ::close(server_fd);
+        test_send(client_fd, response.data(), response.size(), 0);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
         return request;
     });
 
@@ -3658,14 +3715,13 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0)
+        const TestSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
         {
             return "socket";
         }
 
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        test_set_reuseaddr(server_fd);
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -3673,7 +3729,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "bind";
         }
 
@@ -3684,16 +3740,16 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
 
         if (::listen(server_fd, 1) != 0)
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "listen";
         }
 
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-        if (client_fd < 0)
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
         {
-            ::close(server_fd);
+            test_close_socket(server_fd);
             return "accept";
         }
 
@@ -3701,11 +3757,11 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
         char buffer[4096];
         while (request.find("\r\n\r\n") == std::string::npos)
         {
-            const ssize_t received = ::recv(client_fd, buffer, sizeof(buffer), 0);
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
             if (received <= 0)
             {
-                ::close(client_fd);
-                ::close(server_fd);
+                test_close_socket(client_fd);
+                test_close_socket(server_fd);
                 return "recv";
             }
             request.append(buffer, buffer + received);
@@ -3717,23 +3773,23 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
             "\r\n";
-        ::send(client_fd, response.data(), response.size(), 0);
+        test_send(client_fd, response.data(), response.size(), 0);
 
         const unsigned char first_header = 0x81;
         const unsigned char second_header = 0x07;
         const std::string payload = "bonjour";
-        ::send(client_fd, &first_header, 1, 0);
+        test_send(client_fd, &first_header, 1, 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        ::send(client_fd, &second_header, 1, 0);
+        test_send(client_fd, &second_header, 1, 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        ::send(client_fd, payload.data(), payload.size(), 0);
+        test_send(client_fd, payload.data(), payload.size(), 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         const unsigned char close_frame[2] = {0x88, 0x00};
-        ::send(client_fd, close_frame, sizeof(close_frame), 0);
+        test_send(client_fd, close_frame, sizeof(close_frame), 0);
 
-        ::close(client_fd);
-        ::close(server_fd);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
         return "ok";
     });
 

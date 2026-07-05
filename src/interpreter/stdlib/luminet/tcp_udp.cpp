@@ -1,12 +1,8 @@
 #include "../luminet_shared.hpp"
 
-#include <arpa/inet.h>
 #include <memory>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <optional>
 #include <string>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -48,12 +44,13 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
 
-            int fd = -1;
+            SocketHandle fd = kInvalidSocketHandle;
             std::string peer_address;
             for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
             {
+                initialize_socket_platform();
                 fd = ::socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
-                if (fd < 0)
+                if (!socket_handle_valid(fd))
                 {
                     continue;
                 }
@@ -69,7 +66,7 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
                 close_socket_fd(fd);
             }
 
-            if (fd < 0)
+            if (!socket_handle_valid(fd))
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.TCP.connecter", socket_error_text("connexion"));
             }
@@ -115,8 +112,9 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
                 runtime.raise_runtime_error(native_args.site, "LumiNet.UDP.ouvrir requiert un port entre 0 et 65535");
             }
 
-            const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-            if (fd < 0)
+            initialize_socket_platform();
+            const SocketHandle fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (!socket_handle_valid(fd))
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.UDP.ouvrir", socket_error_text("socket"));
             }

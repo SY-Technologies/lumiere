@@ -22,7 +22,7 @@ jobs:
             cmake_extra_args: ""
           - os: windows-latest
             build_type: Release
-            cmake_extra_args: "-DLUMIERE_ENABLE_LUMINET=OFF"
+            cmake_extra_args: ""
 
     steps:
       - name: Checkout

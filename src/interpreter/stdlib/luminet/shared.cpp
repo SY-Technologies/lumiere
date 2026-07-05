@@ -1,56 +1,36 @@
 #include "../luminet_shared.hpp"
 
-#include <unistd.h>
-
 namespace lumiere
 {
 
 TcpConnectionState::~TcpConnectionState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 TcpServerState::~TcpServerState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 UdpSocketState::~UdpSocketState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 HttpServerState::~HttpServerState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 CanalClientState::~CanalClientState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 CanalServerState::~CanalServerState()
 {
-    if (fd >= 0)
-    {
-        ::close(fd);
-    }
+    close_socket_fd(fd);
 }
 
 } // namespace lumiere

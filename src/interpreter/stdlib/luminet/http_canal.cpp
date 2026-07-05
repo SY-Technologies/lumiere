@@ -1,11 +1,9 @@
 #include "../luminet_shared.hpp"
 
 #include <memory>
-#include <netdb.h>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -70,11 +68,12 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
         }
         std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
 
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
         {
+            initialize_socket_platform();
             fd = ::socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
-            if (fd < 0)
+            if (!socket_handle_valid(fd))
             {
                 continue;
             }
@@ -88,7 +87,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             }
             close_socket_fd(fd);
         }
-        if (fd < 0)
+        if (!socket_handle_valid(fd))
         {
             raise_network_error(runtime, native_args.site, signature, socket_error_text("connexion"));
         }
@@ -200,11 +199,12 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 raise_network_error(runtime, native_args.site, "LumiNet.Canal.connecter", gai_strerror(rc));
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-            int fd = -1;
+            SocketHandle fd = kInvalidSocketHandle;
             for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
             {
+                initialize_socket_platform();
                 fd = ::socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
-                if (fd < 0)
+                if (!socket_handle_valid(fd))
                 {
                     continue;
                 }
@@ -214,7 +214,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 }
                 close_socket_fd(fd);
             }
-            if (fd < 0)
+            if (!socket_handle_valid(fd))
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.Canal.connecter", socket_error_text("connexion"));
             }

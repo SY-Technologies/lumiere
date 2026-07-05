@@ -2,14 +2,13 @@
 
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
+#include "luminet_platform.hpp"
 
 #include <array>
 #include <memory>
-#include <netdb.h>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <vector>
 
 namespace lumiere
@@ -19,7 +18,7 @@ namespace lumiere
 
     struct TcpConnectionState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
 
         ~TcpConnectionState();
@@ -27,7 +26,7 @@ namespace lumiere
 
     struct TcpServerState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool stopped = false;
         Value on_connection = Value::rien();
 
@@ -36,7 +35,7 @@ namespace lumiere
 
     struct UdpSocketState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
         int port = 0;
 
@@ -52,7 +51,7 @@ namespace lumiere
 
     struct HttpServerState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool stopped = false;
         std::vector<Value> middleware;
         std::vector<HttpRoute> routes;
@@ -63,7 +62,7 @@ namespace lumiere
 
     struct CanalClientState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
         bool opened_notified = false;
         bool client_side = false;
@@ -79,7 +78,7 @@ namespace lumiere
 
     struct CanalServerState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool stopped = false;
         Value on_connection = Value::rien();
         Value on_message = Value::rien();
@@ -91,7 +90,7 @@ namespace lumiere
 
     struct HttpResponseWriterState
     {
-        int fd = -1;
+        SocketHandle fd = kInvalidSocketHandle;
         bool sent = false;
         std::vector<std::pair<std::string, std::string>> headers;
     };
@@ -157,21 +156,21 @@ namespace lumiere
                                    const std::string &context,
                                    const RuntimeSite &site);
     std::string socket_error_text(const std::string &context);
-    void close_socket_fd(int &fd);
-    ssize_t socket_send_bytes(int fd, const void *data, std::size_t size, int flags = 0);
-    ssize_t socket_sendto_bytes(int fd,
-                                const void *data,
-                                std::size_t size,
-                                int flags,
-                                const sockaddr *addr,
-                                socklen_t addrlen);
-    ssize_t socket_recv_bytes(int fd, void *buffer, std::size_t size, int flags = 0);
-    ssize_t socket_recvfrom_bytes(int fd,
-                                  void *buffer,
-                                  std::size_t size,
-                                  int flags,
-                                  sockaddr *addr,
-                                  socklen_t *addrlen);
+    void close_socket_fd(SocketHandle &fd);
+    SocketSize socket_send_bytes(SocketHandle fd, const void *data, std::size_t size, int flags = 0);
+    SocketSize socket_sendto_bytes(SocketHandle fd,
+                                   const void *data,
+                                   std::size_t size,
+                                   int flags,
+                                   const sockaddr *addr,
+                                   socklen_t addrlen);
+    SocketSize socket_recv_bytes(SocketHandle fd, void *buffer, std::size_t size, int flags = 0);
+    SocketSize socket_recvfrom_bytes(SocketHandle fd,
+                                     void *buffer,
+                                     std::size_t size,
+                                     int flags,
+                                     sockaddr *addr,
+                                     socklen_t *addrlen);
     void raise_network_error(IRuntime &runtime,
                              const RuntimeSite &site,
                              const std::string &context,
@@ -197,7 +196,7 @@ namespace lumiere
     std::string address_to_text(const sockaddr *addr);
     int64_t port_from_sockaddr(const sockaddr *addr);
     void apply_timeout(IRuntime &runtime,
-                       int fd,
+                       SocketHandle fd,
                        int64_t timeout_ms,
                        const std::string &context,
                        const RuntimeSite &site);
@@ -214,7 +213,7 @@ namespace lumiere
                                                   const std::string &context,
                                                   const RuntimeSite &site);
     void send_all(IRuntime &runtime,
-                  int fd,
+                  SocketHandle fd,
                   const unsigned char *data,
                   std::size_t size,
                   const std::string &context,
@@ -253,22 +252,22 @@ namespace lumiere
                                        const std::string &context,
                                        const RuntimeSite &site);
     std::string recv_http_message(IRuntime &runtime,
-                                  int fd,
+                                  SocketHandle fd,
                                   const std::string &context,
                                   const RuntimeSite &site);
-    bool recv_exact_bytes(int fd,
+    bool recv_exact_bytes(SocketHandle fd,
                           std::vector<unsigned char> &pending_bytes,
                           unsigned char *buffer,
                           std::size_t size);
     bool send_websocket_frame(IRuntime &runtime,
-                              int fd,
+                              SocketHandle fd,
                               uint8_t opcode,
                               const std::vector<unsigned char> &payload,
                               bool mask,
                               const std::string &context,
                               const RuntimeSite &site);
     std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
-                                                       int fd,
+                                                       SocketHandle fd,
                                                        std::vector<unsigned char> &pending_bytes,
                                                        const std::string &context,
                                                        const RuntimeSite &site);

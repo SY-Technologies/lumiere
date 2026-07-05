@@ -199,6 +199,7 @@ bool value_contains(IRuntime &runtime,
 
     runtime.raise_runtime_error(site,
                                 "LumiTest.vérifier_contient requiert une Liste, un Ensemble, un Dictionnaire ou un Texte");
+    return false;
 }
 
 double as_numeric(IRuntime &runtime,
@@ -217,6 +218,7 @@ double as_numeric(IRuntime &runtime,
     }
 
     runtime.raise_runtime_error(site, signature + " requiert une valeur numérique");
+    return 0.0;
 }
 
 void bind_context_methods(const std::shared_ptr<LumiereObject> &context,

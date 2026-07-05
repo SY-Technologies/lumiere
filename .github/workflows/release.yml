@@ -31,7 +31,7 @@ jobs:
           - os: windows-latest
             label: windows-x86_64
             cpack_generator: ZIP
-            cmake_extra_args: "-DLUMIERE_ENABLE_LUMINET=OFF"
+            cmake_extra_args: ""
 
     steps:
       - name: Checkout

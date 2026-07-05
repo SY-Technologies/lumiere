@@ -1,12 +1,8 @@
 #include "../luminet_shared.hpp"
 
-#include <cerrno>
 #include <functional>
 #include <memory>
-#include <netdb.h>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -77,9 +73,9 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
     const auto stop_handler = [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
         stdlib_expect_positional(runtime, *native_args.arguments, 0, "ServeurHTTP.arrêter", native_args.site);
         state->stopped = true;
-        if (state->fd >= 0)
+        if (socket_handle_valid(state->fd))
         {
-            ::shutdown(state->fd, SHUT_RDWR);
+            platform_socket_shutdown(state->fd);
             close_socket_fd(state->fd);
         }
         return Value::rien();
@@ -111,16 +107,16 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
 
-            int listen_fd = -1;
+            SocketHandle listen_fd = kInvalidSocketHandle;
             for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
             {
+                initialize_socket_platform();
                 listen_fd = ::socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
-                if (listen_fd < 0)
+                if (!socket_handle_valid(listen_fd))
                 {
                     continue;
                 }
-                int reuse = 1;
-                ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+                platform_socket_enable_reuse_address(listen_fd);
                 if (::bind(listen_fd, entry->ai_addr, entry->ai_addrlen) == 0 &&
                     ::listen(listen_fd, 16) == 0)
                 {
@@ -128,7 +124,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 }
                 close_socket_fd(listen_fd);
             }
-            if (listen_fd < 0)
+            if (!socket_handle_valid(listen_fd))
             {
                 raise_network_error(runtime, native_args.site, "ServeurHTTP.écouter", socket_error_text("écoute"));
             }
@@ -140,10 +136,10 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
             {
                 sockaddr_storage client_addr{};
                 socklen_t client_len = sizeof(client_addr);
-                const int client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
-                if (client_fd < 0)
+                const SocketHandle client_fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+                if (!socket_handle_valid(client_fd))
                 {
-                    if (errno == EINTR)
+                    if (socket_error_is_interrupted(socket_last_error_code()))
                     {
                         continue;
                     }
@@ -154,7 +150,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                     raise_network_error(runtime, native_args.site, "ServeurHTTP.écouter", socket_error_text("acceptation"));
                 }
 
-                int active_client_fd = client_fd;
+                SocketHandle active_client_fd = client_fd;
                 try
                 {
                     const std::string raw = recv_http_message(runtime, active_client_fd, "ServeurHTTP.écouter", native_args.site);
@@ -225,11 +221,11 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                         std::vector<RuntimeArgument> cb_args = {RuntimeArgument{"", canal_client}};
                         runtime.call(canal_handler, NativeArgs{nullptr, &cb_args, native_args.site});
                         run_canal_loop(runtime, canal_state, false, Value::rien(), Value::rien(), Value::rien(), canal_client, native_args.site);
-                        if (canal_state->fd >= 0)
+                        if (socket_handle_valid(canal_state->fd))
                         {
                             close_socket_fd(canal_state->fd);
                         }
-                        active_client_fd = -1;
+                        active_client_fd = kInvalidSocketHandle;
                         continue;
                     }
 
@@ -300,7 +296,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 }
             }
 
-            if (state->fd >= 0)
+            if (socket_handle_valid(state->fd))
             {
                 close_socket_fd(state->fd);
             }

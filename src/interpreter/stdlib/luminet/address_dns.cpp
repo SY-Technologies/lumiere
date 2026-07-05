@@ -1,12 +1,8 @@
 #include "../luminet_shared.hpp"
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <memory>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <string>
-#include <unistd.h>
 
 namespace lumiere
 {
@@ -68,6 +64,7 @@ Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_funct
         "locale",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "LumiNet.Adresse.locale", native_args.site);
+            initialize_socket_platform();
             char host_name[256] = {};
             if (::gethostname(host_name, sizeof(host_name)) != 0)
             {
