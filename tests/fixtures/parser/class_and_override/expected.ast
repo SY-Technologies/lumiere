@@ -1,0 +1,2 @@
+(class-decl Animal internal _ [] (block (var-decl nom Texte false public _) (func-decl decrire internal [] _ (block (expr (call (ident afficher) (args (arg _ (member (ident ici) nom)))))))))
+(class-decl Chien internal Animal [] (block (func-decl decrire internal [] _ (block (expr (call (member (ident parent) decrire) (args)))))))

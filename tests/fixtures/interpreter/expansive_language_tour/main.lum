@@ -1,0 +1,54 @@
+importer Formatage.{etiquette, resume_liste}
+importer Maths.{max, min, puissance}
+
+classe Animal {
+  nom: Texte
+
+  fonction presenter() {
+    retourne "Animal:" + ici.nom
+  }
+}
+
+classe Chien : Animal {
+  remplace fonction presenter() {
+    retourne parent.presenter() + ":Chien"
+  }
+}
+
+fonction somme(valeurs: Liste[Entier]) -> Entier {
+  soit total: Entier = 0
+
+  pour chaque valeur dans valeurs {
+    total = total + valeur
+  }
+
+  retourne total
+}
+
+fonction principal() {
+  soit valeurs = [4, 7, 10]
+  valeurs.ajouter(12)
+  afficher(resume_liste(valeurs))
+  afficher(somme(valeurs))
+
+  soit stats = {"min": min(3, 9), "max": max(3, 9)}
+  stats["delta"] = puissance(2, 3)
+  afficher(stats["min"])
+  afficher(stats["max"])
+  afficher(stats["delta"])
+
+  soit chien = Chien(nom: "Rex")
+  afficher(chien.presenter())
+
+  afficher(etiquette(12))
+  afficher(etiquette("salut"))
+  afficher(etiquette(rien))
+
+  essayer {
+    afficher(valeurs[99])
+  } attraper (e: Texte) {
+    afficher(e.contient("indice hors limites"))
+  } finalement {
+    afficher("cleanup")
+  }
+}

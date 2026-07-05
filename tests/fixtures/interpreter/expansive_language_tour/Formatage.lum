@@ -1,0 +1,24 @@
+public fonction etiquette(valeur: Universel) -> Texte {
+  agir selon valeur {
+    rien -> {
+      retourne "vide"
+    }
+    texte: Texte -> {
+      retourne texte.majuscules()
+    }
+    n: Entier -> {
+      si (n >= 10) {
+        retourne "grand"
+      } sinon {
+        retourne "petit"
+      }
+    }
+    sinon -> {
+      retourne "autre"
+    }
+  }
+}
+
+public fonction resume_liste(valeurs: Liste[Entier]) -> Texte {
+  retourne valeurs.joindre("|")
+}

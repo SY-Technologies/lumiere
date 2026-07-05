@@ -1,0 +1,7 @@
+public fonction additionner(a: Entier, b: Entier) -> Entier {
+  retourne a + b
+}
+
+public fonction decrire(a: Entier, b: Entier) -> Texte {
+  retourne "somme=" + additionner(a, b)
+}

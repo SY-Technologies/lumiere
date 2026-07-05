@@ -1,0 +1,3 @@
+fonction principal() {
+  afficher(message: "bonjour")
+}

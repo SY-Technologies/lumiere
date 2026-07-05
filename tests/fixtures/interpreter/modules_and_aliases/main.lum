@@ -1,0 +1,7 @@
+importer MathsUtiles.{doubler, formater, etiquette comme nom_module}
+
+fonction principal() {
+  soit base = 21
+  afficher(nom_module)
+  afficher(formater(doubler(base)))
+}

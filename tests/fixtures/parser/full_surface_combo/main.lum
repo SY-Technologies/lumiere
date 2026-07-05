@@ -1,0 +1,29 @@
+public soit version: Entier = 1
+
+importer outils.reseau.{client comme client_http, erreur}
+
+interface Presentable {
+  fonction presenter()
+}
+
+classe Animal {
+  nom: Texte
+}
+
+classe Chien : Animal réalise Presentable {
+  privé secret: Texte
+
+  remplace fonction presenter() {
+    essayer {
+      agir selon ici.nom {
+        "Rex" -> afficher("chien-roi")
+        nom: Texte -> afficher(nom.majuscules())
+        sinon -> afficher("inconnu")
+      }
+    } attraper (e: Texte) {
+      afficher(e)
+    } finalement {
+      afficher("fin")
+    }
+  }
+}

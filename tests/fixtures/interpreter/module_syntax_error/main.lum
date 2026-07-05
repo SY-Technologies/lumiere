@@ -1,0 +1,5 @@
+importer Broken
+
+fonction principal() {
+  afficher(1)
+}

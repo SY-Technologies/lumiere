@@ -1,0 +1,5 @@
+importer services.auth.session.{ouvrir, fermer comme terminer}
+
+public interface Service {
+  fonction executer()
+}

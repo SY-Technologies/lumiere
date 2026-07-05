@@ -1,0 +1,9 @@
+public fonction doubler(x: Entier) -> Entier {
+  retourne x * 2
+}
+
+public fonction formater(x: Entier) -> Texte {
+  retourne "valeur=" + x
+}
+
+public soit etiquette = "module-ok"

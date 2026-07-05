@@ -1,0 +1,5 @@
+importer Maths.{racine}
+
+fonction principal() {
+  afficher(racine(-1))
+}

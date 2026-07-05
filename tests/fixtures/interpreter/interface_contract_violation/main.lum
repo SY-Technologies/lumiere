@@ -1,0 +1,14 @@
+interface Serialisable {
+  fonction serialiser()
+  fonction type_nom()
+}
+
+classe Rapport réalise Serialisable {
+  fonction serialiser() {
+    retourne "rapport"
+  }
+}
+
+fonction principal() {
+  afficher("jamais")
+}

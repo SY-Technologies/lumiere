@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/unhandled_throw/main.lum)
+  File "/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/unhandled_throw/main.lum", line 2, column 9
+      lancer "boom"
+            ^
+erreur d'execution: exception non attrapee: boom

@@ -1,0 +1,19 @@
+classe Animal {
+  nom: Texte
+
+  fonction decrire() {
+    afficher("Animal:" + ici.nom)
+  }
+}
+
+classe Chien : Animal {
+  remplace fonction decrire() {
+    parent.decrire()
+    afficher("Chien:" + ici.nom)
+  }
+}
+
+fonction principal() {
+  soit dog = Chien(nom: "Rex")
+  dog.decrire()
+}

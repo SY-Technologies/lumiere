@@ -1,0 +1,1 @@
+(agir-selon (ident valeur) [(branch [(literal (literal 1)) (literal (literal 2))] (expr (call (ident afficher) (args (arg _ (literal "petit")))))) (branch [(typed n Entier)] (block (expr (call (ident afficher) (args (arg _ (ident n)))))))] (expr (call (ident afficher) (args (arg _ (literal "autre"))))))

@@ -1,0 +1,3 @@
+fonction calculer(notes: Liste[Entier], etiquette: Texte = "notes") -> Décimal {
+  retourne 0
+}

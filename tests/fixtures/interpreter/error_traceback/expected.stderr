@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  in principal (/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/error_traceback/main.lum)
+  in casser (/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/error_traceback/main.lum:7:10)
+  File "/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/error_traceback/main.lum", line 3, column 18
+      afficher(notes[4])
+                     ^
+erreur d'execution: indice hors limites

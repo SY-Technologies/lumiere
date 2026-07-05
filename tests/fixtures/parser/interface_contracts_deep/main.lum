@@ -1,0 +1,45 @@
+importer outils.formatage.{badge comme encadrer}
+
+public interface Presentable {
+  fonction presenter()
+}
+
+interface Etiquetable {
+  fonction etiquette()
+}
+
+classe BaseDocument {
+  titre: Texte
+
+  fonction base() {
+    retourne ici.titre
+  }
+}
+
+classe Rapport : BaseDocument réalise Presentable, Etiquetable {
+  privé tags: Liste[Texte]
+
+  fonction presenter() {
+    essayer {
+      retourne encadrer(parent.base())
+    } attraper (e: Texte) {
+      retourne e
+    } finalement {
+      afficher("trace")
+    }
+  }
+
+  fonction etiquette() {
+    agir selon ici.tags.taille() {
+      0 -> {
+        retourne "vide"
+      }
+      n: Entier -> {
+        retourne "tags=" + n
+      }
+      sinon -> {
+        retourne "?"
+      }
+    }
+  }
+}

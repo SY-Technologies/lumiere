@@ -1,0 +1,8 @@
+fonction casser() {
+  soit notes = [1]
+  afficher(notes[4])
+}
+
+fonction principal() {
+  casser()
+}

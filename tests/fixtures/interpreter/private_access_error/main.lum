@@ -1,0 +1,8 @@
+classe Coffre {
+  privé secret: Texte
+}
+
+fonction principal() {
+  soit coffre = Coffre(secret: "or")
+  afficher(coffre.secret)
+}

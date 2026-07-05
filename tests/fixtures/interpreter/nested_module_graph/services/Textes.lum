@@ -1,0 +1,3 @@
+public fonction titre(nom: Texte) -> Texte {
+  retourne nom.majuscules().remplacer("_", "-")
+}

@@ -1,0 +1,10 @@
+fonction principal() {
+  essayer {
+    soit d = {"nom": "Ada"}
+    afficher(d["ville"])
+  } attraper (e: Texte) {
+    afficher(e.contient("cle introuvable"))
+  } finalement {
+    afficher("fin")
+  }
+}

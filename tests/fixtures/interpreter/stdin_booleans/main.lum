@@ -1,0 +1,5 @@
+fonction principal() {
+  afficher(lire_logique())
+  afficher(lire_entier())
+  afficher(lire_décimal())
+}

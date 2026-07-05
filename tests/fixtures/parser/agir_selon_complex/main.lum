@@ -1,0 +1,7 @@
+agir selon valeur {
+  1, 2 -> afficher("petit")
+  n: Entier -> {
+    afficher(n)
+  }
+  sinon -> afficher("autre")
+}

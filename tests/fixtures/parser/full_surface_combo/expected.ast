@@ -1,0 +1,5 @@
+(var-decl version Entier false public (literal 1))
+(import outils.reseau.{client comme client_http, erreur})
+(interface-decl Presentable internal (block (func-decl presenter public [] _ _)))
+(class-decl Animal internal _ [] (block (var-decl nom Texte false public _)))
+(class-decl Chien internal Animal [Presentable] (block (var-decl secret Texte false private _) (func-decl presenter internal [] _ (block (try (block (agir-selon (member (ident ici) nom) [(branch [(literal (literal "Rex"))] (expr (call (ident afficher) (args (arg _ (literal "chien-roi")))))) (branch [(typed nom Texte)] (expr (call (ident afficher) (args (arg _ (call (member (ident nom) majuscules) (args)))))))] (expr (call (ident afficher) (args (arg _ (literal "inconnu"))))))) [(catch e Texte (block (expr (call (ident afficher) (args (arg _ (ident e)))))))] (block (expr (call (ident afficher) (args (arg _ (literal "fin")))))))))))

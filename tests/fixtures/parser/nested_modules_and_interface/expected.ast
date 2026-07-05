@@ -1,0 +1,2 @@
+(import services.auth.session.{ouvrir, fermer comme terminer})
+(interface-decl Service public (block (func-decl executer public [] _ _)))

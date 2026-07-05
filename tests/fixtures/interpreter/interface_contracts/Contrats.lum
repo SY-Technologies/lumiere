@@ -1,0 +1,7 @@
+public interface Presentable {
+  fonction presenter()
+}
+
+public interface Etiquetable {
+  fonction etiquette()
+}

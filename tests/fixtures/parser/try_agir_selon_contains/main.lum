@@ -1,0 +1,13 @@
+fonction principal() {
+  essayer {
+    agir selon valeur {
+      rien -> afficher("vide")
+      n: Entier -> afficher(n)
+      sinon -> afficher("autre")
+    }
+  } attraper (e: Texte) {
+    afficher(e)
+  } finalement {
+    afficher("fin")
+  }
+}

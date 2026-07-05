@@ -1,0 +1,9 @@
+importer services.Calculs.{additionner, decrire}
+importer services.Textes comme textes
+
+fonction principal() {
+  soit base = additionner(20, 22)
+  afficher(base)
+  afficher(decrire(5, 6))
+  afficher(textes.titre("module_graph"))
+}

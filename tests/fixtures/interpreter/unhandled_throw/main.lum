@@ -1,0 +1,3 @@
+fonction principal() {
+  lancer "boom"
+}

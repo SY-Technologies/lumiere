@@ -1,0 +1,5 @@
+importer Cache.{cache_interne}
+
+fonction principal() {
+  afficher(cache_interne)
+}

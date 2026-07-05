@@ -1,0 +1,3 @@
+(var-decl version Entier false public (literal 1))
+(import outils.stats.{moyenne, somme comme total})
+(func-decl principal public [] _ (block (expr (call (ident afficher) (args (arg _ (ident version)))))))

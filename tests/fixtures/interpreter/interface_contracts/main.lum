@@ -1,0 +1,49 @@
+importer Contrats.{Presentable, Etiquetable}
+importer Formatage.{badge comme encadrer}
+
+classe BaseDocument {
+  titre: Texte
+
+  fonction presenter_base() {
+    retourne "doc:" + ici.titre
+  }
+}
+
+classe Rapport : BaseDocument réalise Presentable, Etiquetable {
+  privé tags: Liste[Texte]
+
+  fonction presenter() {
+    essayer {
+      retourne encadrer(parent.presenter_base())
+    } attraper (e: Texte) {
+      retourne e
+    } finalement {
+      afficher("trace:presenter")
+    }
+  }
+
+  fonction etiquette() {
+    agir selon ici.tags.taille() {
+      0 -> {
+        retourne "vide"
+      }
+      n: Entier -> {
+        retourne "tags=" + n
+      }
+      sinon -> {
+        retourne "?"
+      }
+    }
+  }
+
+  fonction total_tags() {
+    retourne ici.tags.taille()
+  }
+}
+
+fonction principal() {
+  soit rapport = Rapport(titre: "rapport", tags: ["urgent", "q2"])
+  afficher(rapport.presenter())
+  afficher(rapport.etiquette())
+  afficher(rapport.total_tags())
+}

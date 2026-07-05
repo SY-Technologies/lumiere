@@ -1,0 +1,5 @@
+public soit version: Entier = 1
+importer outils.stats.{moyenne, somme comme total}
+public fonction principal() {
+  afficher(version)
+}

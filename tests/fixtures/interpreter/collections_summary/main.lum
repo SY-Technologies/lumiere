@@ -1,0 +1,16 @@
+fonction resume(notes: Liste[Entier]) -> Texte {
+  soit somme: Entier = 0
+
+  pour chaque note dans notes {
+    somme = somme + note
+  }
+
+  soit moyenne = somme / notes.taille()
+  retourne "taille=" + notes.taille() + ",moyenne=" + moyenne
+}
+
+fonction principal() {
+  soit notes = [8, 10, 12, 14]
+  afficher(resume(notes))
+  afficher(notes.contient(10))
+}

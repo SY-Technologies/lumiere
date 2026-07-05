@@ -1,0 +1,3 @@
+fonction casser(notes: Liste[Entier) -> Entier {
+  retourne 1
+}
