@@ -294,6 +294,7 @@ Value execute_texte_operation(IRuntime &runtime,
     }
 
     runtime.raise_runtime_error(call_site, "operation Texte inconnue: " + operation);
+    return Value::rien();
 }
 
 void bind_texte_module_adapter(Module &module,

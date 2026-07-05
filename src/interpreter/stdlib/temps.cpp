@@ -460,6 +460,7 @@ void register_temps_module(Module &module, const NativeFunctionFactory &make_nat
             {
                 runtime.raise_runtime_error(native_args.site, "Temps.analyser a echoue: " + std::string(error.what()));
             }
+            return Value::rien();
         });
 
     stdlib_bind_public_function(

@@ -25,9 +25,6 @@ jobs:
           - os: macos-latest
             label: macos-arm64
             cpack_generator: TGZ
-          - os: windows-latest
-            label: windows-x86_64
-            cpack_generator: ZIP
 
     steps:
       - name: Checkout

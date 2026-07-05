@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 
 
@@ -112,7 +113,7 @@ namespace lumiere
         uint32_t line;
         uint32_t column;
 
-        Token(TokenType type, std::string lexeme, u_int32_t line, uint32_t column)
+        Token(TokenType type, std::string lexeme, uint32_t line, uint32_t column)
             : type(type), lexeme(std::move(lexeme)), line(line), column(column) {}
         // A std::string internally owns a heap-allocated buffer.
         //  I choose to move it to avoid allocating a new buffer and copying every character into it.

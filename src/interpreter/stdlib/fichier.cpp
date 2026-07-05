@@ -20,10 +20,19 @@ std::string format_file_time_utc(const std::filesystem::file_time_type &time)
     const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
         time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
     const std::time_t raw_time = std::chrono::system_clock::to_time_t(system_time);
-    const std::tm *utc_time = std::gmtime(&raw_time);
+    std::tm utc_time{};
+#ifdef _WIN32
+    gmtime_s(&utc_time, &raw_time);
+#else
+    const std::tm *utc_time_ptr = std::gmtime(&raw_time);
+    if (utc_time_ptr != nullptr)
+    {
+        utc_time = *utc_time_ptr;
+    }
+#endif
 
     std::ostringstream out;
-    out << std::put_time(utc_time, "%Y-%m-%dT%H:%M:%SZ");
+    out << std::put_time(&utc_time, "%Y-%m-%dT%H:%M:%SZ");
     return out.str();
 }
 
