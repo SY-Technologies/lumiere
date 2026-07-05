@@ -322,6 +322,8 @@ struct LumiereClass
 {
     std::string name;
     std::shared_ptr<RuntimeClassBody> body;
+    std::shared_ptr<LumiereClass> parent;
+    std::unordered_map<std::string, std::shared_ptr<LumiereInterface>> interfaces;
 };
 
 struct LumiereInterface

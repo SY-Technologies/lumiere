@@ -389,16 +389,16 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     }
 
     auto instance = object.as_objet();
-    ClassDeclStmt *lookup_class = class_decl(instance->klass);
+    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
-        if (lookup_class == nullptr || (lookup_class = resolve_parent_class(*lookup_class)) == nullptr)
+        if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
             throw_runtime_error(target.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
         }
     }
 
-    VarDeclStmt *field_decl = lookup_class ? find_field_decl(*lookup_class, target.member.lexeme) : nullptr;
+    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme) : nullptr;
     if (field_decl == nullptr)
     {
         throw_runtime_error(target.member, "champ introuvable: '" + target.member.lexeme + "'");
@@ -775,16 +775,16 @@ void TreeWalker::visit(MemberAccessExpr &expr)
     }
 
     auto instance = object.as_objet();
-    ClassDeclStmt *lookup_class = class_decl(instance->klass);
+    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
-        if (lookup_class == nullptr || (lookup_class = resolve_parent_class(*lookup_class)) == nullptr)
+        if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
             throw_runtime_error(expr.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
         }
     }
 
-    VarDeclStmt *field_decl = lookup_class ? find_field_decl(*lookup_class, expr.member.lexeme) : nullptr;
+    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, expr.member.lexeme) : nullptr;
     if (lookup_class == nullptr)
     {
         auto field_it = instance->fields.find(expr.member.lexeme);
@@ -814,7 +814,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
     if (lookup_class != nullptr)
     {
-        if (FunctionDeclStmt *function_decl = find_method_decl(*lookup_class, expr.member.lexeme))
+        if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme))
         {
             if (function_decl->is_prive && !access_uses_ici(*expr.object))
             {
@@ -1239,13 +1239,24 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
     std::unordered_map<std::string, VarDeclStmt *> fields_by_name;
     std::vector<std::string> field_order;
 
-    std::function<void(ClassDeclStmt &)> collect_fields = [&](ClassDeclStmt &current) {
-        if (ClassDeclStmt *parent = resolve_parent_class(current))
+    std::function<void(const std::shared_ptr<LumiereClass> &)> collect_fields = [&](const std::shared_ptr<LumiereClass> &current) {
+        if (current == nullptr)
         {
-            collect_fields(*parent);
+            return;
         }
 
-        for (auto &member : current.members)
+        if (std::shared_ptr<LumiereClass> parent = parent_class(current))
+        {
+            collect_fields(parent);
+        }
+
+        ClassDeclStmt *current_decl = class_decl(current);
+        if (current_decl == nullptr)
+        {
+            return;
+        }
+
+        for (auto &member : current_decl->members)
         {
             if (auto *field = dynamic_cast<VarDeclStmt *>(member.get()))
             {
@@ -1255,7 +1266,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         }
     };
 
-    collect_fields(*klass_decl);
+    collect_fields(klass);
 
     std::unordered_set<std::string> seen;
     std::vector<std::string> deduped_order;

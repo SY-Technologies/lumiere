@@ -6,6 +6,55 @@
 
 namespace lumiere
 {
+    namespace
+    {
+        bool can_appear_as_member_name(TokenType type)
+        {
+            switch (type)
+            {
+            case TokenType::IDENT:
+            case TokenType::SOIT:
+            case TokenType::FIXE:
+            case TokenType::FONCTION:
+            case TokenType::RETOURNE:
+            case TokenType::CLASSE:
+            case TokenType::INTERFACE:
+            case TokenType::REALISE:
+            case TokenType::REMPLACE:
+            case TokenType::PUBLIC:
+            case TokenType::PRIVE:
+            case TokenType::SI:
+            case TokenType::SINON:
+            case TokenType::POUR:
+            case TokenType::CHAQUE:
+            case TokenType::DANS:
+            case TokenType::TANT_QUE:
+            case TokenType::AGIR_SELON:
+            case TokenType::ARRETER:
+            case TokenType::CONTINUER:
+            case TokenType::ESSAYER:
+            case TokenType::ATTRAPER:
+            case TokenType::FINALEMENT:
+            case TokenType::LANCER:
+            case TokenType::ICI:
+            case TokenType::PARENT:
+            case TokenType::EN:
+            case TokenType::IMPORTER:
+            case TokenType::COMME:
+            case TokenType::EST:
+            case TokenType::ET:
+            case TokenType::OU:
+            case TokenType::NON:
+            case TokenType::VRAI:
+            case TokenType::FAUX:
+            case TokenType::RIEN:
+                return true;
+            default:
+                return false;
+            }
+        }
+    }
+
     Parser::Parser(std::vector<Token> tokens) : m_tokens(std::move(tokens)) {};
 
     const Token &Parser::peek() const
@@ -1025,8 +1074,12 @@ namespace lumiere
             else if (match({TokenType::POINT}))
             {
                 // member access — obj.member
-                const Token &member = expect(TokenType::IDENT, "attendu un nom de membre après '.'");
                 Token dot = previous();
+                if (!can_appear_as_member_name(peek().type))
+                {
+                    error(peek(), "attendu un nom de membre après '.'");
+                }
+                const Token member = advance();
                 expr = std::make_unique<MemberAccessExpr>(
                     std::move(expr),
                     std::move(dot),

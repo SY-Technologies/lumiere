@@ -179,10 +179,8 @@ namespace lumiere
                    object->klass != nullptr &&
                    ([&]()
                     {
-                        ClassDeclStmt *object_class = class_decl(object->klass);
-                        return object_class != nullptr &&
-                               (class_derives_from(*object_class, type_name) ||
-                                class_implements_interface(*object_class, type_name));
+                        return class_derives_from(object->klass, type_name) ||
+                               class_implements_interface(object->klass, type_name);
                     })();
         }
 
@@ -368,34 +366,29 @@ namespace lumiere
         ensure_value_matches_annotation(entry_value, value_annotation, site, context + " (valeur)");
     }
 
-    bool TreeWalker::class_derives_from(const ClassDeclStmt &klass, const std::string &ancestor_name) const
+    bool TreeWalker::class_derives_from(const std::shared_ptr<LumiereClass> &klass,
+                                        const std::string &ancestor_name) const
     {
-        if (klass.name.lexeme == ancestor_name)
+        for (std::shared_ptr<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
         {
-            return true;
-        }
-
-        if (ClassDeclStmt *parent = resolve_parent_class(klass))
-        {
-            return class_derives_from(*parent, ancestor_name);
-        }
-
-        return false;
-    }
-
-    bool TreeWalker::class_implements_interface(const ClassDeclStmt &klass, const std::string &interface_name) const
-    {
-        for (const Token &implemented : klass.interfaces)
-        {
-            if (implemented.lexeme == interface_name)
+            if (current->name == ancestor_name)
             {
                 return true;
             }
         }
 
-        if (ClassDeclStmt *parent = resolve_parent_class(klass))
+        return false;
+    }
+
+    bool TreeWalker::class_implements_interface(const std::shared_ptr<LumiereClass> &klass,
+                                                const std::string &interface_name) const
+    {
+        for (std::shared_ptr<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
         {
-            return class_implements_interface(*parent, interface_name);
+            if (current->interfaces.count(interface_name) != 0)
+            {
+                return true;
+            }
         }
 
         return false;

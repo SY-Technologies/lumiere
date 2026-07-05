@@ -70,6 +70,7 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
         throw_runtime_error(stmt.name, "environnement d'execution absent");
     }
 
+    std::shared_ptr<LumiereClass> runtime_parent = nullptr;
     ClassDeclStmt *parent = nullptr;
     if (!stmt.parent.lexeme.empty())
     {
@@ -82,7 +83,8 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
         {
             throw_runtime_error(stmt.parent, "la classe parente n'est pas une classe: " + stmt.parent.lexeme);
         }
-        parent = class_decl(parent_value.as_classe());
+        runtime_parent = parent_value.as_classe();
+        parent = class_decl(runtime_parent);
     }
 
     if (parent != nullptr)
@@ -91,7 +93,7 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
         {
             if (auto *method = dynamic_cast<FunctionDeclStmt *>(member.get()))
             {
-                FunctionDeclStmt *parent_method = find_method_decl(*parent, method->name.lexeme);
+                FunctionDeclStmt *parent_method = find_method_decl(runtime_parent, method->name.lexeme);
                 if (method->is_remplace && parent_method == nullptr)
                 {
                     throw_runtime_error(method->name, "remplace utilise sans methode parente correspondante: " + method->name.lexeme);
@@ -100,15 +102,20 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
                 {
                     throw_runtime_error(method->name, "methode parente deja definie; utilisez remplace: " + method->name.lexeme);
                 }
+                if (method->is_remplace && parent_method != nullptr && !method_signatures_match(*parent_method, *method))
+                {
+                    throw_runtime_error(method->name, "la methode remplacee doit conserver la meme signature: " + method->name.lexeme);
+                }
             }
         }
     }
 
-    validate_class_interfaces(stmt);
+    std::shared_ptr<LumiereClass> runtime_class = make_runtime_class(stmt);
+    validate_class_interfaces(stmt, runtime_class);
 
     try
     {
-        m_env->define_fixe(stmt.name.lexeme, Value::classe(make_runtime_class(stmt)));
+        m_env->define_fixe(stmt.name.lexeme, Value::classe(std::move(runtime_class)));
     }
     catch (const RuntimeError &error)
     {
@@ -159,7 +166,15 @@ void TreeWalker::visit(ImportStmt &stmt)
             const std::string binding_name = imported_member.alias.lexeme.empty()
                                                  ? imported_member.name.lexeme
                                                  : imported_member.alias.lexeme;
-            m_env->define_fixe(binding_name, member_it->second);
+            try
+            {
+                m_env->define_fixe(binding_name, member_it->second);
+            }
+            catch (const RuntimeError &error)
+            {
+                throw_runtime_error(imported_member.alias.lexeme.empty() ? imported_member.name : imported_member.alias,
+                                    error.raw_message());
+            }
         }
 
         return;
@@ -181,7 +196,15 @@ void TreeWalker::visit(ImportStmt &stmt)
         }
     }
 
-    m_env->define_fixe(binding_name, Value::objet(std::move(namespace_object)));
+    try
+    {
+        m_env->define_fixe(binding_name, Value::objet(std::move(namespace_object)));
+    }
+    catch (const RuntimeError &error)
+    {
+        throw_runtime_error(stmt.alias.lexeme.empty() ? stmt.module_name : stmt.alias,
+                            error.raw_message());
+    }
 }
 
 void TreeWalker::visit(IfStmt &stmt)

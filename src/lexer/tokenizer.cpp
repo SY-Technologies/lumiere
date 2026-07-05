@@ -323,9 +323,11 @@ namespace lumiere
             {"classe", TokenType::CLASSE},
             {"interface", TokenType::INTERFACE},
             {"réalise", TokenType::REALISE},
+            {"realise", TokenType::REALISE},
             {"remplace", TokenType::REMPLACE},
             {"public", TokenType::PUBLIC},
             {"privé", TokenType::PRIVE},
+            {"prive", TokenType::PRIVE},
 
             // control flow
             {"si", TokenType::SI},
@@ -334,6 +336,7 @@ namespace lumiere
             {"chaque", TokenType::CHAQUE},
             {"dans", TokenType::DANS},
             {"arrêter", TokenType::ARRETER},
+            {"arreter", TokenType::ARRETER},
             {"continuer", TokenType::CONTINUER},
 
             // error handling

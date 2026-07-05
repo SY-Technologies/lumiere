@@ -322,6 +322,33 @@ namespace lumiere
         auto body = std::make_shared<TreeWalkerClassBody>();
         body->decl = &decl;
         klass->body = std::move(body);
+
+        if (!decl.parent.lexeme.empty() && m_env != nullptr && m_env->contains(decl.parent.lexeme))
+        {
+            const Value parent_value = m_env->get(decl.parent.lexeme);
+            if (parent_value.is_classe())
+            {
+                klass->parent = parent_value.as_classe();
+            }
+        }
+
+        if (m_env != nullptr)
+        {
+            for (const Token &interface_name : decl.interfaces)
+            {
+                if (!m_env->contains(interface_name.lexeme))
+                {
+                    continue;
+                }
+
+                const Value interface_value = m_env->get(interface_name.lexeme);
+                if (interface_value.is_interface())
+                {
+                    klass->interfaces[interface_name.lexeme] = interface_value.as_interface();
+                }
+            }
+        }
+
         return klass;
     }
 
@@ -368,6 +395,16 @@ namespace lumiere
 
         auto body = std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body);
         return body ? body->decl : nullptr;
+    }
+
+    std::shared_ptr<LumiereClass> TreeWalker::parent_class(const std::shared_ptr<LumiereClass> &klass) const
+    {
+        if (klass == nullptr)
+        {
+            return nullptr;
+        }
+
+        return klass->parent;
     }
 
     InterfaceDeclStmt *TreeWalker::interface_decl(const std::shared_ptr<LumiereInterface> &iface) const

@@ -615,12 +615,14 @@ namespace lumiere
         /**
          * @brief Returns true if the class reaches the named ancestor through its parent chain.
          */
-        bool class_derives_from(const ClassDeclStmt &klass, const std::string &ancestor_name) const;
+        bool class_derives_from(const std::shared_ptr<LumiereClass> &klass,
+                                const std::string &ancestor_name) const;
 
         /**
          * @brief Returns true if the class or one of its ancestors advertises the named interface.
          */
-        bool class_implements_interface(const ClassDeclStmt &klass, const std::string &interface_name) const;
+        bool class_implements_interface(const std::shared_ptr<LumiereClass> &klass,
+                                        const std::string &interface_name) const;
 
         /**
          * @brief Checks that a value matches a declared type annotation.
@@ -677,14 +679,25 @@ namespace lumiere
         ClassDeclStmt *resolve_parent_class(const ClassDeclStmt &klass) const;
 
         /**
+         * @brief Returns the direct parent class value for a runtime class, if any.
+         */
+        std::shared_ptr<LumiereClass> parent_class(const std::shared_ptr<LumiereClass> &klass) const;
+
+        /**
+         * @brief Returns true when two method declarations expose the same callable contract.
+         */
+        bool method_signatures_match(const FunctionDeclStmt &expected,
+                                     const FunctionDeclStmt &actual) const;
+
+        /**
          * @brief Finds a field declaration with the given name on this class.
          */
-        VarDeclStmt *find_field_decl(ClassDeclStmt &klass, const std::string &name) const;
+        VarDeclStmt *find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
 
         /**
          * @brief Finds a method declaration with the given name on this class.
          */
-        FunctionDeclStmt *find_method_decl(ClassDeclStmt &klass, const std::string &name) const;
+        FunctionDeclStmt *find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
 
         /**
          * @brief Finds a method declaration with the given name on this interface.
@@ -697,7 +710,8 @@ namespace lumiere
          * The current check is structural and declaration-based: it ensures the
          * methods exist before class creation proceeds.
          */
-        void validate_class_interfaces(ClassDeclStmt &klass) const;
+        void validate_class_interfaces(ClassDeclStmt &klass,
+                                       const std::shared_ptr<LumiereClass> &class_value) const;
 
         /**
          * @brief Returns true if a member access chain is rooted at `ici`.
