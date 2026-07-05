@@ -17,9 +17,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(LUMIERE_BUILD_SHARED  "Build Lumière as a shared library (OFF builds static)." OFF)
 option(LUMIERE_ENABLE_WARNINGS "Enable strict compiler warnings." ON)
 set(LUMIERE_ENABLE_LUMINET_DEFAULT ON)
-if(WIN32)
-    set(LUMIERE_ENABLE_LUMINET_DEFAULT OFF)
-endif()
 option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABLE_LUMINET_DEFAULT})
 
 set(LUMIERE_LIBRARY_SOURCES
@@ -64,12 +61,19 @@ if(LUMIERE_ENABLE_LUMINET)
         src/interpreter/stdlib/luminet/address_dns.cpp
         src/interpreter/stdlib/luminet/tcp_udp.cpp
         src/interpreter/stdlib/luminet/http_canal.cpp
+        src/interpreter/stdlib/luminet/luminet_platform_posix.cpp
+        src/interpreter/stdlib/luminet/luminet_platform_windows.cpp
     )
 endif()
 
 set(LUMIERE_LIBRARY_TYPE STATIC)
 if(LUMIERE_BUILD_SHARED)
     set(LUMIERE_LIBRARY_TYPE SHARED)
+endif()
+
+set(LUMIERE_PLATFORM_LIBRARIES)
+if(WIN32)
+    list(APPEND LUMIERE_PLATFORM_LIBRARIES ws2_32)
 endif()
 
 # -----------------------------
@@ -118,6 +122,7 @@ add_executable(LUMIERE::lumiere_cli ALIAS lumiere_cli)
 
 set_target_properties(lumiere_cli PROPERTIES OUTPUT_NAME lumiere)
 
+target_link_libraries(lumiere PRIVATE ${LUMIERE_PLATFORM_LIBRARIES})
 target_link_libraries(lumiere_cli PRIVATE LUMIERE::lumiere)
 target_compile_definitions(lumiere_cli PRIVATE LUMIERE_VERSION="${PROJECT_VERSION}")
 
@@ -236,6 +241,7 @@ if(BUILD_TESTING)
             PRIVATE
                 LUMIERE::lumiere
                 GTest::gtest_main
+                ${LUMIERE_PLATFORM_LIBRARIES}
         )
 
         include(GoogleTest)
