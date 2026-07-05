@@ -1,0 +1,3 @@
+public fonction badge(texte: Texte) -> Texte {
+    retourne "[" + texte.majuscules() + "]"
+}

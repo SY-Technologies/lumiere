@@ -1,0 +1,15 @@
+public fonction somme(notes: Liste[Entier]) -> Entier {
+    soit total: Entier = 0
+
+    pour chaque note dans notes {
+        total = total + note
+    }
+
+    retourne total
+}
+
+public fonction moyenne(notes: Liste[Entier]) -> Décimal {
+    retourne somme(notes) / notes.taille()
+}
+
+public soit etiquette = "statistiques"

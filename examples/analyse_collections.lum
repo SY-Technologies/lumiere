@@ -1,0 +1,26 @@
+fonction resume_notes(notes: Liste[Entier]) -> Texte {
+    soit somme: Entier = 0
+
+    pour chaque note dans notes {
+        somme = somme + note
+    }
+
+    soit moyenne = somme / notes.taille()
+    soit premiere = notes[0]
+    soit derniere = notes[notes.taille() - 1]
+
+    retourne "notes=" + notes.taille() + ", premiere=" + premiere + ", derniere=" + derniere + ", moyenne=" + moyenne
+}
+
+fonction principal() {
+    soit notes = [12, 15, 18, 9]
+    soit profil = {
+        "nom": "Ada",
+        "ville": "Paris",
+        "actif": vrai
+    }
+
+    afficher(resume_notes(notes))
+    afficher(profil["nom"] + " depuis " + profil["ville"])
+    afficher(notes.contient(18))
+}

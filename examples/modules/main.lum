@@ -1,0 +1,9 @@
+importer Statistiques.{somme, moyenne, etiquette}
+
+fonction principal() {
+    soit notes = [10, 12, 14, 16]
+
+    afficher(etiquette)
+    afficher(somme(notes))
+    afficher(moyenne(notes))
+}

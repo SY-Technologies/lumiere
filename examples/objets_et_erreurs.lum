@@ -1,0 +1,26 @@
+classe Compteur {
+    valeur: Entier
+
+    fonction incrementer() {
+        ici.valeur = ici.valeur + 1
+    }
+
+    fonction afficher_etat() {
+        afficher("compteur=" + ici.valeur)
+    }
+}
+
+fonction principal() {
+    soit compteur = Compteur(valeur: 2)
+    compteur.incrementer()
+    compteur.afficher_etat()
+
+    essayer {
+        soit notes = [1]
+        afficher(notes[3])
+    } attraper (erreur: Texte) {
+        afficher("capture=" + erreur.contient("indice hors limites"))
+    } finalement {
+        afficher("fin")
+    }
+}
