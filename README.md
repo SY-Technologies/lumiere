@@ -79,3 +79,18 @@ In short:
 
 - CI builds and tests on Linux, macOS, and Windows.
 - Tagged releases package artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`.
+- Release assets are published on the GitHub Releases page for this repository after pushing a `v*` tag.
+
+To publish a release:
+
+```bash
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+Useful checks before or after pushing:
+
+```bash
+git tag
+git show v0.1.0
+```

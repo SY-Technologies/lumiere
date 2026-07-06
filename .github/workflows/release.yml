@@ -64,7 +64,7 @@ jobs:
           if [[ "$src" == *.tar.gz ]]; then
             ext="tar.gz"
           fi
-          dest="build/lumiere-${GITHUB_REF_NAME#v}-${{ matrix.label }}.${ext}"
+          dest="build/lumiere-${GITHUB_REF_NAME}-${{ matrix.label }}.${ext}"
           mv "$src" "$dest"
 
       - name: Upload release artifact
