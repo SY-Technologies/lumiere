@@ -1,0 +1,5 @@
+Lumiere installs the CLI to /usr/local/bin.
+
+After installation, open a new terminal and run:
+
+  lumiere --version

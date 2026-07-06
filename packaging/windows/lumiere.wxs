@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Lumiere"
+    Manufacturer="SY Technologies"
+    Version="$(var.LumiereVersion)"
+    Scope="perMachine"
+    UpgradeCode="8A95A7D0-5A76-4894-A38D-B11F11A94764">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Lumiere is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Lumiere">
+        <Component Id="cmpLumiereExe" Guid="C5A48FA8-BD90-4AA3-94A0-B66A0BDFF5D5">
+          <File Id="filLumiereExe" Source="$(var.LumiereExe)" KeyPath="yes" />
+          <Environment
+            Id="envPath"
+            Name="PATH"
+            Action="set"
+            Part="last"
+            Permanent="no"
+            System="yes"
+            Value="[INSTALLFOLDER]" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDir" Name="Lumiere">
+        <Component Id="cmpStartMenuShortcut" Guid="8D4B35DE-92C8-4588-B92A-450863C69252">
+          <Shortcut
+            Id="scLumiereShortcut"
+            Name="Lumiere"
+            Target="[INSTALLFOLDER]lumiere.exe"
+            WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="rmProgramMenuDir" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\SYTechnologies\Lumiere" Name="StartMenuInstalled" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Lumiere" Level="1">
+      <ComponentRef Id="cmpLumiereExe" />
+      <ComponentRef Id="cmpStartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

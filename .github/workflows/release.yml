@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  package:
+  archive:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -77,3 +77,153 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/lumiere-${{ github.ref_name }}-${{ matrix.label }}.*
+
+  macos-pkg:
+    name: macos pkg (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            label: macos-x86_64
+          - os: macos-latest
+            label: macos-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage install tree
+        run: cmake --install build --prefix build/stage/usr/local
+
+      - name: Build pkg
+        run: |
+          chmod +x scripts/package_macos_pkg.sh
+          scripts/package_macos_pkg.sh "${GITHUB_REF_NAME#v}" build/stage "build/lumiere-${GITHUB_REF_NAME}-${{ matrix.label }}.pkg"
+
+      - name: Verify pkg contents
+        run: pkgutil --payload-files "build/lumiere-${GITHUB_REF_NAME}-${{ matrix.label }}.pkg" | grep '^./usr/local/bin/lumiere$'
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumiere-${{ github.ref_name }}-${{ matrix.label }}-pkg
+          path: build/lumiere-${{ github.ref_name }}-${{ matrix.label }}.pkg
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/lumiere-${{ github.ref_name }}-${{ matrix.label }}.pkg
+
+  linux-deb:
+    name: linux deb
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Build deb
+        run: cpack --config CPackConfig.cmake -G DEB
+        working-directory: build
+
+      - name: Rename deb
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(build/*.deb)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Expected exactly one deb package, found ${#files[@]}"
+            exit 1
+          fi
+          mv "${files[0]}" "build/lumiere-${GITHUB_REF_NAME}-linux-x86_64.deb"
+
+      - name: Verify deb contents
+        run: dpkg-deb --contents "build/lumiere-${GITHUB_REF_NAME}-linux-x86_64.deb" | grep 'usr/.*/bin/lumiere$'
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumiere-${{ github.ref_name }}-linux-x86_64-deb
+          path: build/lumiere-${{ github.ref_name }}-linux-x86_64.deb
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/lumiere-${{ github.ref_name }}-linux-x86_64.deb
+
+  windows-msi:
+    name: windows msi
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Build msi
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $exeCandidates = @(
+            "build/Release/lumiere.exe",
+            "build/lumiere.exe"
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exePath) {
+            throw "Could not find lumiere.exe in expected build output locations."
+          }
+          ./scripts/package_windows_msi.ps1 `
+            -Version $version `
+            -ExePath $exePath `
+            -OutputMsi (Join-Path (Resolve-Path "build") "lumiere-${env:GITHUB_REF_NAME}-windows-x86_64.msi")
+
+      - name: Verify msi exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/lumiere-${env:GITHUB_REF_NAME}-windows-x86_64.msi")) {
+            throw "MSI was not created."
+          }
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumiere-${{ github.ref_name }}-windows-x86_64-msi
+          path: build/lumiere-${{ github.ref_name }}-windows-x86_64.msi
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/lumiere-${{ github.ref_name }}-windows-x86_64.msi

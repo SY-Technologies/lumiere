@@ -74,12 +74,31 @@ After that, `build`, `run`, and `tests` are available in your shell when inside 
 ## Releases
 
 Multi-OS release scaffolding is documented in [`docs/release-scaffolding.md`](./docs/release-scaffolding.md).
+Install guidance is documented in [`docs/install.md`](./docs/install.md).
 
 In short:
 
 - CI builds and tests on Linux, macOS, and Windows.
 - Tagged releases package artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`.
 - Release assets are published on the GitHub Releases page for this repository after pushing a `v*` tag.
+
+Quick install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.2
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.ps1 | iex
+```
 
 To publish a release:
 
