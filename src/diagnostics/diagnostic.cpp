@@ -59,13 +59,13 @@ std::string_view diagnostic_severity_name(const DiagnosticSeverity severity)
 {
     switch (severity)
     {
-    case DiagnosticSeverity::ERROR:
+    case DiagnosticSeverity::ERROR_LEVEL:
         return "error";
-    case DiagnosticSeverity::WARNING:
+    case DiagnosticSeverity::WARNING_LEVEL:
         return "warning";
-    case DiagnosticSeverity::INFORMATION:
+    case DiagnosticSeverity::INFORMATION_LEVEL:
         return "information";
-    case DiagnosticSeverity::HINT:
+    case DiagnosticSeverity::HINT_LEVEL:
         return "hint";
     }
     return "error";
@@ -76,15 +76,15 @@ std::string format_diagnostic(const Diagnostic &diagnostic)
     const char *severity = "erreur";
     switch (diagnostic.severity)
     {
-    case DiagnosticSeverity::ERROR:
+    case DiagnosticSeverity::ERROR_LEVEL:
         break;
-    case DiagnosticSeverity::WARNING:
+    case DiagnosticSeverity::WARNING_LEVEL:
         severity = "avertissement";
         break;
-    case DiagnosticSeverity::INFORMATION:
+    case DiagnosticSeverity::INFORMATION_LEVEL:
         severity = "information";
         break;
-    case DiagnosticSeverity::HINT:
+    case DiagnosticSeverity::HINT_LEVEL:
         severity = "suggestion";
         break;
     }

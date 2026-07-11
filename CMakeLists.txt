@@ -212,6 +212,7 @@ if(BUILD_TESTING)
         tests/test_interpreter_fixtures.cpp
         tests/test_cli_integration.cpp
         tests/test_vm_lir.cpp
+        tests/test_windows_header_compatibility.cpp
     )
 
     set(LUMIERE_HAS_TEST_CASES FALSE)

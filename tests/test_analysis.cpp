@@ -57,7 +57,7 @@ TEST(AnalysisDiagnostics, SerializesStableJsonProtocol)
 {
     const Diagnostic diagnostic{
         "LUM-P0001",
-        DiagnosticSeverity::ERROR,
+        DiagnosticSeverity::ERROR_LEVEL,
         "attendu \"nom\"",
         "ignored.lum",
         {3, 4, 1, 4},

@@ -10,10 +10,10 @@ namespace lumiere
 
 enum class DiagnosticSeverity
 {
-    ERROR,
-    WARNING,
-    INFORMATION,
-    HINT,
+    ERROR_LEVEL,
+    WARNING_LEVEL,
+    INFORMATION_LEVEL,
+    HINT_LEVEL,
 };
 
 struct SourceRange
@@ -31,7 +31,7 @@ struct SourceRange
 struct Diagnostic
 {
     std::string code;
-    DiagnosticSeverity severity = DiagnosticSeverity::ERROR;
+    DiagnosticSeverity severity = DiagnosticSeverity::ERROR_LEVEL;
     std::string message;
     std::string source_path;
     SourceRange range;

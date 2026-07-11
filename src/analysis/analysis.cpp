@@ -12,7 +12,7 @@ namespace lumiere
 bool AnalysisResult::has_errors() const noexcept
 {
     return std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic &diagnostic) {
-        return diagnostic.severity == DiagnosticSeverity::ERROR;
+        return diagnostic.severity == DiagnosticSeverity::ERROR_LEVEL;
     });
 }
 

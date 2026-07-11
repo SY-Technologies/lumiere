@@ -29,7 +29,7 @@ namespace lumiere
             {
                 m_diagnostics.push_back({
                     "LUM-L0001",
-                    DiagnosticSeverity::ERROR,
+                    DiagnosticSeverity::ERROR_LEVEL,
                     token.lexeme,
                     "",
                     {token.start_offset, token.end_offset, token.start_line, token.start_column},

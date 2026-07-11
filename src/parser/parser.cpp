@@ -147,7 +147,7 @@ namespace lumiere
                                             : start + fallback_length;
                 m_diagnostics.push_back({
                     "LUM-P0001",
-                    DiagnosticSeverity::ERROR,
+                    DiagnosticSeverity::ERROR_LEVEL,
                     error.message,
                     "",
                     {start, end, error.token.start_line, error.token.start_column},
