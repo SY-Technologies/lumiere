@@ -20,6 +20,8 @@ set(LUMIERE_ENABLE_LUMINET_DEFAULT ON)
 option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABLE_LUMINET_DEFAULT})
 
 set(LUMIERE_LIBRARY_SOURCES
+    src/analysis/analysis.cpp
+    src/diagnostics/diagnostic.cpp
     src/lexer/lexer.cpp
     src/lexer/token.cpp
     src/lexer/scanner.cpp
@@ -204,6 +206,7 @@ if(BUILD_TESTING)
     include(FetchContent)
     set(LUMIERE_TEST_SOURCES
         tests/test_lexer.cpp
+        tests/test_analysis.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp

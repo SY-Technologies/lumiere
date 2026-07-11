@@ -1,13 +1,13 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
-
-
+#include <utility>
 
 namespace lumiere
 {
-//https://www.univ-orleans.fr/lifo/Members/Mirian.Halfeld/Cours/TLComp/l3-0708-LexA.pdf
-//This document was helpful for brushing up on these concepts
+// https://www.univ-orleans.fr/lifo/Members/Mirian.Halfeld/Cours/TLComp/l3-0708-LexA.pdf
+// This document was helpful for brushing up on these concepts.
 
     enum class TokenType
     {
@@ -112,9 +112,27 @@ namespace lumiere
         std::string lexeme;
         uint32_t line;
         uint32_t column;
+        std::size_t start_offset;
+        std::size_t end_offset;
+        uint32_t start_line;
+        uint32_t start_column;
 
-        Token(TokenType type, std::string lexeme, uint32_t line, uint32_t column)
-            : type(type), lexeme(std::move(lexeme)), line(line), column(column) {}
+        Token(TokenType type,
+              std::string lexeme,
+              uint32_t line,
+              uint32_t column,
+              std::size_t start_offset = 0,
+              std::size_t end_offset = 0,
+              uint32_t start_line = 0,
+              uint32_t start_column = 0)
+            : type(type),
+              lexeme(std::move(lexeme)),
+              line(line),
+              column(column),
+              start_offset(start_offset),
+              end_offset(end_offset),
+              start_line(start_line == 0 ? line : start_line),
+              start_column(start_column == 0 ? column : start_column) {}
         // A std::string internally owns a heap-allocated buffer.
         //  I choose to move it to avoid allocating a new buffer and copying every character into it.
 

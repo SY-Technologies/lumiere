@@ -10,12 +10,26 @@ namespace lumiere
     Token Tokenizer::make_token(TokenType type) const
     {
         std::string lexeme(m_scanner.lexeme());
-        return Token(type, std::move(lexeme), m_scanner.line(), m_scanner.column());
+        return Token(type,
+                     std::move(lexeme),
+                     m_scanner.line(),
+                     m_scanner.column(),
+                     m_scanner.start_offset(),
+                     m_scanner.current_offset(),
+                     m_scanner.start_line(),
+                     m_scanner.start_column());
     }
 
     Token Tokenizer::error_token(const std::string &msg) const
     {
-        return Token(TokenType::ERREUR, msg, m_scanner.line(), m_scanner.column());
+        return Token(TokenType::ERREUR,
+                     msg,
+                     m_scanner.line(),
+                     m_scanner.column(),
+                     m_scanner.start_offset(),
+                     m_scanner.current_offset(),
+                     m_scanner.start_line(),
+                     m_scanner.start_column());
     }
     void Tokenizer::skip_whitespace_and_comments()
     {

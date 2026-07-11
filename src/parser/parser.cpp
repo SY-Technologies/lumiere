@@ -1,7 +1,6 @@
 #include "lumiere/parser/parser.hpp"
+
 #include <algorithm>
-#include <iostream>
-#include <cstdio>
 #include <string>
 
 namespace lumiere
@@ -127,21 +126,41 @@ namespace lumiere
     StmtList Parser::parse()
     {
         m_had_error = false;
+        m_diagnostics.clear();
         StmtList stmts;
-        try
+        while (!is_at_end())
         {
-
-            while (!is_at_end())
+            const std::size_t statement_start = m_current;
+            try
             {
-
                 stmts.push_back(parse_statement());
             }
+            catch (const ParseError &error)
+            {
+                m_had_error = true;
+                const std::size_t start = error.token.start_offset;
+                const std::size_t fallback_length = error.token.type == TokenType::FIN_FICHIER
+                                                        ? 0
+                                                        : std::max<std::size_t>(1, error.token.lexeme.size());
+                const std::size_t end = error.token.end_offset > start
+                                            ? error.token.end_offset
+                                            : start + fallback_length;
+                m_diagnostics.push_back({
+                    "LUM-P0001",
+                    DiagnosticSeverity::ERROR,
+                    error.message,
+                    "",
+                    {start, end, error.token.start_line, error.token.start_column},
+                });
+                if (m_current == statement_start && !is_at_end())
+                {
+                    advance();
+                }
+                synchronize();
+            }
         }
-        catch (const ParseError &err)
+        if (m_had_error)
         {
-            m_had_error = true;
-            std::fprintf(stderr, "[ligne %d, col %d] erreur: %s\n",
-                         err.token.line, err.token.column, err.message.c_str());
             return {};
         }
         return stmts;
@@ -150,6 +169,43 @@ namespace lumiere
     bool Parser::had_error() const
     {
         return m_had_error;
+    }
+
+    const std::vector<Diagnostic> &Parser::diagnostics() const noexcept
+    {
+        return m_diagnostics;
+    }
+
+    void Parser::synchronize()
+    {
+        while (!is_at_end())
+        {
+            switch (peek().type)
+            {
+            case TokenType::SOIT:
+            case TokenType::FONCTION:
+            case TokenType::CLASSE:
+            case TokenType::INTERFACE:
+            case TokenType::IMPORTER:
+            case TokenType::SI:
+            case TokenType::POUR:
+            case TokenType::TANT_QUE:
+            case TokenType::AGIR_SELON:
+            case TokenType::RETOURNE:
+            case TokenType::LANCER:
+            case TokenType::ESSAYER:
+            case TokenType::PUBLIC:
+            case TokenType::PRIVE:
+            case TokenType::REMPLACE:
+                return;
+            case TokenType::ACCOLADE_FERM:
+                advance();
+                return;
+            default:
+                advance();
+                break;
+            }
+        }
     }
 
     StmtPtr Parser::parse_statement()

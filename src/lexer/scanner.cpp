@@ -20,7 +20,7 @@ namespace lumiere
 
     char Scanner::peek_next() const
     {
-        if (is_at_end())
+        if (m_current + 1 >= m_source.size())
         {
             return '\0';
         }
@@ -68,6 +68,24 @@ namespace lumiere
     void Scanner::mark_start()
     {
         m_start = m_current;
+        m_start_line = m_line;
+        m_start_column = m_column;
+    }
+    int Scanner::start_line() const
+    {
+        return m_start_line;
+    }
+    int Scanner::start_column() const
+    {
+        return m_start_column;
+    }
+    std::size_t Scanner::start_offset() const
+    {
+        return m_start;
+    }
+    std::size_t Scanner::current_offset() const
+    {
+        return m_current;
     }
     Scanner::State Scanner::save() const
     {
