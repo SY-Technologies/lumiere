@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -42,6 +43,9 @@ namespace lumiere
          * exists and is a function.
          */
         void execute(Program &program) override;
+
+        /** Executes one REPL submission in the existing global environment. */
+        std::optional<Value> execute_incremental(Program &program);
 
         /**
          * @brief Adds a filesystem location to the module import search list.
@@ -416,7 +420,7 @@ namespace lumiere
                                         Value receiver) const;
 
         /**
-         * @brief Resolves a dotted module name to the `.lum` file that should be imported.
+         * @brief Resolves a dotted module name to the configured source file that should be imported.
          *
          * The search walks the configured import paths and applies the
          * repository's module-to-filesystem naming convention.

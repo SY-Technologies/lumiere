@@ -20,6 +20,8 @@ set(LUMIERE_ENABLE_LUMINET_DEFAULT ON)
 option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABLE_LUMINET_DEFAULT})
 
 set(LUMIERE_LIBRARY_SOURCES
+    src/analysis/analysis.cpp
+    src/diagnostics/diagnostic.cpp
     src/lexer/lexer.cpp
     src/lexer/token.cpp
     src/lexer/scanner.cpp
@@ -45,6 +47,13 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/tree_walker/tree_walker_stmt.cpp
     src/interpreter/tree_walker/tree_walker_types.cpp
     src/interpreter/runtime/value.cpp
+    src/interpreter/vm/lir.cpp
+    src/interpreter/vm/ast_to_lir.cpp
+    src/interpreter/vm/bytecode.cpp
+    src/interpreter/vm/disassembler.cpp
+    src/interpreter/vm/compiler.cpp
+    src/interpreter/vm/lir_to_bytecode.cpp
+    src/interpreter/vm/native_globals.cpp
     src/interpreter/vm/vm.cpp
 )
 
@@ -197,10 +206,13 @@ if(BUILD_TESTING)
     include(FetchContent)
     set(LUMIERE_TEST_SOURCES
         tests/test_lexer.cpp
+        tests/test_analysis.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp
         tests/test_cli_integration.cpp
+        tests/test_vm_lir.cpp
+        tests/test_windows_header_compatibility.cpp
     )
 
     set(LUMIERE_HAS_TEST_CASES FALSE)

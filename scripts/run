@@ -2,9 +2,22 @@
 set -euo pipefail
 
 BUILD_DIR="build"
-USE_VM=0
+BACKEND=""
 FILE=""
-ARGS=()
+
+usage() {
+    echo "usage: run [--build-dir dir] (--tw | --vm) <file>" >&2
+}
+
+select_backend() {
+    local backend="$1"
+    if [[ -n "$BACKEND" && "$BACKEND" != "$backend" ]]; then
+        usage
+        echo "error: choose exactly one backend: --tw or --vm" >&2
+        exit 1
+    fi
+    BACKEND="$backend"
+}
 
 while (($# > 0)); do
     case "$1" in
@@ -12,38 +25,34 @@ while (($# > 0)); do
             BUILD_DIR="${2:?missing value for --build-dir}"
             shift 2
             ;;
-        --vm)
-            USE_VM=1
+        --tw|--tree-walker)
+            select_backend "--tree-walker"
             shift
             ;;
-        --)
+        --vm)
+            select_backend "--vm"
             shift
-            while (($# > 0)); do
-                ARGS+=("$1")
-                shift
-            done
+            ;;
+        -*)
+            usage
+            echo "error: unknown option: $1" >&2
+            exit 1
             ;;
         *)
-            if [[ -z "$FILE" ]]; then
-                FILE="$1"
-            else
-                ARGS+=("$1")
+            if [[ -n "$FILE" ]]; then
+                usage
+                echo "error: provide exactly one source file" >&2
+                exit 1
             fi
+            FILE="$1"
             shift
             ;;
     esac
 done
 
-if [[ -z "$FILE" ]]; then
-    echo "usage: scripts/run [--build-dir dir] [--vm] <file.lum>" >&2
+if [[ -z "$BACKEND" || -z "$FILE" ]]; then
+    usage
     exit 1
 fi
 
-CMD=("$BUILD_DIR/lumiere" "--run")
-if [[ "$USE_VM" -eq 1 ]]; then
-    CMD+=("--vm")
-fi
-CMD+=("$FILE")
-CMD+=("${ARGS[@]}")
-
-"${CMD[@]}"
+"$BUILD_DIR/lumiere" "$BACKEND" "$FILE"

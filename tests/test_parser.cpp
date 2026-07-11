@@ -9,6 +9,7 @@
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/parser.hpp"
 #include "lumiere/parser/printer.hpp"
+#include "lumiere/source_file.hpp"
 
 namespace
 {
@@ -16,6 +17,21 @@ namespace
 using lumiere::AstPrinter;
 using lumiere::Lexer;
 using lumiere::Parser;
+using lumiere::SOURCE_FILE_EXTENSION;
+using lumiere::is_source_file;
+using lumiere::is_test_source_file;
+
+TEST(SourceFile, RecognizesConfiguredExtensionAndTestSuffix)
+{
+    const std::filesystem::path source = "main" + std::string(SOURCE_FILE_EXTENSION);
+    const std::filesystem::path test_source = "maths_test" + std::string(SOURCE_FILE_EXTENSION);
+
+    EXPECT_TRUE(is_source_file(source));
+    EXPECT_FALSE(is_test_source_file(source));
+    EXPECT_TRUE(is_source_file(test_source));
+    EXPECT_TRUE(is_test_source_file(test_source));
+    EXPECT_FALSE(is_source_file("main.txt"));
+}
 using lumiere::StmtList;
 
 StmtList parse_program(const std::string &source)
@@ -409,7 +425,7 @@ TEST(ParserExamples, ParsesAllRepositoryExamples)
 
     for (const auto &entry : std::filesystem::recursive_directory_iterator(examples_dir))
     {
-        if (!entry.is_regular_file() || entry.path().extension() != ".lum")
+        if (!entry.is_regular_file() || !is_source_file(entry.path()))
         {
             continue;
         }

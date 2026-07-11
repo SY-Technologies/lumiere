@@ -7,13 +7,20 @@
 #include <string>
 #include <vector>
 
+#include "lumiere/analysis/analysis.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/interpreter/vm/vm.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/parser.hpp"
+#include "lumiere/source_file.hpp"
+
+using lumiere::is_source_file;
+using lumiere::is_test_source_file;
+using lumiere::SOURCE_FILE_EXTENSION;
 
 namespace
 {
@@ -37,7 +44,12 @@ struct TestCliOptions
 
 void print_usage()
 {
-    std::cerr << "usage: lumiere [--vm] [--run] <fichier.lum>\n";
+    std::cerr << "usage: lumiere [--vm | --tw] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere ir <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere bytecode <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere check [--format=json] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere check --format=json --stdin --source-path <chemin>\n";
+    std::cerr << "       lumiere                         # shell interactif\n";
     std::cerr << "       lumiere tester [chemin] [--filtre motif] [--verbeux] [--arrêter-sur-échec]\n";
     std::cerr << "       lumiere --help\n";
     std::cerr << "       lumiere --version\n";
@@ -50,7 +62,7 @@ void print_version()
 
 std::filesystem::path resolve_input_file(const std::string &file_argument)
 {
-    const std::string extension = ".lum";
+    const std::string extension(SOURCE_FILE_EXTENSION);
     const std::filesystem::path input_path(file_argument);
     if (std::filesystem::exists(input_path))
     {
@@ -58,7 +70,7 @@ std::filesystem::path resolve_input_file(const std::string &file_argument)
     }
 
     std::string file_name = file_argument;
-    if (input_path.extension() != extension)
+    if (!is_source_file(input_path))
     {
         file_name = input_path.stem().string() + extension;
     }
@@ -79,6 +91,255 @@ std::string read_file_text(const std::filesystem::path &path)
     return buffer.str();
 }
 
+std::unique_ptr<lumiere::Program> parse_program(std::string source, std::string source_path)
+{
+    lumiere::AnalysisResult analysis = lumiere::analyze_source(source, source_path);
+    if (analysis.has_errors())
+    {
+        for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
+        {
+            std::cerr << lumiere::format_diagnostic(diagnostic) << '\n';
+        }
+        return nullptr;
+    }
+    return std::make_unique<lumiere::Program>(
+        lumiere::Program{std::move(analysis.statements), std::move(source_path), std::move(source)});
+}
+
+struct CheckOptions
+{
+    std::string file_argument;
+    std::string source_path;
+    bool json = false;
+    bool stdin_input = false;
+};
+
+CheckOptions parse_check_args(const int argc, char *argv[])
+{
+    CheckOptions options;
+    for (int i = 2; i < argc; ++i)
+    {
+        const std::string argument(argv[i]);
+        if (argument == "--format=json")
+        {
+            options.json = true;
+        }
+        else if (argument == "--stdin")
+        {
+            options.stdin_input = true;
+        }
+        else if (argument == "--source-path")
+        {
+            if (++i >= argc)
+            {
+                throw std::runtime_error("--source-path requiert un chemin");
+            }
+            options.source_path = argv[i];
+        }
+        else if (!argument.empty() && argument[0] == '-')
+        {
+            throw std::runtime_error("option check inconnue: " + argument);
+        }
+        else if (!options.file_argument.empty())
+        {
+            throw std::runtime_error("check accepte un seul fichier");
+        }
+        else
+        {
+            options.file_argument = argument;
+        }
+    }
+
+    if (options.stdin_input)
+    {
+        if (!options.file_argument.empty())
+        {
+            throw std::runtime_error("check --stdin n'accepte pas de fichier");
+        }
+        if (options.source_path.empty())
+        {
+            throw std::runtime_error("check --stdin requiert --source-path");
+        }
+    }
+    else if (options.file_argument.empty())
+    {
+        throw std::runtime_error("check requiert un fichier ou --stdin");
+    }
+    return options;
+}
+
+int check_source(const CheckOptions &options)
+{
+    std::string source;
+    std::string source_path = options.source_path;
+    if (options.stdin_input)
+    {
+        std::ostringstream buffer;
+        buffer << std::cin.rdbuf();
+        source = buffer.str();
+    }
+    else
+    {
+        const std::filesystem::path path = resolve_input_file(options.file_argument);
+        source = read_file_text(path);
+        if (source_path.empty())
+        {
+            source_path = path.string();
+        }
+    }
+
+    const lumiere::AnalysisResult analysis = lumiere::analyze_source(std::move(source), source_path);
+    if (options.json)
+    {
+        std::cout << lumiere::diagnostics_to_json(analysis.diagnostics, source_path);
+    }
+    else
+    {
+        for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
+        {
+            std::cerr << lumiere::format_diagnostic(diagnostic) << '\n';
+        }
+    }
+    return analysis.has_errors() ? 1 : 0;
+}
+
+int inspect_program(const std::string &command, const std::string &file_argument)
+{
+    const std::filesystem::path path = resolve_input_file(file_argument);
+    auto program = parse_program(read_file_text(path), path.string());
+    if (program == nullptr)
+    {
+        return 1;
+    }
+
+    lumiere::VmCompiler compiler;
+    if (command == "ir")
+    {
+        std::cout << compiler.lower_to_lir(*program);
+    }
+    else
+    {
+        std::cout << lumiere::disassemble(compiler.compile_for_inspection(*program));
+    }
+    return 0;
+}
+
+bool submission_is_complete(const std::string &source)
+{
+    int delimiters = 0;
+    bool in_string = false;
+    bool escaped = false;
+    bool in_comment = false;
+    for (std::size_t i = 0; i < source.size(); ++i)
+    {
+        const char character = source[i];
+        if (in_comment)
+        {
+            if (character == '\n')
+            {
+                in_comment = false;
+            }
+            continue;
+        }
+        if (in_string)
+        {
+            if (escaped)
+            {
+                escaped = false;
+            }
+            else if (character == '\\')
+            {
+                escaped = true;
+            }
+            else if (character == '"')
+            {
+                in_string = false;
+            }
+            continue;
+        }
+        if (character == '"')
+        {
+            in_string = true;
+        }
+        else if (character == '/' && i + 1 < source.size() && source[i + 1] == '/')
+        {
+            in_comment = true;
+            ++i;
+        }
+        else if (character == '(' || character == '[' || character == '{')
+        {
+            ++delimiters;
+        }
+        else if (character == ')' || character == ']' || character == '}')
+        {
+            --delimiters;
+        }
+    }
+    return delimiters <= 0 && !in_string;
+}
+
+int run_repl()
+{
+    std::cout << "Lumiere " << LUMIERE_VERSION << " (tree-walker)\n"
+              << "Tapez :aide pour l'aide, :quitter pour sortir.\n";
+
+    lumiere::TreeWalker interpreter;
+    std::vector<std::unique_ptr<lumiere::Program>> submissions;
+    std::string source;
+    std::string line;
+    while (true)
+    {
+        std::cout << (source.empty() ? ">>> " : "... ") << std::flush;
+        if (!std::getline(std::cin, line))
+        {
+            std::cout << '\n';
+            return 0;
+        }
+        if (source.empty() && (line == ":quitter" || line == ":q"))
+        {
+            return 0;
+        }
+        if (source.empty() && (line == ":aide" || line == ":h"))
+        {
+            std::cout << "Entrez du code Lumiere. Les declarations restent disponibles.\n"
+                      << ":quitter  quitter le shell\n"
+                      << ":aide     afficher cette aide\n";
+            continue;
+        }
+
+        source += line + '\n';
+        if (!submission_is_complete(source))
+        {
+            continue;
+        }
+        if (source.find_first_not_of(" \t\r\n") == std::string::npos)
+        {
+            source.clear();
+            continue;
+        }
+
+        auto program = parse_program(source, "<repl>");
+        source.clear();
+        if (program == nullptr)
+        {
+            continue;
+        }
+        try
+        {
+            if (const auto result = interpreter.execute_incremental(*program); result.has_value())
+            {
+                std::cout << result->to_string() << '\n';
+            }
+            submissions.push_back(std::move(program));
+        }
+        catch (const lumiere::RuntimeError &error)
+        {
+            std::cerr << error.what() << '\n';
+            submissions.push_back(std::move(program));
+        }
+    }
+}
+
 CliOptions parse_run_args(int argc, char *argv[])
 {
     CliOptions options;
@@ -88,13 +349,21 @@ CliOptions parse_run_args(int argc, char *argv[])
         const std::string arg(argv[i]);
         if (arg == "--vm")
         {
+            if (!options.backend.empty() && options.backend != "vm")
+            {
+                throw std::runtime_error("choisissez un seul backend: --vm ou --tw");
+            }
             options.backend = "vm";
             options.execute = true;
             continue;
         }
 
-        if (arg == "--tree-walker")
+        if (arg == "--tw" || arg == "--tree-walker")
         {
+            if (!options.backend.empty() && options.backend != "tree-walker")
+            {
+                throw std::runtime_error("choisissez un seul backend: --vm ou --tw");
+            }
             options.backend = "tree-walker";
             options.execute = true;
             continue;
@@ -147,13 +416,14 @@ CliOptions parse_run_args(int argc, char *argv[])
     if (options.file_argument.empty())
     {
         print_usage();
-        throw std::runtime_error("aucun fichier .lum fourni");
+        throw std::runtime_error("aucun fichier " + std::string(SOURCE_FILE_EXTENSION) + " fourni");
     }
 
     if (options.backend.empty())
     {
-        options.backend = "tree-walker";
+        options.backend = "vm";
     }
+    options.execute = true;
 
     return options;
 }
@@ -235,7 +505,7 @@ std::vector<std::filesystem::path> discover_test_files(const TestCliOptions &opt
 
     if (std::filesystem::is_regular_file(root))
     {
-        if (root.extension() == ".lum" && root.filename().string().ends_with("_test.lum"))
+        if (is_test_source_file(root))
         {
             files.push_back(root);
         }
@@ -249,8 +519,7 @@ std::vector<std::filesystem::path> discover_test_files(const TestCliOptions &opt
             continue;
         }
 
-        const std::string filename = entry.path().filename().string();
-        if (entry.path().extension() == ".lum" && filename.ends_with("_test.lum"))
+        if (is_test_source_file(entry.path()))
         {
             files.push_back(entry.path());
         }
@@ -402,9 +671,29 @@ int main(int argc, char *argv[])
 {
     try
     {
+        if (argc == 1)
+        {
+            return run_repl();
+        }
+
         if (argc >= 2 && std::string(argv[1]) == "tester")
         {
             return run_tester_command(parse_test_args(argc, argv));
+        }
+
+        if (argc >= 2 && std::string(argv[1]) == "check")
+        {
+            return check_source(parse_check_args(argc, argv));
+        }
+
+        if (argc >= 2 && (std::string(argv[1]) == "ir" || std::string(argv[1]) == "bytecode"))
+        {
+            if (argc != 3)
+            {
+                print_usage();
+                return 1;
+            }
+            return inspect_program(argv[1], argv[2]);
         }
 
         const CliOptions options = parse_run_args(argc, argv);
@@ -421,35 +710,16 @@ int main(int argc, char *argv[])
         }
 
         const std::filesystem::path file_path = resolve_input_file(options.file_argument);
-        std::ifstream file(file_path);
-
-        if (!file.is_open())
-        {
-            std::cerr << "erreur: impossible d'ouvrir '" << options.file_argument << "'\n";
-            return 1;
-        }
-
-        std::ostringstream buffer;
-        buffer << file.rdbuf();
-        std::string source = buffer.str();
-        lumiere::Lexer lexer(source);
-        lumiere::Parser parser(lexer.tokenise());
-        auto statements = parser.parse();
-
-        if (parser.had_error())
+        auto program = parse_program(read_file_text(file_path), file_path.string());
+        if (program == nullptr)
         {
             return 1;
         }
 
         if (options.execute)
         {
-            lumiere::Program program{
-                std::move(statements),
-                file_path.string(),
-                std::move(source),
-            };
             auto backend = make_backend(options.backend);
-            backend->execute(program);
+            backend->execute(*program);
         }
 
         return 0;

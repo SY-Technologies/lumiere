@@ -406,8 +406,9 @@ int64_t expect_integer_argument(IRuntime &runtime, const NativeArgs &native_args
 
 }
 
-void register_temps_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_temps_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
     stdlib_bind_public_function(
         module,
         make_native_function,

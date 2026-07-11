@@ -19,8 +19,9 @@ struct AleatoireModuleState : RuntimeModuleState
 
 }
 
-void register_aleatoire_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_aleatoire_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
     auto state = std::make_shared<AleatoireModuleState>();
     module.state = state;
     stdlib_bind_public_function(

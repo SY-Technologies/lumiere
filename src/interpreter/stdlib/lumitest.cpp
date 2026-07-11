@@ -1,6 +1,7 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 
 #include <cmath>
+#include <exception>
 #include <sstream>
 
 #include "lumiere/interpreter/stdlib/helpers.hpp"
@@ -147,6 +148,7 @@ void run_after_each_hooks(IRuntime &runtime,
     }
 
     runtime.raise_runtime_error(site, full);
+    std::terminate();
 }
 
 bool value_contains(IRuntime &runtime,
@@ -248,9 +250,9 @@ void bind_context_methods(const std::shared_ptr<LumiereObject> &context,
 } // namespace
 
 void register_lumitest_module(Module &module,
-                              const NativeFunctionFactory &make_native_function,
                               std::shared_ptr<LumiTestModuleState> state)
 {
+    const auto &make_native_function = native_function_factory();
     module.state = state;
     auto root = std::make_shared<LumiereObject>();
     auto context_object = std::make_shared<LumiereObject>();

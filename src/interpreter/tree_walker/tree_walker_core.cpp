@@ -138,6 +138,43 @@ namespace lumiere
         }
     }
 
+    std::optional<Value> TreeWalker::execute_incremental(Program &program)
+    {
+        if (m_env == nullptr)
+        {
+            m_env_owner = std::make_shared<Environment>();
+            m_env = m_env_owner.get();
+            m_self = Value::rien();
+        }
+
+        m_result = Value::rien();
+        m_current_source_path = program.source_path;
+        m_current_source_text = program.source_text;
+        m_stack_trace.clear();
+        const bool returns_value = !program.statements.empty() &&
+                                   dynamic_cast<ExprStmt *>(program.statements.back().get()) != nullptr;
+
+        try
+        {
+            for (auto &statement : program.statements)
+            {
+                execute(*statement);
+            }
+        }
+        catch (const ThrownSignal &signal)
+        {
+            throw RuntimeError(
+                "exception non attrapee: " + to_texte(signal.value),
+                signal.source_path,
+                signal.source_text,
+                signal.line,
+                signal.column,
+                signal.stack_trace);
+        }
+
+        return returns_value ? std::optional<Value>(m_result) : std::nullopt;
+    }
+
     void TreeWalker::add_import_path(std::filesystem::path path)
     {
         m_import_paths.push_back(std::move(path));

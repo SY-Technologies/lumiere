@@ -1,7 +1,8 @@
 #pragma once
 
-#include <vector>
+#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace lumiere{
 
@@ -11,6 +12,18 @@ namespace lumiere{
         std::string lexeme() const;
         int  line()   const;
         int  column() const;
+
+        /** @brief Returns the one-based line captured by mark_start(). */
+        int start_line() const;
+
+        /** @brief Returns the one-based column captured by mark_start(). */
+        int start_column() const;
+
+        /** @brief Returns the zero-based UTF-8 byte offset captured by mark_start(). */
+        std::size_t start_offset() const;
+
+        /** @brief Returns the zero-based UTF-8 byte offset of the next byte. */
+        std::size_t current_offset() const;
             /**
          * @brief Returns true if all source characters have been consumed.
          */
@@ -51,6 +64,10 @@ namespace lumiere{
         struct State { std::size_t current; int line; int column; };
         State save()                const;
         void  restore(State saved);
+
+        /**
+         * @brief Marks the current byte, line, and column as the next token's start.
+         */
         void mark_start();
         void mark_line_end();
 
@@ -59,6 +76,8 @@ namespace lumiere{
         std::string m_source;         //< source lumière code to scan
         std::size_t  m_start   = 0;   ///< Index of the first character of the current token.
         std::size_t  m_current = 0;   ///< Index of the character currently being processed, always pointing at the next unprocessed character 
+        int          m_start_line = 1;
+        int          m_start_column = 1;
         int          m_line    = 1;   ///< Current line number (1-based).
         int          m_column  = 1;
 

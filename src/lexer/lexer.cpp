@@ -12,6 +12,7 @@ namespace lumiere
 
     std::vector<Token> Lexer::tokenise()
     {
+        m_diagnostics.clear();
         std::vector<Token> tokens;
 
         while (!m_scanner.is_at_end())
@@ -23,10 +24,31 @@ namespace lumiere
             }
 
             m_scanner.mark_start();
-            tokens.push_back(m_tokenizer.scan_token());
+            Token token = m_tokenizer.scan_token();
+            if (token.type == TokenType::ERREUR)
+            {
+                m_diagnostics.push_back({
+                    "LUM-L0001",
+                    DiagnosticSeverity::ERROR_LEVEL,
+                    token.lexeme,
+                    "",
+                    {token.start_offset, token.end_offset, token.start_line, token.start_column},
+                });
+            }
+            tokens.push_back(std::move(token));
         }
 
-        tokens.push_back(Token(TokenType::FIN_FICHIER, "", m_scanner.line(), m_scanner.column()));
+        tokens.push_back(Token(TokenType::FIN_FICHIER,
+                               "",
+                               m_scanner.line(),
+                               m_scanner.column(),
+                               m_scanner.current_offset(),
+                               m_scanner.current_offset()));
         return tokens;
+    }
+
+    const std::vector<Diagnostic> &Lexer::diagnostics() const noexcept
+    {
+        return m_diagnostics;
     }
 }

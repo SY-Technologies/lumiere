@@ -2,6 +2,7 @@
 
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/lexer/token.hpp"
+#include "lumiere/diagnostics/diagnostic.hpp"
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -33,8 +34,8 @@ namespace lumiere
      * Operator precedence is encoded in the call hierarchy — lower precedence
      * functions call higher precedence ones, bottoming out at parse_primary().
      *
-     * On a syntax error a ParseError is thrown immediately. Error recovery
-     * is not implemented. The first error terminates parsing.
+     * Syntax errors are collected as structured diagnostics. Parsing resumes
+     * at the next safe statement boundary when possible.
      *
      */
     class Parser
@@ -49,8 +50,8 @@ namespace lumiere
         /**
          * @brief Parses the full programme and returns a list of top-level statements.
          *
-         * Catches any ParseError, prints a formatted error message to stderr,
-         * and returns an empty list on failure.
+         * Catches ParseError values, records diagnostics, and recovers at safe
+         * statement boundaries.
          *
          * @return A StmtList representing the programme, or empty on error.
          */
@@ -61,10 +62,19 @@ namespace lumiere
          */
         bool had_error() const;
 
+        /**
+         * @brief Returns diagnostics produced by the latest parse() call.
+         *
+         * The reference remains valid until this parser is destroyed or
+         * parse() is called again.
+         */
+        const std::vector<Diagnostic> &diagnostics() const noexcept;
+
     private:
         std::vector<Token> m_tokens;
         std::size_t m_current = 0;
         bool m_had_error = false;
+        std::vector<Diagnostic> m_diagnostics;
 
         /**
          * @brief Returns the current token without consuming it.
@@ -113,6 +123,11 @@ namespace lumiere
          * @brief Constructs and throws a ParseError at the current position.
          */
         [[noreturn]] void error(const Token &token, const std::string &message);
+
+        /**
+         * @brief Advances to a safe statement boundary after a syntax error.
+         */
+        void synchronize();
 
         // Statement parsing
 

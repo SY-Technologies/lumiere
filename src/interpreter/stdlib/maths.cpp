@@ -8,8 +8,9 @@
 namespace lumiere
 {
 
-void register_maths_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_maths_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
     const Value pi_value = Value::decimal(3.14159265358979323846);
     const Value e_value = Value::decimal(2.71828182845904523536);
     const Value infini_value = Value::decimal(std::numeric_limits<double>::infinity());

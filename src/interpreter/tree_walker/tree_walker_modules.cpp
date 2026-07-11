@@ -5,6 +5,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/parser.hpp"
+#include "lumiere/source_file.hpp"
 
 namespace lumiere
 {
@@ -17,65 +18,14 @@ namespace lumiere
         state->environment = std::make_shared<Environment>();
         module->state = state;
 
-        if (module_name == "Chemin")
-        {
-            register_chemin_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                   { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "Fichier")
-        {
-            register_fichier_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                    { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "Texte")
-        {
-            register_texte_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                  { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "Maths")
-        {
-            register_maths_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                  { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "Temps")
-        {
-            register_temps_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                  { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "Aléatoire" || module_name == "Aleatoire")
-        {
-            register_aleatoire_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                      { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
-        if (module_name == "LumiNet")
-        {
-            register_luminet_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                    { return make_native_function(std::move(handler)); });
-            return module;
-        }
-
+        std::shared_ptr<LumiTestModuleState> lumitest_state;
         if (module_name == "LumiTest")
         {
-            auto lumitest_state = std::make_shared<LumiTestModuleState>();
+            lumitest_state = std::make_shared<LumiTestModuleState>();
             lumitest_state->options = m_lumitest_options;
-            register_lumitest_module(*module, [this](LumiereFunction::NativeHandler handler)
-                                     { return make_native_function(std::move(handler)); }, lumitest_state);
-            return module;
         }
 
-        return nullptr;
+        return register_builtin_module(*module, std::move(lumitest_state)) ? module : nullptr;
     }
 
     std::filesystem::path TreeWalker::resolve_module_path(const std::string &module_name) const
@@ -105,7 +55,7 @@ namespace lumiere
 
                 if (is_last)
                 {
-                    candidate /= segment + ".lum";
+                    candidate /= segment + std::string(SOURCE_FILE_EXTENSION);
                     break;
                 }
 

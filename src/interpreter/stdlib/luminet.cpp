@@ -8,8 +8,9 @@
 namespace lumiere
 {
 
-void register_luminet_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_luminet_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
 #if LUMIERE_ENABLE_LUMINET
     auto root = make_hidden_typed_object("LumiNet");
     root->fields["Adresse"] = make_luminet_adresse_module(make_native_function);

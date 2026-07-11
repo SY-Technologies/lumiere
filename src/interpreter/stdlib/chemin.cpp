@@ -21,8 +21,9 @@ bool is_lumiere_absolute(const std::filesystem::path &path)
 
 }
 
-void register_chemin_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_chemin_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
     stdlib_bind_public_value(module, "separateur", Value::texte(std::string(1, std::filesystem::path::preferred_separator)));
 
     stdlib_bind_public_function(

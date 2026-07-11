@@ -147,7 +147,10 @@ struct BasicBlock
     // convenience: the last instruction (terminator)
     const Instruction *terminator() const
     {
-        if (instructions.empty()) return nullptr;
+        if (instructions.empty())
+        {
+            return nullptr;
+        }
         return &instructions.back();
     }
 
