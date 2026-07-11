@@ -343,11 +343,11 @@ Value execute_texte_member(IRuntime &runtime,
 void register_texte_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    for (const std::string &name : {"taille", "est_vide", "contient", "index_de", "commence_par", "finit_par",
-                                    "separer", "separer_lignes", "remplacer", "elaguer", "elaguer_gauche",
-                                    "elaguer_droite", "minuscules", "majuscules", "inverser", "repeter",
-                                    "inserer", "supprimer", "sous_texte", "en_entier", "en_decimal", "en_logique",
-                                    "remplacer_tout"})
+    for (const char *name : {"taille", "est_vide", "contient", "index_de", "commence_par", "finit_par",
+                             "separer", "separer_lignes", "remplacer", "elaguer", "elaguer_gauche",
+                             "elaguer_droite", "minuscules", "majuscules", "inverser", "repeter",
+                             "inserer", "supprimer", "sous_texte", "en_entier", "en_decimal", "en_logique",
+                             "remplacer_tout"})
     {
         bind_texte_module_adapter(module, make_native_function, name);
     }

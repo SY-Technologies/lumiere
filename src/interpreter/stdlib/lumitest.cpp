@@ -1,6 +1,7 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 
 #include <cmath>
+#include <exception>
 #include <sstream>
 
 #include "lumiere/interpreter/stdlib/helpers.hpp"
@@ -147,6 +148,7 @@ void run_after_each_hooks(IRuntime &runtime,
     }
 
     runtime.raise_runtime_error(site, full);
+    std::terminate();
 }
 
 bool value_contains(IRuntime &runtime,
