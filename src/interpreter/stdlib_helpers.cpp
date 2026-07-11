@@ -156,4 +156,59 @@ void stdlib_bind_public_function(Module &module,
     module.public_members.insert(name);
 }
 
+bool register_builtin_module(Module &module,
+                             std::shared_ptr<LumiTestModuleState> lumitest_state)
+{
+    if (module.name == "Chemin")
+    {
+        register_chemin_module(module);
+    }
+    else if (module.name == "Fichier")
+    {
+        register_fichier_module(module);
+    }
+    else if (module.name == "Texte")
+    {
+        register_texte_module(module);
+    }
+    else if (module.name == "Maths")
+    {
+        register_maths_module(module);
+    }
+    else if (module.name == "Temps")
+    {
+        register_temps_module(module);
+    }
+    else if (module.name == "Aléatoire" || module.name == "Aleatoire")
+    {
+        register_aleatoire_module(module);
+    }
+    else if (module.name == "LumiNet")
+    {
+        register_luminet_module(module);
+    }
+    else if (module.name == "LumiTest")
+        register_lumitest_module(module,
+                                 lumitest_state != nullptr
+                                     ? std::move(lumitest_state)
+                                     : std::make_shared<LumiTestModuleState>());
+    else
+    {
+        return false;
+    }
+
+    return true;
+}
+
+const NativeFunctionFactory &native_function_factory()
+{
+    static const NativeFunctionFactory factory = [](LumiereFunction::NativeHandler handler) {
+        auto function = std::make_shared<LumiereFunction>();
+        function->name = "<native>";
+        function->native_handler = std::move(handler);
+        return function;
+    };
+    return factory;
+}
+
 } // namespace lumiere

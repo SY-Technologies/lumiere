@@ -38,8 +38,9 @@ std::string format_file_time_utc(const std::filesystem::file_time_type &time)
 
 } // namespace
 
-void register_fichier_module(Module &module, const NativeFunctionFactory &make_native_function)
+void register_fichier_module(Module &module)
 {
+    const auto &make_native_function = native_function_factory();
     stdlib_bind_public_function(
         module,
         make_native_function,

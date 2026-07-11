@@ -14,13 +14,19 @@ namespace lumiere
 using NativeFunctionFactory = std::function<std::shared_ptr<LumiereFunction>(LumiereFunction::NativeHandler)>;
 using NativeMethodFactory = std::function<std::shared_ptr<LumiereFunction>(Value, LumiereFunction::NativeHandler)>;
 
-void register_chemin_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_fichier_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_texte_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_maths_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_temps_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_aleatoire_module(Module &module, const NativeFunctionFactory &make_native_function);
-void register_luminet_module(Module &module, const NativeFunctionFactory &make_native_function);
+const NativeFunctionFactory &native_function_factory();
+void register_chemin_module(Module &module);
+void register_fichier_module(Module &module);
+void register_texte_module(Module &module);
+void register_maths_module(Module &module);
+void register_temps_module(Module &module);
+void register_aleatoire_module(Module &module);
+void register_luminet_module(Module &module);
+Value execute_texte_member(IRuntime &runtime,
+                           const Value &receiver,
+                           std::string_view member_name,
+                           const std::vector<RuntimeArgument> &args,
+                           const RuntimeSite &call_site);
 struct LumiTestRuntimeOptions
 {
     bool verbose = false;
@@ -67,8 +73,9 @@ struct LumiTestModuleState : RuntimeModuleState
 };
 
 void register_lumitest_module(Module &module,
-                              const NativeFunctionFactory &make_native_function,
                               std::shared_ptr<LumiTestModuleState> state);
+bool register_builtin_module(Module &module,
+                             std::shared_ptr<LumiTestModuleState> lumitest_state = nullptr);
 bool try_resolve_texte_native_member(const Value &object,
                                      std::string_view member_name,
                                      const NativeMethodFactory &make_native_method,

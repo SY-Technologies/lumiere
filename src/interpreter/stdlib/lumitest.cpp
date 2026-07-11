@@ -248,9 +248,9 @@ void bind_context_methods(const std::shared_ptr<LumiereObject> &context,
 } // namespace
 
 void register_lumitest_module(Module &module,
-                              const NativeFunctionFactory &make_native_function,
                               std::shared_ptr<LumiTestModuleState> state)
 {
+    const auto &make_native_function = native_function_factory();
     module.state = state;
     auto root = std::make_shared<LumiereObject>();
     auto context_object = std::make_shared<LumiereObject>();

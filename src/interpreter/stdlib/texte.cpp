@@ -323,8 +323,26 @@ void bind_texte_module_adapter(Module &module,
 
 } // namespace
 
-void register_texte_module(Module &module, const NativeFunctionFactory &make_native_function)
+Value execute_texte_member(IRuntime &runtime,
+                           const Value &receiver,
+                           const std::string_view member_name,
+                           const std::vector<RuntimeArgument> &args,
+                           const RuntimeSite &call_site)
 {
+    if (!receiver.is_texte())
+    {
+        runtime.raise_runtime_error(call_site, "une valeur Texte est attendue pour l'appel membre");
+    }
+    return execute_texte_operation(runtime,
+                                   receiver.as_texte(),
+                                   std::string(member_name),
+                                   args,
+                                   call_site);
+}
+
+void register_texte_module(Module &module)
+{
+    const auto &make_native_function = native_function_factory();
     for (const std::string &name : {"taille", "est_vide", "contient", "index_de", "commence_par", "finit_par",
                                     "separer", "separer_lignes", "remplacer", "elaguer", "elaguer_gauche",
                                     "elaguer_droite", "minuscules", "majuscules", "inverser", "repeter",
