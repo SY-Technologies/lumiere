@@ -45,6 +45,13 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/tree_walker/tree_walker_stmt.cpp
     src/interpreter/tree_walker/tree_walker_types.cpp
     src/interpreter/runtime/value.cpp
+    src/interpreter/vm/lir.cpp
+    src/interpreter/vm/ast_to_lir.cpp
+    src/interpreter/vm/bytecode.cpp
+    src/interpreter/vm/disassembler.cpp
+    src/interpreter/vm/compiler.cpp
+    src/interpreter/vm/lir_to_bytecode.cpp
+    src/interpreter/vm/native_globals.cpp
     src/interpreter/vm/vm.cpp
 )
 
@@ -201,6 +208,7 @@ if(BUILD_TESTING)
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp
         tests/test_cli_integration.cpp
+        tests/test_vm_lir.cpp
     )
 
     set(LUMIERE_HAS_TEST_CASES FALSE)
