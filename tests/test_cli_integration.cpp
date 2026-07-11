@@ -1664,6 +1664,39 @@ TEST(CliIntegration, ReportsParseErrorsToStderr)
     EXPECT_NE(result.stderr_text.find("erreur"), std::string::npos);
 }
 
+TEST(CliIntegration, CheckReportsTerminalDiagnostics)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_check_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    write_source(main_file, "soit = 1\n");
+
+    const CommandResult result = run_cli("check " + shell_quote(main_file.string()), root);
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_TRUE(result.stdout_text.empty());
+    EXPECT_NE(result.stderr_text.find("erreur[LUM-P0001]"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find(main_file.string() + ":1:6"), std::string::npos);
+}
+
+TEST(CliIntegration, CheckReadsEditorBufferFromStdinAsJson)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_check_stdin_test";
+    std::filesystem::create_directories(root);
+
+    const CommandResult result = run_cli(
+        "check --format=json --stdin --source-path src/main.lum",
+        root,
+        "soit = 1\nsoit = 2\n");
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_NE(result.stdout_text.find("\"protocolVersion\":1"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("\"source\":\"src/main.lum\""), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("\"line\":2"), std::string::npos);
+}
+
 TEST(CliIntegration, ReportsParseErrorsInsideImportedModules)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_import_parse_error_test";

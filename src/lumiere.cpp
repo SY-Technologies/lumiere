@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "lumiere/analysis/analysis.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
@@ -46,6 +47,8 @@ void print_usage()
     std::cerr << "usage: lumiere [--vm | --tw] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere ir <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere bytecode <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere check [--format=json] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "       lumiere check --format=json --stdin --source-path <chemin>\n";
     std::cerr << "       lumiere                         # shell interactif\n";
     std::cerr << "       lumiere tester [chemin] [--filtre motif] [--verbeux] [--arrêter-sur-échec]\n";
     std::cerr << "       lumiere --help\n";
@@ -90,15 +93,114 @@ std::string read_file_text(const std::filesystem::path &path)
 
 std::unique_ptr<lumiere::Program> parse_program(std::string source, std::string source_path)
 {
-    lumiere::Lexer lexer(source);
-    lumiere::Parser parser(lexer.tokenise());
-    auto statements = parser.parse();
-    if (parser.had_error())
+    lumiere::AnalysisResult analysis = lumiere::analyze_source(source, source_path);
+    if (analysis.has_errors())
     {
+        for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
+        {
+            std::cerr << lumiere::format_diagnostic(diagnostic) << '\n';
+        }
         return nullptr;
     }
     return std::make_unique<lumiere::Program>(
-        lumiere::Program{std::move(statements), std::move(source_path), std::move(source)});
+        lumiere::Program{std::move(analysis.statements), std::move(source_path), std::move(source)});
+}
+
+struct CheckOptions
+{
+    std::string file_argument;
+    std::string source_path;
+    bool json = false;
+    bool stdin_input = false;
+};
+
+CheckOptions parse_check_args(const int argc, char *argv[])
+{
+    CheckOptions options;
+    for (int i = 2; i < argc; ++i)
+    {
+        const std::string argument(argv[i]);
+        if (argument == "--format=json")
+        {
+            options.json = true;
+        }
+        else if (argument == "--stdin")
+        {
+            options.stdin_input = true;
+        }
+        else if (argument == "--source-path")
+        {
+            if (++i >= argc)
+            {
+                throw std::runtime_error("--source-path requiert un chemin");
+            }
+            options.source_path = argv[i];
+        }
+        else if (!argument.empty() && argument[0] == '-')
+        {
+            throw std::runtime_error("option check inconnue: " + argument);
+        }
+        else if (!options.file_argument.empty())
+        {
+            throw std::runtime_error("check accepte un seul fichier");
+        }
+        else
+        {
+            options.file_argument = argument;
+        }
+    }
+
+    if (options.stdin_input)
+    {
+        if (!options.file_argument.empty())
+        {
+            throw std::runtime_error("check --stdin n'accepte pas de fichier");
+        }
+        if (options.source_path.empty())
+        {
+            throw std::runtime_error("check --stdin requiert --source-path");
+        }
+    }
+    else if (options.file_argument.empty())
+    {
+        throw std::runtime_error("check requiert un fichier ou --stdin");
+    }
+    return options;
+}
+
+int check_source(const CheckOptions &options)
+{
+    std::string source;
+    std::string source_path = options.source_path;
+    if (options.stdin_input)
+    {
+        std::ostringstream buffer;
+        buffer << std::cin.rdbuf();
+        source = buffer.str();
+    }
+    else
+    {
+        const std::filesystem::path path = resolve_input_file(options.file_argument);
+        source = read_file_text(path);
+        if (source_path.empty())
+        {
+            source_path = path.string();
+        }
+    }
+
+    const lumiere::AnalysisResult analysis = lumiere::analyze_source(std::move(source), source_path);
+    if (options.json)
+    {
+        std::cout << lumiere::diagnostics_to_json(analysis.diagnostics, source_path);
+    }
+    else
+    {
+        for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
+        {
+            std::cerr << lumiere::format_diagnostic(diagnostic) << '\n';
+        }
+    }
+    return analysis.has_errors() ? 1 : 0;
 }
 
 int inspect_program(const std::string &command, const std::string &file_argument)
@@ -577,6 +679,11 @@ int main(int argc, char *argv[])
         if (argc >= 2 && std::string(argv[1]) == "tester")
         {
             return run_tester_command(parse_test_args(argc, argv));
+        }
+
+        if (argc >= 2 && std::string(argv[1]) == "check")
+        {
+            return check_source(parse_check_args(argc, argv));
         }
 
         if (argc >= 2 && (std::string(argv[1]) == "ir" || std::string(argv[1]) == "bytecode"))
