@@ -7,6 +7,7 @@ A programming language interpreter (WIP).
 Project notes live in [`docs/`](./docs/README.md). They are short design documents about both Lumiere internals and the C++ techniques used to build them.
 
 For a practical "what works today" reference, see [`docs/implemented-language-overview.md`](./docs/implemented-language-overview.md).
+The complete execution and inspection command matrix is in [`docs/cli.md`](./docs/cli.md).
 
 ## Prerequisites
 
@@ -30,21 +31,102 @@ build
 
 ## Run
 
-```bash
-build/lumiere <file>
-```
-
-Or with direnv:
+In production, execute a Lumiere source file directly. The bytecode VM is the
+default backend:
 
 ```bash
-run <file>
+lumiere programme.lum
 ```
+
+From a local build, use the same command with the build path:
+
+```bash
+build/lumiere examples/bonjour.lum
+```
+
+Select the tree-walk interpreter explicitly with `--tw`:
+
+```bash
+lumiere --tw programme.lum
+build/lumiere --tw examples/bonjour.lum
+```
+
+Select the VM explicitly when a script should not depend on the configured
+default:
+
+```bash
+lumiere --vm programme.lum
+build/lumiere --vm examples/bonjour.lum
+```
+
+`--tree-walker` is accepted as the long form of `--tw`. The older `--run` flag
+is retained for compatibility, but files execute without it.
+
+The repository-only `run` helper requires an explicit backend selector:
+
+```bash
+run --tw examples/bonjour.lum  # tree-walk interpreter
+run --vm examples/bonjour.lum
+```
+
+The long `--tree-walker` alias is also accepted by `run`.
+
+### Inspect IR and bytecode
+
+Print the linked, human-readable intermediate representation without executing
+the program:
+
+```bash
+build/lumiere ir examples/bonjour.lum
+```
+
+Compile the program and disassemble its bytecode:
+
+```bash
+build/lumiere bytecode examples/bonjour.lum
+```
+
+The bytecode output includes each function's metadata, instruction offsets,
+decoded operands, referenced names or constants, and source coordinates.
+
+### Interactive shell
+
+Launch the Lumiere interactive shell by running the executable without
+arguments:
+
+```bash
+build/lumiere
+# or, after installation:
+lumiere
+```
+
+The shell currently uses the tree-walk interpreter. Variables, functions, and
+closures remain available between submissions. Blocks can span multiple lines.
+
+```text
+>>> soit base = 40
+>>> fonction ajouter(x: Entier) {
+...   retourne base + x
+... }
+>>> ajouter(2)
+42
+```
+
+Use `:aide` for help and `:quitter` or `:q` to exit.
 
 Helpful CLI checks:
 
 ```bash
 build/lumiere --help
 build/lumiere --version
+```
+
+Run LumiTest files ending in `_test.lum` with the test command:
+
+```bash
+build/lumiere tester tests
+build/lumiere tester tests --verbeux
+build/lumiere tester tests --filtre "nom du test"
 ```
 
 ## Tests
