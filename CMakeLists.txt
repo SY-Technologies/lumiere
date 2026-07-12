@@ -21,6 +21,7 @@ option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABL
 
 set(LUMIERE_LIBRARY_SOURCES
     src/analysis/analysis.cpp
+    src/analysis/inspection.cpp
     src/diagnostics/diagnostic.cpp
     src/lexer/lexer.cpp
     src/lexer/token.cpp

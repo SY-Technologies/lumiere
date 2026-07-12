@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "lumiere/analysis/analysis.hpp"
+#include "lumiere/analysis/inspection.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 
 namespace
@@ -11,6 +12,8 @@ using lumiere::Diagnostic;
 using lumiere::DiagnosticSeverity;
 using lumiere::analyze_source;
 using lumiere::diagnostics_to_json;
+using lumiere::inspect_source;
+using lumiere::inspection_to_json;
 
 TEST(AnalysisDiagnostics, ReportsLexicalErrorWithByteRange)
 {
@@ -69,6 +72,37 @@ TEST(AnalysisDiagnostics, SerializesStableJsonProtocol)
         "{\"code\":\"LUM-P0001\",\"severity\":\"error\","
         "\"message\":\"attendu \\\"nom\\\"\",\"range\":{\"start\":3,\"end\":4},"
         "\"line\":1,\"column\":4}]}\n");
+}
+
+TEST(SourceInspection, DescribesFunctionDeclarationsAndReferences)
+{
+    const std::string source =
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n"
+        "soit résultat = doubler(21)\n";
+
+    const auto declaration = inspect_source(source, source.find("doubler"));
+    const auto reference = inspect_source(source, source.rfind("doubler"));
+
+    ASSERT_TRUE(declaration.has_value());
+    ASSERT_TRUE(reference.has_value());
+    EXPECT_EQ(declaration->detail, "fonction doubler(valeur: Entier) -> Entier");
+    EXPECT_EQ(reference->detail, declaration->detail);
+    EXPECT_EQ(reference->start_offset, source.rfind("doubler"));
+}
+
+TEST(SourceInspection, DescribesLanguageKeywords)
+{
+    const auto inspection = inspect_source("soit valeur = 1\n", 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "soit");
+    EXPECT_EQ(inspection->detail, "Déclare une variable.");
+}
+
+TEST(SourceInspection, ReturnsNullForUnknownIdentifiers)
+{
+    EXPECT_EQ(inspection_to_json(inspect_source("inconnu()\n", 2)),
+              "{\"protocolVersion\":1,\"inspection\":null}");
 }
 
 } // namespace
