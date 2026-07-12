@@ -156,12 +156,14 @@ After that, `build`, `run`, and `tests` are available in your shell when inside 
 ## Releases
 
 Multi-OS release scaffolding is documented in [`docs/release-scaffolding.md`](./docs/release-scaffolding.md).
-Install guidance is documented in [`docs/install.md`](./docs/install.md).
+Installation, architecture compatibility, and source-build fallbacks are
+documented in [`INSTALL.md`](./INSTALL.md).
 
 In short:
 
 - CI builds and tests on Linux, macOS, and Windows.
 - Tagged releases package artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`.
+- Platforms without matching artifacts, including Raspberry Pi `aarch64`, can build from source.
 - Release assets are published on the GitHub Releases page for this repository after pushing a `v*` tag.
 
 Quick install:
