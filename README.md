@@ -173,7 +173,7 @@ curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/script
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.2
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.3
 ```
 
 On Windows PowerShell:
@@ -185,13 +185,13 @@ irm https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/insta
 To publish a release:
 
 ```bash
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.3 -m "Release v0.1.3"
+git push origin v0.1.3
 ```
 
 Useful checks before or after pushing:
 
 ```bash
 git tag
-git show v0.1.0
+git show v0.1.3
 ```
