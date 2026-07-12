@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23)
 
-project(LUMIERE VERSION 0.1.4 LANGUAGES CXX)
+project(LUMIERE VERSION 0.1.5 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
