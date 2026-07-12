@@ -15,7 +15,7 @@ for ($i = 0; $i -lt $args.Length; $i++) {
             $InstallDir = $args[$i]
         }
         "--help" {
-            Write-Host "Usage: install.ps1 [--version v0.1.5] [--install-dir <path>]"
+            Write-Host "Usage: install.ps1 [--version v0.1.6] [--install-dir <path>]"
             exit 0
         }
         default {
