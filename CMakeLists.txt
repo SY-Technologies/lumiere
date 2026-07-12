@@ -270,7 +270,7 @@ if(BUILD_TESTING)
         )
 
         include(GoogleTest)
-        gtest_discover_tests(lumiere_unit_tests)
+        gtest_discover_tests(lumiere_unit_tests PROPERTIES TIMEOUT 30)
     else()
         message(STATUS "Skipping lumiere_unit_tests: test sources are empty.")
     endif()

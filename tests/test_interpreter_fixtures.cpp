@@ -131,6 +131,21 @@ int test_send(TestSocket socket, const void *buffer, std::size_t size, int flags
 #endif
 }
 
+bool test_wait_until_readable(TestSocket socket, std::chrono::milliseconds timeout)
+{
+    fd_set read_set;
+    FD_ZERO(&read_set);
+    FD_SET(socket, &read_set);
+    timeval duration{};
+    duration.tv_sec = static_cast<long>(timeout.count() / 1000);
+    duration.tv_usec = static_cast<long>((timeout.count() % 1000) * 1000);
+#ifdef _WIN32
+    return ::select(0, &read_set, nullptr, nullptr, &duration) == 1;
+#else
+    return ::select(socket + 1, &read_set, nullptr, nullptr, &duration) == 1;
+#endif
+}
+
 std::string read_text_file(const std::filesystem::path &path)
 {
     std::ifstream file(path);
@@ -2907,12 +2922,17 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
             test_close_socket(server_fd);
             return "getsockname";
         }
-        promise.set_value(ntohs(bound.sin_port));
-
         if (::listen(server_fd, 1) != 0)
         {
             test_close_socket(server_fd);
             return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
         }
 
         sockaddr_in client_addr{};
@@ -2928,6 +2948,11 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
         char ch = '\0';
         while (true)
         {
+            if (!test_wait_until_readable(client_fd, std::chrono::seconds(5)))
+            {
+                line = "receive timeout";
+                break;
+            }
             const TestRecvSize received = test_recv(client_fd, &ch, 1, 0);
             if (received <= 0)
             {
@@ -3146,11 +3171,16 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
         sockaddr_in bound{};
         socklen_t bound_len = sizeof(bound);
         ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
-        promise.set_value(ntohs(bound.sin_port));
         if (::listen(server_fd, 1) != 0)
         {
             test_close_socket(server_fd);
             return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
         }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
@@ -3232,11 +3262,16 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
         sockaddr_in bound{};
         socklen_t bound_len = sizeof(bound);
         ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
-        promise.set_value(ntohs(bound.sin_port));
         if (::listen(server_fd, 1) != 0)
         {
             test_close_socket(server_fd);
             return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
         }
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
@@ -3707,12 +3742,16 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
         sockaddr_in bound{};
         socklen_t bound_len = sizeof(bound);
         ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
-        promise.set_value(ntohs(bound.sin_port));
-
         if (::listen(server_fd, 1) != 0)
         {
             test_close_socket(server_fd);
             return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
         }
 
         sockaddr_in client_addr{};
@@ -3789,12 +3828,16 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
         sockaddr_in bound{};
         socklen_t bound_len = sizeof(bound);
         ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
-        promise.set_value(ntohs(bound.sin_port));
-
         if (::listen(server_fd, 1) != 0)
         {
             test_close_socket(server_fd);
             return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
         }
 
         sockaddr_in client_addr{};
