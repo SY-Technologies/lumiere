@@ -20,11 +20,17 @@ if (-not (Test-Path $WixSource)) {
     throw "WiX source not found: $WixSource"
 }
 
-$DotnetTools = Join-Path $HOME ".dotnet\tools"
-$env:PATH = "$DotnetTools;$env:PATH"
+$WixVersion = "5.0.2"
+$WixToolDir = Join-Path ([System.IO.Path]::GetTempPath()) "lumiere-wix-$WixVersion"
+$WixExe = Join-Path $WixToolDir "wix.exe"
 
-if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
-    dotnet tool install --global wix
+if (-not (Test-Path $WixExe)) {
+    dotnet tool install wix --tool-path $WixToolDir --version $WixVersion
+}
+
+$InstalledWixVersion = (& $WixExe --version).Trim()
+if (-not $InstalledWixVersion.StartsWith($WixVersion)) {
+    throw "Expected WiX $WixVersion, found $InstalledWixVersion"
 }
 
 $OutputDir = Split-Path -Parent $OutputMsi
@@ -32,7 +38,7 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir | Out-Null
 }
 
-wix build $WixSource `
+& $WixExe build $WixSource `
     -arch x64 `
     -d LumiereVersion=$Version `
     -d LumiereExe="$ResolvedExePath" `
