@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
@@ -8,6 +6,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputMsi
 )
+
+$ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $ExePath)) {
     throw "Executable not found: $ExePath"

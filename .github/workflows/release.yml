@@ -158,7 +158,7 @@ jobs:
           mv "${files[0]}" "build/lumiere-${GITHUB_REF_NAME}-linux-x86_64.deb"
 
       - name: Verify deb contents
-        run: dpkg-deb --contents "build/lumiere-${GITHUB_REF_NAME}-linux-x86_64.deb" | grep 'usr/.*/bin/lumiere$'
+        run: dpkg-deb --contents "build/lumiere-${GITHUB_REF_NAME}-linux-x86_64.deb" | grep -E '[[:space:]]\./usr/(local/)?bin/lumiere$'
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
