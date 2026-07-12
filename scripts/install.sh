@@ -12,7 +12,7 @@ usage() {
 Install the Lumiere CLI from GitHub Releases.
 
 Usage:
-  install.sh [--version v0.1.3] [--prefix ~/.local] [--bin-dir ~/.local/bin]
+  install.sh [--version v0.1.4] [--prefix ~/.local] [--bin-dir ~/.local/bin]
 
 Options:
   --version   Release tag to install. Defaults to the latest release.
