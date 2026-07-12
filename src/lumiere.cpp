@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lumiere/analysis/analysis.hpp"
+#include "lumiere/analysis/inspection.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
@@ -49,6 +50,7 @@ void print_usage()
     std::cerr << "       lumiere bytecode <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere check [--format=json] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere check --format=json --stdin --source-path <chemin>\n";
+    std::cerr << "       lumiere inspect --format=json --stdin --source-path <chemin> --offset <octet>\n";
     std::cerr << "       lumiere                         # shell interactif\n";
     std::cerr << "       lumiere tester [chemin] [--filtre motif] [--verbeux] [--arrêter-sur-échec]\n";
     std::cerr << "       lumiere --help\n";
@@ -201,6 +203,59 @@ int check_source(const CheckOptions &options)
         }
     }
     return analysis.has_errors() ? 1 : 0;
+}
+
+struct InspectOptions
+{
+    std::string source_path;
+    std::size_t byte_offset = 0;
+    bool has_offset = false;
+};
+
+InspectOptions parse_inspect_args(const int argc, char *argv[])
+{
+    InspectOptions options;
+    bool stdin_input = false;
+    bool json = false;
+    for (int i = 2; i < argc; ++i)
+    {
+        const std::string argument(argv[i]);
+        if (argument == "--format=json")
+        {
+            json = true;
+        }
+        else if (argument == "--stdin")
+        {
+            stdin_input = true;
+        }
+        else if (argument == "--source-path" && ++i < argc)
+        {
+            options.source_path = argv[i];
+        }
+        else if (argument == "--offset" && ++i < argc)
+        {
+            options.byte_offset = std::stoull(argv[i]);
+            options.has_offset = true;
+        }
+        else
+        {
+            throw std::runtime_error("option inspect inconnue ou incomplète: " + argument);
+        }
+    }
+    if (!json || !stdin_input || options.source_path.empty() || !options.has_offset)
+    {
+        throw std::runtime_error(
+            "inspect requiert --format=json --stdin --source-path <chemin> --offset <octet>");
+    }
+    return options;
+}
+
+int inspect_source_at_offset(const InspectOptions &options)
+{
+    std::ostringstream buffer;
+    buffer << std::cin.rdbuf();
+    std::cout << lumiere::inspection_to_json(lumiere::inspect_source(buffer.str(), options.byte_offset));
+    return 0;
 }
 
 int inspect_program(const std::string &command, const std::string &file_argument)
@@ -684,6 +739,11 @@ int main(int argc, char *argv[])
         if (argc >= 2 && std::string(argv[1]) == "check")
         {
             return check_source(parse_check_args(argc, argv));
+        }
+
+        if (argc >= 2 && std::string(argv[1]) == "inspect")
+        {
+            return inspect_source_at_offset(parse_inspect_args(argc, argv));
         }
 
         if (argc >= 2 && (std::string(argv[1]) == "ir" || std::string(argv[1]) == "bytecode"))

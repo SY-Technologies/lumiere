@@ -1697,6 +1697,27 @@ TEST(CliIntegration, CheckReadsEditorBufferFromStdinAsJson)
     EXPECT_NE(result.stdout_text.find("\"line\":2"), std::string::npos);
 }
 
+TEST(CliIntegration, InspectReadsEditorBufferFromStdinAsJson)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_inspect_stdin_test";
+    std::filesystem::create_directories(root);
+    const std::string source =
+        "fonction doubler(x: Entier) -> Entier { retourne x * 2 }\n"
+        "doubler(4)\n";
+
+    const CommandResult result = run_cli(
+        "inspect --format=json --stdin --source-path src/main.lum --offset " +
+            std::to_string(source.rfind("doubler")),
+        root,
+        source);
+    std::filesystem::remove_all(root);
+
+    EXPECT_EQ(result.exit_code, 0);
+    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_NE(result.stdout_text.find("\"protocolVersion\":1"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("fonction doubler(x: Entier) -> Entier"), std::string::npos);
+}
+
 TEST(CliIntegration, ReportsParseErrorsInsideImportedModules)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_import_parse_error_test";
