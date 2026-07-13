@@ -1118,9 +1118,22 @@ Value TreeWalker::call_builtin(const std::string &name,
 
     if (name == "lire")
     {
+        if (args.size() > 1)
+        {
+            throw_runtime_error(call_site, "lire accepte au plus 1 argument");
+        }
         if (!args.empty())
         {
-            throw_runtime_error(call_site, "lire n'accepte pas d'arguments");
+            if (!args[0].name.empty())
+            {
+                throw_runtime_error(call_site, "lire n'accepte pas d'arguments nommes");
+            }
+            const Value prompt = evaluate(*args[0].value);
+            if (!prompt.is_texte())
+            {
+                throw_runtime_error(call_site, "lire attend une invite de type Texte");
+            }
+            std::cout << prompt.as_texte();
         }
 
         std::string line;
@@ -1144,9 +1157,22 @@ Value TreeWalker::call_builtin(const std::string &name,
 
     if (name == "lire_entier")
     {
+        if (args.size() > 1)
+        {
+            throw_runtime_error(call_site, "lire_entier accepte au plus 1 argument");
+        }
         if (!args.empty())
         {
-            throw_runtime_error(call_site, "lire_entier n'accepte pas d'arguments");
+            if (!args[0].name.empty())
+            {
+                throw_runtime_error(call_site, "lire_entier n'accepte pas d'arguments nommes");
+            }
+            const Value prompt = evaluate(*args[0].value);
+            if (!prompt.is_texte())
+            {
+                throw_runtime_error(call_site, "lire_entier attend une invite de type Texte");
+            }
+            std::cout << prompt.as_texte();
         }
 
         std::string line;

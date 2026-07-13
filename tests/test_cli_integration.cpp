@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -147,6 +148,59 @@ TEST(CliIntegration, ExecutesBareFileWithVmByDefault)
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "vm par defaut\n");
     EXPECT_TRUE(result.stderr_text.empty());
+}
+
+TEST(CliIntegration, VmReadBuiltinsSupportOptionalPrompts)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_read_prompt_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    write_source(main_file,
+                 "fonction principal() {\n"
+                 "  soit champ = \"Nom\"\n"
+                 "  soit nom = lire(champ + \": \")\n"
+                 "  soit age = lire_entier(\"\")\n"
+                 "  afficher(nom, age)\n"
+                 "}\n");
+
+    const CommandResult result = run_cli(
+        "--vm --run " + shell_quote(main_file.string()), root, "Ada\n36\n");
+    std::filesystem::remove_all(root);
+
+    EXPECT_EQ(result.exit_code, 0);
+    EXPECT_EQ(result.stdout_text, "Nom: Ada 36\n");
+    EXPECT_TRUE(result.stderr_text.empty());
+}
+
+TEST(CliIntegration, VmReadBuiltinsRejectInvalidPrompts)
+{
+    struct InvalidPromptCase
+    {
+        std::string expression;
+        std::string expected_error;
+    };
+
+    const std::vector<InvalidPromptCase> cases = {
+        {"lire(\"x\", \"y\")", "lire accepte au plus 1 argument"},
+        {"lire_entier(42)", "lire_entier attend une invite de type Texte"},
+        {"lire(invite: \"Nom: \")", "arguments nommes ne sont pas pris en charge pour 'lire'"},
+    };
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_invalid_read_prompt_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    for (const InvalidPromptCase &test_case : cases)
+    {
+        write_source(main_file,
+                     "fonction principal() {\n  " + test_case.expression + "\n}\n");
+
+        const CommandResult result = run_cli(
+            "--vm --run " + shell_quote(main_file.string()), root);
+
+        EXPECT_NE(result.exit_code, 0) << test_case.expression;
+        EXPECT_TRUE(result.stdout_text.empty()) << test_case.expression;
+        EXPECT_NE(result.stderr_text.find(test_case.expected_error), std::string::npos)
+            << test_case.expression;
+    }
+    std::filesystem::remove_all(root);
 }
 
 TEST(CliIntegration, ExecutesVmProgramWithMoreThan256Constants)
@@ -1567,12 +1621,15 @@ TEST(CliIntegration, ReplPreservesDefinitionsAndPrintsExpressionResults)
                                          "  retourne base + x\n"
                                          "}\n"
                                          "ajouter(2)\n"
+                                         "afficher(\"visible\")\n"
                                          ":quitter\n");
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_NE(result.stdout_text.find("Lumiere "), std::string::npos);
     EXPECT_NE(result.stdout_text.find("42\n"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("visible\n"), std::string::npos);
+    EXPECT_EQ(result.stdout_text.find("visible\nrien\n"), std::string::npos);
     EXPECT_TRUE(result.stderr_text.empty());
 }
 

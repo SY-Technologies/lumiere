@@ -482,15 +482,16 @@ Behavior:
 
 ### Input
 
-- `lire() -> Texte`
-- `lire_entier() -> Entier`
+- `lire(invite: Texte = "") -> Texte`
+- `lire_entier(invite: Texte = "") -> Entier`
 - `lire_décimal() -> Décimal`
 - `lire_decimal() -> Décimal`
 - `lire_logique() -> Logique`
 
 Behavior:
 
-- all input builtins reject arguments
+- `lire` and `lire_entier` accept one optional positional prompt and print it without a newline before reading
+- the other input builtins reject arguments
 - `lire_logique` accepts only `vrai` or `faux`
 
 ## 14. Built-in collection methods
