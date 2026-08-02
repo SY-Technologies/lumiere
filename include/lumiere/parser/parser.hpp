@@ -165,6 +165,7 @@ namespace lumiere
          * @brief Parses an interface declaration.
          */
         StmtPtr parse_interface_decl(bool is_public = false);
+        StmtPtr parse_type_alias(bool is_public = false);
 
         /**
          * @brief Parses an import statement.
@@ -204,19 +205,9 @@ namespace lumiere
         StmtPtr parse_continue();
 
         /**
-         * @brief Parses a lancer statement.
-         */
-        StmtPtr parse_throw();
-
-        /**
-         * @brief Parses an essayer / attraper / finalement block.
-         */
-        StmtPtr parse_try();
-
-        /**
          * @brief Parses an agir selon statement.
          */
-        StmtPtr parse_agir_selon();
+        std::unique_ptr<AgirSelonStmt> parse_agir_selon();
 
         // Expression parsing — ordered low to high precedence for instance (4+(3+8))
 
@@ -300,7 +291,9 @@ namespace lumiere
         /**
          * @brief Parses a type annotation such as Entier or Liste[Entier].
          */
-        Token parse_type_annotation(const std::string &message);
+        TypeExpr parse_type_annotation(const std::string &message);
+        TypeExpr parse_union_type(const std::string &message);
+        TypeExpr parse_generic_type(const std::string &message);
     };
 
 } // namespace lumiere

@@ -71,6 +71,19 @@ std::string replace_all_copy(const std::string &text,
     return result;
 }
 
+std::string replace_first_copy(const std::string &text,
+                               const std::string &needle,
+                               const std::string &replacement)
+{
+    std::string result = text;
+    const std::size_t position = result.find(needle);
+    if (position != std::string::npos)
+    {
+        result.replace(position, needle.size(), replacement);
+    }
+    return result;
+}
+
 Value execute_texte_operation(IRuntime &runtime,
                               const std::string &text,
                               const std::string &operation,
@@ -132,14 +145,25 @@ Value execute_texte_operation(IRuntime &runtime,
         runtime.annotate_value(result, "Liste[Texte]", call_site);
         return result;
     }
-    if (operation == "remplacer" || operation == "remplacer_tout")
+    if (operation == "remplacer")
     {
-        stdlib_expect_positional(runtime, args, 2, "Texte." + operation, call_site);
-        const std::string needle = stdlib_expect_text(runtime, args[0].value, "Texte." + operation, call_site);
-        const std::string replacement = stdlib_expect_text(runtime, args[1].value, "Texte." + operation, call_site);
+        stdlib_expect_positional(runtime, args, 2, "Texte.remplacer", call_site);
+        const std::string needle = stdlib_expect_text(runtime, args[0].value, "Texte.remplacer", call_site);
+        const std::string replacement = stdlib_expect_text(runtime, args[1].value, "Texte.remplacer", call_site);
         if (needle.empty())
         {
-            runtime.raise_runtime_error(call_site, "Texte." + operation + " attend une cible non vide");
+            runtime.raise_runtime_error(call_site, "Texte.remplacer attend une cible non vide");
+        }
+        return Value::texte(replace_first_copy(text, needle, replacement));
+    }
+    if (operation == "remplacer_tout")
+    {
+        stdlib_expect_positional(runtime, args, 2, "Texte.remplacer_tout", call_site);
+        const std::string needle = stdlib_expect_text(runtime, args[0].value, "Texte.remplacer_tout", call_site);
+        const std::string replacement = stdlib_expect_text(runtime, args[1].value, "Texte.remplacer_tout", call_site);
+        if (needle.empty())
+        {
+            runtime.raise_runtime_error(call_site, "Texte.remplacer_tout attend une cible non vide");
         }
         return Value::texte(replace_all_copy(text, needle, replacement));
     }
@@ -191,6 +215,11 @@ Value execute_texte_operation(IRuntime &runtime,
         {
             runtime.raise_runtime_error(call_site, "Texte.repeter attend un nombre non negatif");
         }
+        constexpr int64_t kMaxRepeatBytes = 10 * 1024 * 1024;
+        if (!text.empty() && count > kMaxRepeatBytes / static_cast<int64_t>(text.size()))
+        {
+            runtime.raise_runtime_error(call_site, "Texte.repeter: le resultat depasse la taille maximale autorisee");
+        }
         std::string result;
         for (int64_t i = 0; i < count; ++i)
         {
@@ -216,7 +245,7 @@ Value execute_texte_operation(IRuntime &runtime,
         stdlib_expect_positional(runtime, args, 2, "Texte.supprimer", call_site);
         const int64_t debut = stdlib_expect_integer(runtime, args[0].value, "Texte.supprimer", call_site);
         const int64_t longueur = stdlib_expect_integer(runtime, args[1].value, "Texte.supprimer", call_site);
-        if (debut < 0 || longueur < 0 || static_cast<std::size_t>(debut) > text.size())
+        if (debut < 0 || longueur < 0 || static_cast<std::size_t>(debut) >= text.size())
         {
             runtime.raise_runtime_error(call_site, "suppression hors limites");
         }
@@ -241,6 +270,10 @@ Value execute_texte_operation(IRuntime &runtime,
         {
             runtime.raise_runtime_error(call_site, "longueur negative interdite");
         }
+        if (static_cast<std::size_t>(debut) + static_cast<std::size_t>(longueur) > text.size())
+        {
+            runtime.raise_runtime_error(call_site, "sous_texte: la longueur depasse la taille du texte");
+        }
         return Value::texte(text.substr(static_cast<std::size_t>(debut), static_cast<std::size_t>(longueur)));
     }
     if (operation == "en_entier")
@@ -252,13 +285,24 @@ Value execute_texte_operation(IRuntime &runtime,
             const long long value = std::stoll(text, &consumed);
             if (consumed != text.size())
             {
-                runtime.raise_runtime_error(call_site, "Texte.en_entier a echoue: le texte ne represente pas un Entier valide");
+                return stdlib_failure(
+                    stdlib_error_value(
+                        "Texte.ErreurConversion",
+                        "en_entier",
+                        "le texte ne représente pas un Entier valide"),
+                    call_site);
             }
-            return Value::entier(static_cast<int64_t>(value));
+            return stdlib_success(
+                Value::entier(static_cast<int64_t>(value)));
         }
         catch (const std::exception &)
         {
-            runtime.raise_runtime_error(call_site, "Texte.en_entier a echoue: le texte ne represente pas un Entier valide");
+            return stdlib_failure(
+                stdlib_error_value(
+                    "Texte.ErreurConversion",
+                    "en_entier",
+                    "le texte ne représente pas un Entier valide"),
+                call_site);
         }
     }
     if (operation == "en_decimal")
@@ -270,13 +314,23 @@ Value execute_texte_operation(IRuntime &runtime,
             const double value = std::stod(text, &consumed);
             if (consumed != text.size())
             {
-                runtime.raise_runtime_error(call_site, "Texte.en_decimal a echoue: le texte ne represente pas un Decimal valide");
+                return stdlib_failure(
+                    stdlib_error_value(
+                        "Texte.ErreurConversion",
+                        "en_decimal",
+                        "le texte ne représente pas un Décimal valide"),
+                    call_site);
             }
-            return Value::decimal(value);
+            return stdlib_success(Value::decimal(value));
         }
         catch (const std::exception &)
         {
-            runtime.raise_runtime_error(call_site, "Texte.en_decimal a echoue: le texte ne represente pas un Decimal valide");
+            return stdlib_failure(
+                stdlib_error_value(
+                    "Texte.ErreurConversion",
+                    "en_decimal",
+                    "le texte ne représente pas un Décimal valide"),
+                call_site);
         }
     }
     if (operation == "en_logique")
@@ -284,13 +338,18 @@ Value execute_texte_operation(IRuntime &runtime,
         stdlib_expect_positional(runtime, args, 0, "Texte.en_logique", call_site);
         if (text == "vrai")
         {
-            return Value::logique(true);
+            return stdlib_success(Value::logique(true));
         }
         if (text == "faux")
         {
-            return Value::logique(false);
+            return stdlib_success(Value::logique(false));
         }
-        runtime.raise_runtime_error(call_site, "Texte.en_logique a echoue: le texte doit valoir 'vrai' ou 'faux'");
+        return stdlib_failure(
+            stdlib_error_value(
+                "Texte.ErreurConversion",
+                "en_logique",
+                "le texte doit valoir 'vrai' ou 'faux'"),
+            call_site);
     }
 
     runtime.raise_runtime_error(call_site, "operation Texte inconnue: " + operation);
@@ -343,6 +402,12 @@ Value execute_texte_member(IRuntime &runtime,
 void register_texte_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
+    auto error_class = std::make_shared<LumiereClass>();
+    error_class->name = "Texte.ErreurConversion";
+    stdlib_bind_public_value(
+        module,
+        "ErreurConversion",
+        Value::classe(std::move(error_class)));
     for (const char *name : {"taille", "est_vide", "contient", "index_de", "commence_par", "finit_par",
                              "separer", "separer_lignes", "remplacer", "elaguer", "elaguer_gauche",
                              "elaguer_droite", "minuscules", "majuscules", "inverser", "repeter",

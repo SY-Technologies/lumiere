@@ -24,6 +24,7 @@ namespace lumiere
             {TokenType::RETOURNE, "RETOURNE"},
             {TokenType::CLASSE, "CLASSE"},
             {TokenType::INTERFACE, "INTERFACE"},
+            {TokenType::TYPE, "TYPE"},
             {TokenType::REALISE, "REALISE"},
             {TokenType::REMPLACE, "REMPLACE"},
             {TokenType::PUBLIC, "PUBLIC"},
@@ -40,12 +41,6 @@ namespace lumiere
             {TokenType::ARRETER, "ARRETER"},
             {TokenType::CONTINUER, "CONTINUER"},
 
-            // Keywords — error handling
-            {TokenType::ESSAYER, "ESSAYER"},
-            {TokenType::ATTRAPER, "ATTRAPER"},
-            {TokenType::FINALEMENT, "FINALEMENT"},
-            {TokenType::LANCER, "LANCER"},
-
             // Keywords — other
             {TokenType::ICI, "ICI"},
             {TokenType::PARENT, "PARENT"},
@@ -53,6 +48,8 @@ namespace lumiere
             {TokenType::IMPORTER, "IMPORTER"},
             {TokenType::COMME, "COMME"},
             {TokenType::EST, "EST"},
+            {TokenType::PROPAGER, "PROPAGER"},
+            {TokenType::IGNORER, "IGNORER"},
 
             // Operators — arithmetic
             {TokenType::PLUS, "PLUS"},

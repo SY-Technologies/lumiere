@@ -93,9 +93,16 @@ std::string read_file_text(const std::filesystem::path &path)
     return buffer.str();
 }
 
-std::unique_ptr<lumiere::Program> parse_program(std::string source, std::string source_path)
+std::unique_ptr<lumiere::Program> parse_program(
+    std::string source,
+    std::string source_path,
+    const bool consume_last_expression = false)
 {
-    lumiere::AnalysisResult analysis = lumiere::analyze_source(source, source_path);
+    lumiere::AnalysisResult analysis =
+        lumiere::analyze_source(
+            source,
+            source_path,
+            lumiere::AnalysisOptions{consume_last_expression});
     if (analysis.has_errors())
     {
         for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
@@ -373,7 +380,7 @@ int run_repl()
             continue;
         }
 
-        auto program = parse_program(source, "<repl>");
+        auto program = parse_program(source, "<repl>", true);
         source.clear();
         if (program == nullptr)
         {
@@ -621,18 +628,19 @@ int run_test_file(const std::filesystem::path &file_path,
                   lumiere::LumiTestRunSummary &aggregate)
 {
     const std::string source = read_file_text(file_path);
-    lumiere::Lexer lexer(source);
-    std::vector<lumiere::Token> tokens = lexer.tokenise();
-    lumiere::Parser parser(tokens);
-    auto statements = parser.parse();
-    if (parser.had_error())
+    lumiere::AnalysisResult analysis =
+        lumiere::analyze_source(source, file_path.string());
+    if (analysis.has_errors())
     {
-        std::cerr << "erreur: échec d'analyse du fichier de test " << file_path.string() << '\n';
+        for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
+        {
+            std::cerr << lumiere::format_diagnostic(diagnostic) << '\n';
+        }
         return 1;
     }
 
     lumiere::Program program{
-        std::move(statements),
+        std::move(analysis.statements),
         file_path.string(),
         source,
     };

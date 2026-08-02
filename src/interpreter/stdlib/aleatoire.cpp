@@ -31,8 +31,12 @@ void register_aleatoire_module(Module &module)
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "Aléatoire.graine", native_args.site);
-            const uint64_t seed = static_cast<uint64_t>(stdlib_expect_integer(runtime, args[0].value, "Aléatoire.graine", native_args.site));
-            state->generator.seed(seed);
+            const int64_t seed_raw = stdlib_expect_integer(runtime, args[0].value, "Aléatoire.graine", native_args.site);
+            if (seed_raw < 0)
+            {
+                runtime.raise_runtime_error(native_args.site, "Aléatoire.graine attend une valeur non negative");
+            }
+            state->generator.seed(static_cast<uint64_t>(seed_raw));
             return Value::rien();
         });
 
@@ -48,6 +52,17 @@ void register_aleatoire_module(Module &module)
             if (min_value > max_value)
             {
                 runtime.raise_runtime_error(native_args.site, "Aléatoire.entier attend min <= max");
+            }
+            if (min_value > 0)
+            {
+                if (max_value - min_value > std::numeric_limits<int64_t>::max())
+                {
+                    runtime.raise_runtime_error(native_args.site, "Aléatoire.entier: l'intervalle est trop grand");
+                }
+            }
+            else if (max_value > std::numeric_limits<int64_t>::max() + min_value)
+            {
+                runtime.raise_runtime_error(native_args.site, "Aléatoire.entier: l'intervalle est trop grand");
             }
             std::uniform_int_distribution<int64_t> distribution(min_value, max_value);
             return Value::entier(distribution(state->generator));
@@ -73,6 +88,10 @@ void register_aleatoire_module(Module &module)
             stdlib_expect_positional(runtime, args, 2, "Aléatoire.décimal_entre", native_args.site);
             const double min_value = stdlib_expect_decimal(runtime, args[0].value, "Aléatoire.décimal_entre", native_args.site);
             const double max_value = stdlib_expect_decimal(runtime, args[1].value, "Aléatoire.décimal_entre", native_args.site);
+            if (std::isnan(min_value) || std::isnan(max_value) || std::isinf(min_value) || std::isinf(max_value))
+            {
+                runtime.raise_runtime_error(native_args.site, "Aléatoire.décimal_entre attend des valeurs finies valides");
+            }
             if (min_value > max_value)
             {
                 runtime.raise_runtime_error(native_args.site, "Aléatoire.décimal_entre attend min <= max");

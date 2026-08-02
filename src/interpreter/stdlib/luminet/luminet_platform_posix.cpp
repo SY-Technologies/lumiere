@@ -128,6 +128,17 @@ void platform_socket_enable_reuse_address(SocketHandle handle)
     ::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 }
 
+void platform_socket_enable_nosigpipe(SocketHandle handle)
+{
+    (void)handle;
+#ifndef MSG_NOSIGNAL
+#ifdef SO_NOSIGPIPE
+    int enable = 1;
+    ::setsockopt(handle, SOL_SOCKET, SO_NOSIGPIPE, &enable, sizeof(enable));
+#endif
+#endif
+}
+
 bool platform_socket_enable_broadcast(SocketHandle handle)
 {
     int enabled = 1;

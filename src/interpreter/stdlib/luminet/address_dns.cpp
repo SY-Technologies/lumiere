@@ -15,11 +15,17 @@ Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_funct
         make_native_function,
         "analyser",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurAdresse",
+                "analyser",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "LumiNet.Adresse.analyser", native_args.site);
             const std::string text = stdlib_expect_text(runtime, args[0].value, "LumiNet.Adresse.analyser", native_args.site);
             const auto [host, port] = parse_host_port(runtime, text, "LumiNet.Adresse.analyser", native_args.site);
             return make_address_value(host, port, make_native_function);
+                });
         });
     bind_object_method(
         adresse,
@@ -63,6 +69,11 @@ Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_funct
         make_native_function,
         "locale",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurAdresse",
+                "locale",
+                [&]() -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "LumiNet.Adresse.locale", native_args.site);
             initialize_socket_platform();
             char host_name[256] = {};
@@ -91,6 +102,7 @@ Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_funct
                 }
             }
             return make_address_value(host, 0, make_native_function);
+                });
         });
     return Value::objet(std::move(adresse));
 }
@@ -103,6 +115,11 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
         make_native_function,
         "résoudre",
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurDNS",
+                "résoudre",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "LumiNet.DNS.résoudre", native_args.site);
             const std::string host = stdlib_expect_text(runtime, args[0].value, "LumiNet.DNS.résoudre", native_args.site);
@@ -125,12 +142,18 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
             }
             raise_network_error(runtime, native_args.site, "LumiNet.DNS.résoudre", "aucune adresse trouvée");
             return Value::rien();
+                });
         });
     bind_object_method(
         dns,
         make_native_function,
         "résoudre_tous",
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurDNS",
+                "résoudre_tous",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "LumiNet.DNS.résoudre_tous", native_args.site);
             const std::string host = stdlib_expect_text(runtime, args[0].value, "LumiNet.DNS.résoudre_tous", native_args.site);
@@ -158,12 +181,18 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
             Value values = Value::liste(std::move(list));
             runtime.annotate_value(values, "Liste[Texte]", native_args.site);
             return values;
+                });
         });
     bind_object_method(
         dns,
         make_native_function,
         "résoudre_inverse",
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurDNS",
+                "résoudre_inverse",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "LumiNet.DNS.résoudre_inverse", native_args.site);
             const std::string ip = stdlib_expect_text(runtime, args[0].value, "LumiNet.DNS.résoudre_inverse", native_args.site);
@@ -185,7 +214,8 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
             }
             else
             {
-                runtime.raise_runtime_error(native_args.site, "LumiNet.DNS.résoudre_inverse requiert une adresse IP valide");
+                throw NetworkFailure(
+                    "LumiNet.DNS.résoudre_inverse requiert une adresse IP valide");
             }
             char host[NI_MAXHOST] = {};
             const int rc = ::getnameinfo(reinterpret_cast<sockaddr *>(&storage), len, host, sizeof(host), nullptr, 0, 0);
@@ -194,6 +224,7 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
                 raise_network_error(runtime, native_args.site, "LumiNet.DNS.résoudre_inverse", gai_strerror(rc));
             }
             return Value::texte(host);
+                });
         });
     return Value::objet(std::move(dns));
 }

@@ -85,6 +85,11 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
 
     bind_object_method(object, make_native_function, "écouter",
         [state, make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurHTTP",
+                "écouter_http",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 2, "ServeurHTTP.écouter", native_args.site);
             const std::string host = stdlib_expect_text(runtime, args[0].value, "ServeurHTTP.écouter", native_args.site);
@@ -116,6 +121,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 {
                     continue;
                 }
+                platform_socket_enable_nosigpipe(listen_fd);
                 platform_socket_enable_reuse_address(listen_fd);
                 if (::bind(listen_fd, entry->ai_addr, entry->ai_addrlen) == 0 &&
                     ::listen(listen_fd, 16) == 0)
@@ -215,6 +221,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
 
                         auto canal_state = std::make_shared<CanalClientState>();
                         canal_state->fd = active_client_fd;
+                        active_client_fd = kInvalidSocketHandle;
                         canal_state->client_side = false;
                         canal_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
                         Value canal_client = make_canal_client_value(runtime, canal_state, make_native_function, native_args.site);
@@ -225,7 +232,6 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                         {
                             close_socket_fd(canal_state->fd);
                         }
-                        active_client_fd = kInvalidSocketHandle;
                         continue;
                     }
 
@@ -302,6 +308,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
             }
 
             return Value::rien();
+                });
         });
 
     return Value::objet(std::move(object));

@@ -191,8 +191,37 @@ std::vector<std::string_view> split_generic_arguments(const std::string_view spe
     return arguments;
 }
 
-bool matches_type_name(const Value &value, const std::string_view full_name)
+std::string_view trim_type_name(std::string_view name)
 {
+    const std::size_t first = name.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos)
+    {
+        return {};
+    }
+    return name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
+}
+
+bool matches_type_name(const Value &value, std::string_view full_name)
+{
+    full_name = trim_type_name(full_name);
+    std::size_t depth = 0;
+    for (std::size_t i = 0; i < full_name.size(); ++i)
+    {
+        if (full_name[i] == '[')
+        {
+            ++depth;
+        }
+        else if (full_name[i] == ']')
+        {
+            --depth;
+        }
+        else if (full_name[i] == '|' && depth == 0)
+        {
+            return matches_type_name(value, full_name.substr(0, i)) ||
+                   matches_type_name(value, full_name.substr(i + 1));
+        }
+    }
+
     const std::size_t generic_start = full_name.find('[');
     const std::string_view name = full_name.substr(0, generic_start);
     const std::string_view generic_spec = generic_start == std::string_view::npos
@@ -226,6 +255,26 @@ bool matches_type_name(const Value &value, const std::string_view full_name)
     if (name == "Universel")
     {
         return true;
+    }
+    if (name == "Résultat")
+    {
+        if (!value.is_resultat())
+        {
+            return false;
+        }
+        if (generic_spec.empty())
+        {
+            return true;
+        }
+        const auto arguments = split_generic_arguments(generic_spec);
+        if (arguments.size() != 2)
+        {
+            return false;
+        }
+        const auto result = value.as_resultat();
+        return matches_type_name(
+            result->payload,
+            arguments[result->success ? 0 : 1]);
     }
     if (name == "Classe")
     {
@@ -1245,18 +1294,11 @@ Value make_bound_member(Value receiver,
 
 struct CallFrame
 {
-    struct ExceptionHandler
-    {
-        std::size_t target = 0;
-        std::size_t stack_depth = 0;
-    };
-
     const FunctionBytecode *function = nullptr;
     std::size_t ip = 0;
     std::size_t stack_base = 0;
     std::vector<std::shared_ptr<Value>> locals;
     std::vector<std::shared_ptr<Value>> captures;
-    std::vector<ExceptionHandler> handlers;
     SourceLocation call_site {};
 };
 
@@ -1554,24 +1596,6 @@ Value run_frames(VmExecutionState &execution,
                                      std::move(entry_captures),
                                      entry_call_site));
 
-    const auto route_exception = [&stack, &frames](const Value &thrown) {
-        while (!frames.empty())
-        {
-            CallFrame &target_frame = frames.back();
-            if (!target_frame.handlers.empty())
-            {
-                const CallFrame::ExceptionHandler handler = target_frame.handlers.back();
-                target_frame.handlers.pop_back();
-                stack.resize(handler.stack_depth);
-                stack.push_back(thrown);
-                target_frame.ip = handler.target;
-                return true;
-            }
-            stack.resize(target_frame.stack_base);
-            frames.pop_back();
-        }
-        return false;
-    };
     const auto build_runtime_error = [&frames](std::string message, const std::size_t opcode_offset)
     {
         if (message.starts_with("VM: "))
@@ -1836,7 +1860,17 @@ Value run_frames(VmExecutionState &execution,
                 {
                     throw VmRuntimeError("VM: le symbole n'est pas une interface: " + interface_name);
                 }
-                klass->interfaces[interface_name] = interface_values[i].as_interface();
+                const bool error_marker =
+                    interface_name == "Erreur" ||
+                    (interface_name.size() > 8 &&
+                     interface_name.compare(
+                         interface_name.size() - 8,
+                         8,
+                         "::Erreur") == 0);
+                klass->interfaces[
+                    error_marker ? "Erreur"
+                                 : interface_name] =
+                    interface_values[i].as_interface();
             }
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
@@ -1858,6 +1892,10 @@ Value run_frames(VmExecutionState &execution,
             }
             for (const auto &[interface_name, interface] : klass->interfaces)
             {
+                if (interface_name == "Erreur")
+                {
+                    continue;
+                }
                 const auto interface_body = std::dynamic_pointer_cast<VmInterfaceBody>(interface->body);
                 if (interface_body == nullptr || interface_body->descriptor_index >= module.interfaces.size())
                 {
@@ -1920,34 +1958,6 @@ Value run_frames(VmExecutionState &execution,
                 name_space->fields[member.name] = globals[member.global_index];
             }
             stack.push_back(Value::objet(std::move(name_space)));
-            break;
-        }
-        case Opcode::TRY_BEGIN:
-        {
-            const std::size_t target = read_u16(chunk, ip);
-            if (target >= chunk.code.size())
-            {
-                throw VmRuntimeError("VM: gestionnaire d'exception invalide");
-            }
-            frame.handlers.push_back({target, stack.size()});
-            break;
-        }
-        case Opcode::TRY_END:
-            if (frame.handlers.empty())
-            {
-                throw VmRuntimeError("VM: TRY_END sans gestionnaire");
-            }
-            frame.handlers.pop_back();
-            break;
-        case Opcode::THROW:
-        {
-            const Value thrown = pop_value(stack);
-            RuntimeError unhandled = build_runtime_error("exception non attrapee: " + thrown.to_string(),
-                                                         opcode_offset);
-            if (!route_exception(thrown))
-            {
-                throw unhandled;
-            }
             break;
         }
         case Opcode::JUMP:
@@ -2148,8 +2158,17 @@ Value run_frames(VmExecutionState &execution,
                 if (function->is_native())
                 {
                     RuntimeSite site;
-                    stack.push_back(runtime_services.call(globals[global_index],
-                                                        NativeArgs{nullptr, &call_args, site}));
+                    site.source_path = module.source_path;
+                    if (opcode_offset < chunk.locations.size())
+                    {
+                        site.line = static_cast<int>(
+                            chunk.locations[opcode_offset].line);
+                        site.column = static_cast<int>(
+                            chunk.locations[opcode_offset].column);
+                    }
+                    stack.push_back(runtime_services.call(
+                        globals[global_index],
+                        NativeArgs{nullptr, &call_args, std::move(site)}));
                     break;
                 }
                 const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
@@ -2183,7 +2202,26 @@ Value run_frames(VmExecutionState &execution,
                 {
                     values.push_back(argument.value);
                 }
-                stack.push_back(native->second(values));
+                Value result = native->second(values);
+                if (result.is_resultat() &&
+                    !result.as_resultat()->success &&
+                    !result.as_resultat()->origin.has_value())
+                {
+                    RuntimeSite origin;
+                    origin.source_path = module.source_path;
+                    if (opcode_offset < chunk.locations.size())
+                    {
+                        origin.line = static_cast<int>(
+                            chunk.locations[opcode_offset].line);
+                        origin.column = static_cast<int>(
+                            chunk.locations[opcode_offset].column);
+                    }
+                    result = Value::resultat(
+                        false,
+                        result.as_resultat()->payload,
+                        std::move(origin));
+                }
+                stack.push_back(std::move(result));
                 break;
             }
 
@@ -2480,6 +2518,87 @@ Value run_frames(VmExecutionState &execution,
             }
             stack.pop_back();
             break;
+        case Opcode::RESULT_IS_SUCCESS:
+        {
+            const Value result = pop_value(stack);
+            if (!result.is_resultat())
+            {
+                throw VmRuntimeError("VM: motif de résultat appliqué à une autre valeur");
+            }
+            stack.push_back(Value::logique(result.as_resultat()->success));
+            break;
+        }
+        case Opcode::RESULT_FAILURE_TYPE:
+        case Opcode::RESULT_FAILURE_TYPE_LONG:
+        {
+            const std::size_t index =
+                opcode == Opcode::RESULT_FAILURE_TYPE_LONG
+                    ? read_u24(chunk, ip)
+                    : read_byte(chunk, ip);
+            if (index >= module.types.size())
+            {
+                throw VmRuntimeError("VM: index de type invalide");
+            }
+            const Value result = pop_value(stack);
+            stack.push_back(Value::logique(
+                result.is_resultat() &&
+                !result.as_resultat()->success &&
+                matches_type_name(result.as_resultat()->payload,
+                                  module.types[index])));
+            break;
+        }
+        case Opcode::RESULT_PAYLOAD:
+        {
+            const Value result = pop_value(stack);
+            if (!result.is_resultat())
+            {
+                throw VmRuntimeError("VM: extraction appliquée à une valeur non résultat");
+            }
+            stack.push_back(result.as_resultat()->payload);
+            break;
+        }
+        case Opcode::PROPAGATE:
+        {
+            const Value result = pop_value(stack);
+            if (!result.is_resultat())
+            {
+                throw VmRuntimeError("VM: propager exige une valeur Résultat");
+            }
+            if (result.as_resultat()->success)
+            {
+                stack.push_back(result.as_resultat()->payload);
+            }
+            else
+            {
+                Value error = result;
+                if (frame.function->return_type.empty() ||
+                    !matches_type_name(error,
+                                       frame.function->return_type))
+                {
+                    throw VmRuntimeError(
+                        "VM: propager exige une fonction englobante dont le retour '" +
+                        frame.function->return_type + "' accepte " +
+                        error.type_name());
+                }
+                stack.resize(frame.stack_base);
+                frames.pop_back();
+                if (frames.empty())
+                {
+                    return error;
+                }
+                stack.push_back(std::move(error));
+            }
+            break;
+        }
+        case Opcode::IGNORE_RESULT:
+        {
+            const Value value = pop_value(stack);
+            if (!value.is_resultat())
+            {
+                throw VmRuntimeError("VM: ignorer exige une valeur Résultat");
+            }
+            break;
+        }
         case Opcode::RETURN:
         {
             Value result = stack.size() > frame.stack_base ? stack.back() : Value::rien();
@@ -2496,11 +2615,7 @@ Value run_frames(VmExecutionState &execution,
         }
         catch (const VmRuntimeError &error)
         {
-            RuntimeError unhandled = build_runtime_error(error.what(), opcode_offset);
-            if (!route_exception(Value::texte(error.what())))
-            {
-                throw unhandled;
-            }
+            throw build_runtime_error(error.what(), opcode_offset);
         }
     }
 
@@ -2513,7 +2628,28 @@ void VM::execute(Program &program)
 {
     VmCompiler compiler;
     ModuleBytecode module = compiler.compile(program);
-    static_cast<void>(run(module));
+    const Value result = run(module);
+    if (result.is_resultat() && !result.as_resultat()->success)
+    {
+        const std::optional<RuntimeSite> &origin =
+            result.as_resultat()->origin;
+        throw RuntimeError(
+            "principal a échoué: " +
+                result.as_resultat()->payload.to_string(),
+            origin.has_value()
+                ? origin->source_path
+                : program.source_path,
+            !origin.has_value() ||
+                    origin->source_path == program.source_path
+                ? program.source_text
+                : std::string{},
+            origin.has_value()
+                ? static_cast<uint32_t>(origin->line)
+                : 0,
+            origin.has_value()
+                ? static_cast<uint32_t>(origin->column)
+                : 0);
+    }
 }
 
 Value VM::run(const ModuleBytecode &module)
@@ -2539,6 +2675,21 @@ Value VM::run(const ModuleBytecode &module)
     for (std::size_t i = 0; i < module.globals.size(); ++i)
     {
         const std::string &name = module.globals[i];
+        if (name == "Erreur" ||
+            (name.size() > 8 &&
+             name.compare(
+                 name.size() - 8,
+                 8,
+                 "::Erreur") == 0))
+        {
+            auto interface =
+                std::make_shared<LumiereInterface>();
+            interface->name = "Erreur";
+            globals[i] =
+                Value::interface(std::move(interface));
+            global_defined[i] = true;
+            continue;
+        }
         if (const auto function = function_indices.find(name); function != function_indices.end())
         {
             auto body = std::make_shared<VmClosureBody>();
@@ -2556,7 +2707,9 @@ Value VM::run(const ModuleBytecode &module)
             callable->min_arity = 0;
             callable->max_arity = 255;
             const NativeFunction handler = native->second;
-            callable->native_handler = [handler, name](IRuntime &, const NativeArgs &args) {
+            callable->native_handler = [handler, name](
+                                           IRuntime &,
+                                           const NativeArgs &args) {
                 std::vector<Value> values;
                 values.reserve(args.arguments->size());
                 for (const RuntimeArgument &argument : *args.arguments)
@@ -2567,7 +2720,17 @@ Value VM::run(const ModuleBytecode &module)
                     }
                     values.push_back(argument.value);
                 }
-                return handler(values);
+                Value result = handler(values);
+                if (name == "Échec" &&
+                    result.is_resultat() &&
+                    !result.as_resultat()->origin.has_value())
+                {
+                    result = Value::resultat(
+                        false,
+                        result.as_resultat()->payload,
+                        args.site);
+                }
+                return result;
             };
             globals[i] = Value::fonction(std::move(callable));
             global_defined[i] = true;

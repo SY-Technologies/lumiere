@@ -26,6 +26,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
 
     object->fields["définir_délai"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurDélai", "définir_délai", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "SocketUDP.définir_délai", native_args.site);
             apply_timeout(runtime,
@@ -34,10 +35,12 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                           "SocketUDP.définir_délai",
                           native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["envoyer"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "envoyer", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 3, "SocketUDP.envoyer", native_args.site);
             const std::string text = stdlib_expect_text(runtime, args[0].value, "SocketUDP.envoyer", native_args.site);
@@ -65,10 +68,12 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer", socket_error_text("envoi"));
             }
             return Value::rien();
+            });
         }));
 
     object->fields["envoyer_octets"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "envoyer_octets", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 3, "SocketUDP.envoyer_octets", native_args.site);
             const std::vector<unsigned char> bytes = expect_byte_vector(runtime, args[0].value, "SocketUDP.envoyer_octets", native_args.site);
@@ -96,10 +101,12 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer_octets", socket_error_text("envoi"));
             }
             return Value::rien();
+            });
         }));
 
     object->fields["diffuser"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "diffuser", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 2, "SocketUDP.diffuser", native_args.site);
             const std::string text = stdlib_expect_text(runtime, args[0].value, "SocketUDP.diffuser", native_args.site);
@@ -122,10 +129,12 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                 raise_network_error(runtime, native_args.site, "SocketUDP.diffuser", socket_error_text("diffusion"));
             }
             return Value::rien();
+            });
         }));
 
     object->fields["recevoir"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "recevoir", [&]() -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "SocketUDP.recevoir", native_args.site);
             std::vector<char> buffer(65536);
             sockaddr_storage from{};
@@ -138,10 +147,12 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             return make_udp_packet_text_value(std::string(buffer.data(), buffer.data() + received),
                                               address_to_text(reinterpret_cast<sockaddr *>(&from)),
                                               port_from_sockaddr(reinterpret_cast<sockaddr *>(&from)));
+            });
         }));
 
     object->fields["recevoir_octets"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "recevoir_octets", [&]() -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "SocketUDP.recevoir_octets", native_args.site);
             std::vector<unsigned char> buffer(65536);
             sockaddr_storage from{};
@@ -157,6 +168,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
                                                address_to_text(reinterpret_cast<sockaddr *>(&from)),
                                                port_from_sockaddr(reinterpret_cast<sockaddr *>(&from)),
                                                native_args.site);
+            });
         }));
 
     return Value::objet(std::move(object));

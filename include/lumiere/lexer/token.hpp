@@ -27,6 +27,7 @@ namespace lumiere
         RETOURNE,
         CLASSE,
         INTERFACE,
+        TYPE,
         REALISE,
         REMPLACE,
         PUBLIC,
@@ -43,12 +44,6 @@ namespace lumiere
         ARRETER,
         CONTINUER,
 
-        // Keywords — error handling
-        ESSAYER,
-        ATTRAPER,
-        FINALEMENT,
-        LANCER,
-
         // Keywords — other
         ICI,
         PARENT,
@@ -56,6 +51,8 @@ namespace lumiere
         IMPORTER,
         COMME,
         EST,
+        PROPAGER,
+        IGNORER,
 
         // Operators — arithmetic
         PLUS,

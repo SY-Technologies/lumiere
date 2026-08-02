@@ -290,11 +290,6 @@ void register_lumitest_module(Module &module,
                 result.column = native_args.site.column;
             }
 
-            for (auto &group : state->group_contexts)
-            {
-                group.has_executed_test = true;
-            }
-
             try
             {
                 run_before_all_hooks_if_needed(runtime, *state, native_args.site);
@@ -332,24 +327,23 @@ void register_lumitest_module(Module &module,
             }
             catch (const RuntimeError &error)
             {
-                if (result.passed)
-                {
-                    result.passed = false;
-                    result.failure_message = error.raw_message();
-                    result.source_path = error.source_path.empty() ? native_args.site.source_path : error.source_path;
-                    result.line = static_cast<int>(error.line);
-                    result.column = static_cast<int>(error.column);
-                }
+                result.passed = false;
+                result.failure_message = error.raw_message();
+                result.source_path = error.source_path.empty() ? native_args.site.source_path : error.source_path;
+                result.line = static_cast<int>(error.line);
+                result.column = static_cast<int>(error.column);
             }
             catch (const std::exception &error)
             {
-                if (result.passed)
-                {
-                    result.passed = false;
-                    result.failure_message = error.what();
-                    result.line = native_args.site.line;
-                    result.column = native_args.site.column;
-                }
+                result.passed = false;
+                result.failure_message = error.what();
+                result.line = native_args.site.line;
+                result.column = native_args.site.column;
+            }
+
+            for (auto &group : state->group_contexts)
+            {
+                group.has_executed_test = true;
             }
 
             state->summary.executed += 1;
@@ -585,7 +579,7 @@ void register_lumitest_module(Module &module,
                 runtime.raise_runtime_error(native_args.site, "LumiTest.vérifier_approx requiert une tolérance positive");
             }
 
-            if (std::fabs(expected - received) > tolerance)
+            if (std::isnan(expected) || std::isnan(received) || std::isnan(tolerance) || std::fabs(expected - received) > tolerance)
             {
                 std::ostringstream detail;
                 detail << "attendu: " << expected << "\n";

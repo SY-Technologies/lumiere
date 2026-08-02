@@ -29,9 +29,6 @@ enum class Opcode : std::uint8_t
     GET_CAPTURE,
     SET_CAPTURE,
     CLOSURE,
-    TRY_BEGIN,
-    TRY_END,
-    THROW,
     JUMP,
     JUMP_IF_FALSE,
     NEGATE,
@@ -75,7 +72,13 @@ enum class Opcode : std::uint8_t
     ASSERT_TYPE,
     ASSERT_TYPE_LONG,
     MATCH_ERROR,
+    RESULT_IS_SUCCESS,
+    RESULT_FAILURE_TYPE,
+    RESULT_FAILURE_TYPE_LONG,
+    RESULT_PAYLOAD,
     POP,
+    PROPAGATE,
+    IGNORE_RESULT,
     RETURN,
 };
 
@@ -128,6 +131,7 @@ struct Chunk
 struct FunctionBytecode
 {
     std::string name;
+    std::string return_type;
     std::string source_path;
     std::string source_text;
     std::size_t arity = 0; // count of parameter
@@ -197,6 +201,7 @@ struct VmNamespaceDescriptor
 
 struct ModuleBytecode
 {
+    std::string source_path;
     std::vector<std::string> globals;
     std::vector<std::string> types;
     std::vector<std::string> members;

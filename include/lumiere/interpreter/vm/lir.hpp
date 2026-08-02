@@ -105,10 +105,6 @@ enum class LirOpcode : std::uint8_t
     IR_OP_LOAD_CAPTURE,
     IR_OP_STORE_CAPTURE,
     IR_OP_CLOSURE,
-    IR_OP_TRY_BEGIN,
-    IR_OP_TRY_END,
-    IR_OP_EXCEPTION_VALUE,
-    IR_OP_THROW,
     IR_OP_LIST,
     IR_OP_DICTIONARY,
     IR_OP_SEQUENCE_LENGTH,
@@ -118,7 +114,12 @@ enum class LirOpcode : std::uint8_t
     IR_OP_TYPE_CHECK,
     IR_OP_ASSERT_TYPE,
     IR_OP_MATCH_ERROR,
+    IR_OP_RESULT_IS_SUCCESS,
+    IR_OP_RESULT_FAILURE_TYPE,
+    IR_OP_RESULT_PAYLOAD,
     IR_OP_DISCARD,
+    IR_OP_PROPAGATE,
+    IR_OP_IGNORE_RESULT,
 };
 
 // Every block must end in exactly one terminator and there is no fallthrough.
@@ -278,6 +279,7 @@ struct LirBlock
 struct LirFunction
 {
     std::string name;
+    std::string return_type;
     std::string source_path;
     std::string source_text;
     std::vector<LirNamedValue> params;

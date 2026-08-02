@@ -100,14 +100,14 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
         {
             m_out << "(cast ";
             print_expr(e.operand.get());
-            m_out << " " << e.target_type.lexeme << ")";
+            m_out << " " << e.target_type.to_string() << ")";
         }
 
         void visit(TypeCheckExpr &e) override
         {
             m_out << "(type-check ";
             print_expr(e.operand.get());
-            m_out << " " << e.type_token.lexeme << ")";
+            m_out << " " << e.type.to_string() << ")";
         }
 
         void visit(FunctionExpr &e) override
@@ -120,10 +120,10 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
                     m_out << " ";
                 }
                 m_out << "(" << e.params[i].name
-                      << " " << e.params[i].type_token.lexeme << ")";
+                      << " " << e.params[i].type.to_string() << ")";
             }
             m_out << "] "
-                  << (e.return_type.lexeme.empty() ? "_" : e.return_type.lexeme) << " ";
+                  << (e.return_type.empty() ? "_" : e.return_type.to_string()) << " ";
             print_stmt(e.body.get());
             m_out << ")";
         }
@@ -169,10 +169,22 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
             m_out << ")";
         }
 
+        void visit(PropagationExpr &e) override
+        {
+            m_out << "(propager ";
+            print_expr(e.operand.get());
+            m_out << ")";
+        }
+
         //Statement visitors
 
         void visit(ExprStmt &s) override
         {
+            if (dynamic_cast<AgirSelonStmt *>(s.expr.get()) != nullptr)
+            {
+                print_expr(s.expr.get());
+                return;
+            }
             m_out << "(expr ";
             print_expr(s.expr.get());
             m_out << ")";
@@ -193,7 +205,7 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
         {
             m_out << "(var-decl "
                   << s.name.lexeme << " "
-                  << (s.type_token.lexeme.empty() ? "_" : s.type_token.lexeme) << " "
+                  << (s.type.empty() ? "_" : s.type.to_string()) << " "
                   << (s.is_fixe ? "true" : "false") << " "
                   << (s.is_public ? "public" : (s.is_prive ? "private" : "internal")) << " ";
             print_expr(s.initializer.get());
@@ -211,10 +223,10 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
                     m_out << " ";
                 }
                 m_out << "(" << s.params[i].name
-                      << " " << s.params[i].type_token.lexeme << ")";
+                      << " " << s.params[i].type.to_string() << ")";
             }
             m_out << "] "
-                  << (s.return_type.lexeme.empty() ? "_" : s.return_type.lexeme) << " ";
+                  << (s.return_type.empty() ? "_" : s.return_type.to_string()) << " ";
             print_stmt(s.body.get());
             m_out << ")";
         }
@@ -223,14 +235,14 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
         {
             m_out << "(class-decl " << s.name.lexeme << " "
                   << (s.is_public ? "public" : "internal") << " "
-                  << (s.parent.lexeme.empty() ? "_" : s.parent.lexeme) << " [";
+                  << (s.parent.empty() ? "_" : s.parent.to_string()) << " [";
             for (std::size_t i = 0; i < s.interfaces.size(); ++i)
             {
                 if (i > 0)
                 {
                     m_out << " ";
                 }
-                m_out << s.interfaces[i].lexeme;
+                m_out << s.interfaces[i].to_string();
             }
             m_out << "] (block";
             for (auto &member : s.members)
@@ -251,6 +263,12 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
                 print_stmt(method.get());
             }
             m_out << "))";
+        }
+
+        void visit(TypeAliasDeclStmt &s) override
+        {
+            m_out << "(type-alias " << (s.is_public ? "public " : "")
+                  << s.name.lexeme << " " << s.target.to_string() << ")";
         }
 
         void visit(ImportStmt &s) override
@@ -326,32 +344,10 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
             m_out << "(continue)";
         }
 
-        void visit(ThrowStmt &s) override
+        void visit(IgnorerStmt &s) override
         {
-            m_out << "(throw ";
-            print_expr(s.value.get());
-            m_out << ")";
-        }
-
-        void visit(TryStmt &s) override
-        {
-            m_out << "(try ";
-            print_stmt(s.body.get());
-            m_out << " [";
-            for (std::size_t i = 0; i < s.catch_clauses.size(); ++i)
-            {
-                if (i > 0)
-                {
-                    m_out << " ";
-                }
-                auto &c = s.catch_clauses[i];
-                m_out << "(catch " << c.variable.lexeme
-                      << " " << c.type_token.lexeme << " ";
-                print_stmt(c.body.get());
-                m_out << ")";
-            }
-            m_out << "] ";
-            print_stmt(s.finally_body.get());
+            m_out << "(ignorer ";
+            print_expr(s.expr.get());
             m_out << ")";
         }
 
@@ -383,15 +379,36 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
                         m_out << ")";
                         break;
                     case PatternKind::TYPE_BINDING:
-                        m_out << "(typed " << pattern.name.lexeme << " " << pattern.type_token.lexeme << ")";
+                        m_out << "(typed " << pattern.name.lexeme << " " << pattern.type.to_string() << ")";
                         break;
                     case PatternKind::RIEN:
                         m_out << "(rien)";
                         break;
+                    case PatternKind::RESULT_SUCCESS:
+                    case PatternKind::RESULT_FAILURE:
+                        m_out << '(' << pattern.constructor.lexeme << ' '
+                              << pattern.name.lexeme;
+                        if (!pattern.type.empty())
+                        {
+                            m_out << ' ' << pattern.type.to_string();
+                        }
+                        m_out << ')';
+                        break;
                     }
                 }
                 m_out << "] ";
-                print_stmt(branch.body.get());
+                if (branch.terminator == BranchTerminator::PROPAGER)
+                {
+                    m_out << "propager";
+                }
+                else if (branch.terminator == BranchTerminator::IGNORER)
+                {
+                    m_out << "ignorer";
+                }
+                else
+                {
+                    print_stmt(branch.body.get());
+                }
                 m_out << ")";
             }
             m_out << "] ";

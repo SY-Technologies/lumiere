@@ -100,41 +100,59 @@ namespace lumiere
     {
         m_env_owner = std::make_shared<Environment>();
         m_env = m_env_owner.get();
+        auto error_interface = std::make_shared<LumiereInterface>();
+        error_interface->name = "Erreur";
+        m_env->define_fixe(
+            "Erreur",
+            Value::interface(std::move(error_interface)));
         m_result = Value::rien();
         m_self = Value::rien();
         m_current_source_path = program.source_path;
         m_current_source_text = program.source_text;
         m_stack_trace.clear();
 
-        try
+        // principal is the entry point but top-level statements initialize its world.
+        for (auto &statement : program.statements)
         {
-            // principal is the entry point but there might be some top level
-            //  statements that set up the world, so we make sure to execute those first
-            //  before entering principal
-            for (auto &statement : program.statements)
-            {
-                execute(*statement);
-            }
+            execute(*statement);
+        }
 
-            if (m_env->contains("principal"))
+        if (m_env->contains("principal"))
+        {
+            const Value principal = m_env->get("principal");
+            if (principal.is_fonction())
             {
-                const Value principal = m_env->get("principal");
-                if (principal.is_fonction())
+                const std::vector<RuntimeArgument> principal_args;
+                const Value result =
+                    call(principal,
+                         NativeArgs{
+                             nullptr,
+                             &principal_args,
+                             RuntimeSite{m_current_source_path, 0, 0}});
+                if (result.is_resultat() &&
+                    !result.as_resultat()->success)
                 {
-                    const std::vector<RuntimeArgument> principal_args;
-                    call(principal, NativeArgs{nullptr, &principal_args, RuntimeSite{m_current_source_path, 0, 0}});
+                    const std::optional<RuntimeSite> &origin =
+                        result.as_resultat()->origin;
+                    throw RuntimeError(
+                        "principal a échoué: " +
+                            result.as_resultat()->payload.to_string(),
+                        origin.has_value()
+                            ? origin->source_path
+                            : m_current_source_path,
+                        !origin.has_value() ||
+                                origin->source_path ==
+                                    m_current_source_path
+                            ? m_current_source_text
+                            : std::string{},
+                        origin.has_value()
+                            ? static_cast<uint32_t>(origin->line)
+                            : 0,
+                        origin.has_value()
+                            ? static_cast<uint32_t>(origin->column)
+                            : 0);
                 }
             }
-        }
-        catch (const ThrownSignal &signal)
-        {
-            throw RuntimeError(
-                "exception non attrapee: " + to_texte(signal.value),
-                signal.source_path,
-                signal.source_text,
-                signal.line,
-                signal.column,
-                signal.stack_trace);
         }
     }
 
@@ -144,6 +162,12 @@ namespace lumiere
         {
             m_env_owner = std::make_shared<Environment>();
             m_env = m_env_owner.get();
+            auto error_interface =
+                std::make_shared<LumiereInterface>();
+            error_interface->name = "Erreur";
+            m_env->define_fixe(
+                "Erreur",
+                Value::interface(std::move(error_interface)));
             m_self = Value::rien();
         }
 
@@ -154,22 +178,9 @@ namespace lumiere
         const bool returns_value = !program.statements.empty() &&
                                    dynamic_cast<ExprStmt *>(program.statements.back().get()) != nullptr;
 
-        try
+        for (auto &statement : program.statements)
         {
-            for (auto &statement : program.statements)
-            {
-                execute(*statement);
-            }
-        }
-        catch (const ThrownSignal &signal)
-        {
-            throw RuntimeError(
-                "exception non attrapee: " + to_texte(signal.value),
-                signal.source_path,
-                signal.source_text,
-                signal.line,
-                signal.column,
-                signal.stack_trace);
+            execute(*statement);
         }
 
         return returns_value ? std::optional<Value>(m_result) : std::nullopt;
@@ -360,9 +371,9 @@ namespace lumiere
         body->decl = &decl;
         klass->body = std::move(body);
 
-        if (!decl.parent.lexeme.empty() && m_env != nullptr && m_env->contains(decl.parent.lexeme))
+        if (!decl.parent.empty() && m_env != nullptr && m_env->contains(decl.parent.to_string()))
         {
-            const Value parent_value = m_env->get(decl.parent.lexeme);
+            const Value parent_value = m_env->get(decl.parent.to_string());
             if (parent_value.is_classe())
             {
                 klass->parent = parent_value.as_classe();
@@ -371,17 +382,31 @@ namespace lumiere
 
         if (m_env != nullptr)
         {
-            for (const Token &interface_name : decl.interfaces)
+            for (const TypeExpr &interface_name : decl.interfaces)
             {
-                if (!m_env->contains(interface_name.lexeme))
+                std::string name = interface_name.to_string();
+                std::unordered_set<std::string> visited;
+                while (visited.insert(name).second)
+                {
+                    const auto alias =
+                        m_type_aliases.find(name);
+                    if (alias == m_type_aliases.end() ||
+                        alias->second.kind !=
+                            TypeExprKind::NAMED)
+                    {
+                        break;
+                    }
+                    name = alias->second.name;
+                }
+                if (!m_env->contains(name))
                 {
                     continue;
                 }
 
-                const Value interface_value = m_env->get(interface_name.lexeme);
+                const Value interface_value = m_env->get(name);
                 if (interface_value.is_interface())
                 {
-                    klass->interfaces[interface_name.lexeme] = interface_value.as_interface();
+                    klass->interfaces[name] = interface_value.as_interface();
                 }
             }
         }
@@ -741,11 +766,6 @@ namespace lumiere
         }
 
         throw_runtime_error(site, "cette valeur n'est pas iterable");
-    }
-
-    bool TreeWalker::matches_catch_clause(const CatchClause &clause, const Value &thrown_value) const
-    {
-        return matches_type_name(thrown_value, clause.type_token);
     }
 
     std::string TreeWalker::to_texte(const Value &value) const

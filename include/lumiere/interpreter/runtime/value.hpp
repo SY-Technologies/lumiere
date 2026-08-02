@@ -1,8 +1,10 @@
 #pragma once
 
 #include "lumiere/interpreter/runtime/native_args.hpp"
+#include "lumiere/parser/type_expr.hpp"
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <variant>
@@ -34,6 +36,7 @@ struct ListeFixeData  { std::vector<Value> elements; };
 struct EnsembleData   { std::vector<Value> elements; };
 using DictEntry = std::pair<Value, Value>;
 struct DictData       { std::vector<DictEntry> entries; };
+struct ResultData;
 
 struct Value
 {
@@ -53,7 +56,8 @@ struct Value
         FONCTION      = 10,
         CLASSE        = 11,
         INTERFACE     = 12,
-        RIEN          = 13,
+        RESULTAT      = 13,
+        RIEN          = 14,
     };
 
     using Data = std::variant<
@@ -69,9 +73,10 @@ struct Value
         std::shared_ptr<LumiereObject>,     // OBJET
         std::shared_ptr<LumiereFunction>,   // FONCTION
         std::shared_ptr<LumiereClass>,      // CLASSE
-        std::shared_ptr<LumiereInterface>   // INTERFACE
+        std::shared_ptr<LumiereInterface>,  // INTERFACE
+        std::shared_ptr<const ResultData>   // RESULTAT
     >;
-    static_assert(std::variant_size_v<Data> == 13,"Data variant and Type enum are out of sync — check indices");
+    static_assert(std::variant_size_v<Data> == 14,"Data variant and Type enum are out of sync — check indices");
 
     Type type = Type::RIEN;
     Data data;
@@ -189,6 +194,11 @@ struct Value
         return v;
     }
 
+    static Value resultat(
+        bool success,
+        Value payload,
+        std::optional<RuntimeSite> origin = std::nullopt);
+
     //accessors
 
     int64_t     as_entier()  const { return std::get<int64_t>(data); }
@@ -241,6 +251,11 @@ struct Value
         return std::get<std::shared_ptr<LumiereInterface>>(data);
     }
 
+    std::shared_ptr<const ResultData> as_resultat() const
+    {
+        return std::get<std::shared_ptr<const ResultData>>(data);
+    }
+
     //type checks
 
     bool is_rien()        const { return type == Type::RIEN; }
@@ -257,6 +272,7 @@ struct Value
     bool is_fonction()    const { return type == Type::FONCTION; }
     bool is_classe()      const { return type == Type::CLASSE; }
     bool is_interface()   const { return type == Type::INTERFACE; }
+    bool is_resultat()    const { return type == Type::RESULTAT; }
     bool is_numeric()     const { return is_entier() || is_decimal(); }
 
     //equality
@@ -268,6 +284,13 @@ struct Value
 
     std::string to_string() const;
     std::string type_name() const;
+};
+
+struct ResultData
+{
+    bool success;
+    Value payload;
+    std::optional<RuntimeSite> origin;
 };
 
 //  LumiereFunction
@@ -351,6 +374,8 @@ struct Module {
     std::shared_ptr<RuntimeModuleState> state;
     std::unordered_map<std::string, Value> members;
     std::unordered_set<std::string> public_members;
+    std::unordered_map<std::string, TypeExpr> type_aliases;
+    std::unordered_set<std::string> public_type_aliases;
 };
 
 } // namespace lumiere

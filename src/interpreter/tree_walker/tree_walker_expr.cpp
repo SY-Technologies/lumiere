@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
 
 #include <functional>
@@ -411,7 +412,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     Value value = evaluate(value_expr);
     ensure_value_matches_annotation(
         value,
-        field_decl->type_token,
+        field_decl->type,
         target.member,
         "le champ '" + target.member.lexeme + "'");
     instance->fields[target.member.lexeme] = value;
@@ -522,7 +523,7 @@ void TreeWalker::visit(UnaryExpr &expr)
 void TreeWalker::visit(CastExpr &expr)
 {
     const Value operand = evaluate(*expr.operand);
-    const std::string &target = expr.target_type.lexeme;
+    const std::string target = expr.target_type.to_string();
 
     if (target == "Entier")
     {
@@ -550,7 +551,7 @@ void TreeWalker::visit(CastExpr &expr)
             }
             catch (...)
             {
-                throw_runtime_error(expr.target_type, "conversion vers Entier impossible pour une valeur de type Texte");
+                throw_runtime_error(expr.target_type.source, "conversion vers Entier impossible pour une valeur de type Texte");
             }
         }
     }
@@ -576,7 +577,7 @@ void TreeWalker::visit(CastExpr &expr)
             }
             catch (...)
             {
-                throw_runtime_error(expr.target_type, "conversion vers Décimal impossible pour une valeur de type Texte");
+                throw_runtime_error(expr.target_type.source, "conversion vers Décimal impossible pour une valeur de type Texte");
             }
         }
     }
@@ -600,7 +601,7 @@ void TreeWalker::visit(CastExpr &expr)
                 m_result = Value::logique(false);
                 return;
             }
-            throw_runtime_error(expr.target_type, "conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
+            throw_runtime_error(expr.target_type.source, "conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
         }
     }
 
@@ -616,7 +617,7 @@ void TreeWalker::visit(CastExpr &expr)
             const int64_t unicode_value = operand.as_entier();
             if (unicode_value < 0 || unicode_value > 0x10FFFF)
             {
-                throw_runtime_error(expr.target_type, "conversion vers Symbole impossible: le point de code Unicode est invalide");
+                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le point de code Unicode est invalide");
             }
             m_result = Value::symbole(static_cast<char32_t>(unicode_value));
             return;
@@ -626,7 +627,7 @@ void TreeWalker::visit(CastExpr &expr)
             const std::optional<char32_t> symbol_char = utf8::decode_single_character(operand.as_texte());
             if (!symbol_char.has_value())
             {
-                throw_runtime_error(expr.target_type, "conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
+                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
             }
             m_result = Value::symbole(*symbol_char);
             return;
@@ -645,12 +646,12 @@ void TreeWalker::visit(CastExpr &expr)
         return;
     }
 
-    throw_runtime_error(expr.target_type, "conversion explicite non prise en charge vers le type '" + target + "'");
+    throw_runtime_error(expr.target_type.source, "conversion explicite non prise en charge vers le type '" + target + "'");
 }
 
 void TreeWalker::visit(TypeCheckExpr &expr)
 {
-    m_result = Value::logique(matches_type_name(evaluate(*expr.operand), expr.type_token));
+    m_result = Value::logique(matches_type_name(evaluate(*expr.operand), expr.type));
 }
 
 void TreeWalker::visit(FunctionExpr &expr)
@@ -664,13 +665,14 @@ void TreeWalker::visit(CallExpr &expr)
     {
         const std::string &builtin_name = identifier->name.lexeme;
         if (builtin_name == "afficher" ||
-            builtin_name == "afficher_inline" ||
             builtin_name == "lire" ||
             builtin_name == "lire_entier" ||
             builtin_name == "lire_décimal" ||
             builtin_name == "lire_decimal" ||
             builtin_name == "lire_logique" ||
-            builtin_name == "type_de")
+            builtin_name == "type_de" ||
+            builtin_name == "Succès" ||
+            builtin_name == "Échec")
         {
             m_result = call_builtin(builtin_name, expr.args, expr.paren);
             return;
@@ -824,6 +826,13 @@ void TreeWalker::visit(MemberAccessExpr &expr)
             m_result = Value::fonction(make_declared_function(*function_decl, object, m_env));
             return;
         }
+
+        auto field_it = instance->fields.find(expr.member.lexeme);
+        if (field_it != instance->fields.end())
+        {
+            m_result = field_it->second;
+            return;
+        }
     }
 
     throw_runtime_error(expr.member, "membre introuvable: '" + expr.member.lexeme + "'");
@@ -912,6 +921,25 @@ void TreeWalker::visit(IndexAccessExpr &expr)
     throw_runtime_error(expr.bracket, "acces par indice impossible pour une valeur de type " + object.type_name());
 }
 
+void TreeWalker::visit(PropagationExpr &expr)
+{
+    const Value value = evaluate(*expr.operand);
+    if (!value.is_resultat())
+    {
+        throw_runtime_error(expr.keyword,
+                            "propager exige une valeur Résultat");
+    }
+    auto result = value.as_resultat();
+    if (result->success)
+    {
+        m_result = result->payload;
+    }
+    else
+    {
+        throw PropagateSignal{value};
+    }
+}
+
 Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function,
                                 const std::vector<Argument> &args,
                                 const Token &call_site)
@@ -956,7 +984,7 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
     }
 
     const std::vector<Parameter> &params = decl_ptr != nullptr ? decl_ptr->params : expr_ptr->params;
-    const Token &return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
+    const TypeExpr &return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
     Stmt *body = decl_ptr != nullptr ? decl_ptr->body.get() : expr_ptr->body.get();
     const std::string function_name = decl_ptr != nullptr ? decl_ptr->name.lexeme : "<anonyme>";
 
@@ -1046,10 +1074,10 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
 
             ensure_value_matches_annotation(
                 argument_value,
-                parameter.type_token,
+                parameter.type,
                 site_token,
                 "le parametre '" + parameter.name + "'");
-            m_env->define(parameter.name, std::move(argument_value), parameter.type_token.lexeme);
+            m_env->define(parameter.name, std::move(argument_value), parameter.type.to_string());
         }
 
         if (body != nullptr)
@@ -1067,6 +1095,18 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
         m_env_owner = previous_env_owner;
         m_self = previous_self;
         return Value::rien();
+    }
+    catch (const PropagateSignal &signal)
+    {
+        m_env = previous_env;
+        m_env_owner = previous_env_owner;
+        m_self = previous_self;
+        ensure_value_matches_annotation(
+            signal.error,
+            return_type,
+            site_token,
+            "la fonction '" + function_name + "'");
+        return signal.error;
     }
     catch (const ReturnSignal &signal)
     {
@@ -1094,7 +1134,35 @@ Value TreeWalker::call_builtin(const std::string &name,
                                const std::vector<Argument> &args,
                                const Token &call_site)
 {
-    if (name == "afficher" || name == "afficher_inline")
+    const RuntimeSite origin{
+        m_current_source_path,
+        static_cast<int>(call_site.line),
+        static_cast<int>(call_site.column)};
+    const auto input_failure =
+        [&](const std::string &operation,
+            std::string cause) {
+            return stdlib_failure(
+                stdlib_error_value(
+                    "ErreurEntrée",
+                    operation,
+                    std::move(cause)),
+                origin);
+        };
+
+    if (name == "Succès" || name == "Échec")
+    {
+        if (args.size() != 1 || !args.front().name.empty())
+        {
+            throw_runtime_error(call_site,
+                                name + " requiert exactement un argument positionnel");
+        }
+        return Value::resultat(
+            name == "Succès",
+            evaluate(*args.front().value),
+            origin);
+    }
+
+    if (name == "afficher")
     {
         for (std::size_t i = 0; i < args.size(); ++i)
         {
@@ -1109,10 +1177,7 @@ Value TreeWalker::call_builtin(const std::string &name,
             }
             std::cout << to_texte(evaluate(*args[i].value));
         }
-        if (name == "afficher")
-        {
-            std::cout << '\n';
-        }
+        std::cout << '\n';
         return Value::rien();
     }
 
@@ -1124,8 +1189,13 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
 
         std::string line;
-        std::getline(std::cin, line);
-        return Value::texte(std::move(line));
+        if (!std::getline(std::cin, line))
+        {
+            return input_failure(
+                "lire",
+                "fin de l'entrée");
+        }
+        return stdlib_success(Value::texte(std::move(line)));
     }
 
     if (name == "type_de")
@@ -1150,7 +1220,12 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
 
         std::string line;
-        std::getline(std::cin, line);
+        if (!std::getline(std::cin, line))
+        {
+            return input_failure(
+                "lire_entier",
+                "fin de l'entrée");
+        }
         try
         {
             std::size_t parsed = 0;
@@ -1163,11 +1238,13 @@ Value TreeWalker::call_builtin(const std::string &name,
             {
                 throw std::invalid_argument("trailing");
             }
-            return Value::entier(value);
+            return stdlib_success(Value::entier(value));
         }
         catch (...)
         {
-            throw_runtime_error(call_site, "lire_entier requiert une entree numerique valide");
+            return input_failure(
+                "lire_entier",
+                "entier invalide: " + line);
         }
     }
 
@@ -1179,7 +1256,12 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
 
         std::string line;
-        std::getline(std::cin, line);
+        if (!std::getline(std::cin, line))
+        {
+            return input_failure(
+                "lire_décimal",
+                "fin de l'entrée");
+        }
         try
         {
             std::size_t parsed = 0;
@@ -1192,11 +1274,13 @@ Value TreeWalker::call_builtin(const std::string &name,
             {
                 throw std::invalid_argument("trailing");
             }
-            return Value::decimal(value);
+            return stdlib_success(Value::decimal(value));
         }
         catch (...)
         {
-            throw_runtime_error(call_site, "lire_décimal requiert une entree numerique valide");
+            return input_failure(
+                "lire_décimal",
+                "décimal invalide: " + line);
         }
     }
 
@@ -1208,16 +1292,23 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
 
         std::string line;
-        std::getline(std::cin, line);
+        if (!std::getline(std::cin, line))
+        {
+            return input_failure(
+                "lire_logique",
+                "fin de l'entrée");
+        }
         if (line == "vrai")
         {
-            return Value::logique(true);
+            return stdlib_success(Value::logique(true));
         }
         if (line == "faux")
         {
-            return Value::logique(false);
+            return stdlib_success(Value::logique(false));
         }
-        throw_runtime_error(call_site, "lire_logique requiert 'vrai' ou 'faux'");
+        return input_failure(
+            "lire_logique",
+            "logique invalide: " + line);
     }
 
     throw_runtime_error(call_site, "fonction native inconnue: " + name);
@@ -1311,7 +1402,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         object->fields[field_name] = evaluate(*arg.value);
         ensure_value_matches_annotation(
             object->fields[field_name],
-            fields_by_name[field_name]->type_token,
+            fields_by_name[field_name]->type,
             call_site,
             "le champ '" + field_name + "'");
         assigned_fields.insert(field_name);
@@ -1331,7 +1422,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
             }
             ensure_value_matches_annotation(
                 object->fields[field_name],
-                field_decl->type_token,
+                field_decl->type,
                 field_decl->name,
                 "le champ '" + field_name + "'");
         }

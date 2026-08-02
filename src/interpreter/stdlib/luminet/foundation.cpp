@@ -13,7 +13,9 @@ namespace lumiere
 std::shared_ptr<LumiereObject> make_hidden_typed_object(const std::string &type_name)
 {
     auto object = std::make_shared<LumiereObject>();
-    object->fields["__type"] = Value::texte(type_name);
+    auto klass = std::make_shared<LumiereClass>();
+    klass->name = type_name;
+    object->klass = std::move(klass);
     return object;
 }
 
@@ -33,10 +35,8 @@ int64_t expect_duration_millis(IRuntime &runtime,
     }
 
     const auto object = value.as_objet();
-    const auto type_it = object->fields.find("__type");
     const auto millis_it = object->fields.find("__millis");
-    if (type_it == object->fields.end() || !type_it->second.is_texte() ||
-        type_it->second.as_texte() != "Durée" ||
+    if (object->klass == nullptr || object->klass->name != "Durée" ||
         millis_it == object->fields.end() || !millis_it->second.is_entier())
     {
         runtime.raise_runtime_error(site, context + " attend une Durée");
@@ -94,7 +94,9 @@ void raise_network_error(IRuntime &runtime,
                          const std::string &context,
                          const std::string &message)
 {
-    runtime.raise_runtime_error(site, context + " a echoue: " + message);
+    static_cast<void>(runtime);
+    static_cast<void>(site);
+    throw NetworkFailure(context + " a échoué: " + message);
 }
 
 std::string to_lower_ascii(std::string text)
@@ -300,10 +302,10 @@ std::string french_http_method(const std::string &method)
     return method;
 }
 
-std::pair<std::string, int64_t> parse_host_port(IRuntime &runtime,
+std::pair<std::string, int64_t> parse_host_port(IRuntime &,
                                                 const std::string &text,
                                                 const std::string &context,
-                                                const RuntimeSite &site)
+                                                const RuntimeSite &)
 {
     std::string host;
     std::string port_text;
@@ -313,7 +315,7 @@ std::pair<std::string, int64_t> parse_host_port(IRuntime &runtime,
         const std::size_t closing = text.find(']');
         if (closing == std::string::npos || closing + 1 >= text.size() || text[closing + 1] != ':')
         {
-            runtime.raise_runtime_error(site, context + " requiert une adresse hôte:port valide");
+            throw NetworkFailure(context + " requiert une adresse hôte:port valide");
         }
         host = text.substr(1, closing - 1);
         port_text = text.substr(closing + 2);
@@ -323,11 +325,11 @@ std::pair<std::string, int64_t> parse_host_port(IRuntime &runtime,
         const std::size_t colon = text.rfind(':');
         if (colon == std::string::npos || colon == 0 || colon + 1 >= text.size())
         {
-            runtime.raise_runtime_error(site, context + " requiert une adresse hôte:port valide");
+            throw NetworkFailure(context + " requiert une adresse hôte:port valide");
         }
         if (text.find(':') != colon)
         {
-            runtime.raise_runtime_error(site, context + " requiert une adresse IPv6 entre crochets");
+            throw NetworkFailure(context + " requiert une adresse IPv6 entre crochets");
         }
         host = text.substr(0, colon);
         port_text = text.substr(colon + 1);
@@ -338,25 +340,25 @@ std::pair<std::string, int64_t> parse_host_port(IRuntime &runtime,
         const int64_t port = std::stoll(port_text);
         if (port < 0 || port > 65535)
         {
-            runtime.raise_runtime_error(site, context + " requiert un port entre 0 et 65535");
+            throw NetworkFailure(context + " requiert un port entre 0 et 65535");
         }
         return {host, port};
     }
     catch (const std::exception &)
     {
-        runtime.raise_runtime_error(site, context + " requiert un port valide");
+        throw NetworkFailure(context + " requiert un port valide");
     }
 }
 
-ParsedHttpUrl parse_http_url(IRuntime &runtime,
+ParsedHttpUrl parse_http_url(IRuntime &,
                              const std::string &url,
                              const std::string &context,
-                             const RuntimeSite &site)
+                             const RuntimeSite &)
 {
     const std::size_t scheme_sep = url.find("://");
     if (scheme_sep == std::string::npos)
     {
-        runtime.raise_runtime_error(site, context + " requiert une URL absolue");
+        throw NetworkFailure(context + " requiert une URL absolue");
     }
 
     ParsedHttpUrl parsed;
@@ -369,7 +371,7 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
 
     if (authority.empty())
     {
-        runtime.raise_runtime_error(site, context + " requiert un hôte URL valide");
+        throw NetworkFailure(context + " requiert un hôte URL valide");
     }
 
     if (!authority.empty() && authority.front() == '[')
@@ -377,7 +379,7 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
         const std::size_t closing = authority.find(']');
         if (closing == std::string::npos)
         {
-            runtime.raise_runtime_error(site, context + " requiert une URL IPv6 valide");
+            throw NetworkFailure(context + " requiert une URL IPv6 valide");
         }
         parsed.host = authority.substr(1, closing - 1);
         try
@@ -386,7 +388,7 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
             {
                 if (authority[closing + 1] != ':')
                 {
-                    runtime.raise_runtime_error(site, context + " requiert une URL valide");
+                    throw NetworkFailure(context + " requiert une URL valide");
                 }
                 parsed.port = std::stoll(authority.substr(closing + 2));
             }
@@ -397,7 +399,7 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
         }
         catch (const std::exception &)
         {
-            runtime.raise_runtime_error(site, context + " requiert un port URL valide");
+            throw NetworkFailure(context + " requiert un port URL valide");
         }
     }
     else
@@ -412,7 +414,7 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
             }
             catch (const std::exception &)
             {
-                runtime.raise_runtime_error(site, context + " requiert un port URL valide");
+                throw NetworkFailure(context + " requiert un port URL valide");
             }
         }
         else
@@ -424,11 +426,11 @@ ParsedHttpUrl parse_http_url(IRuntime &runtime,
 
     if (parsed.host.empty())
     {
-        runtime.raise_runtime_error(site, context + " requiert un hôte URL valide");
+        throw NetworkFailure(context + " requiert un hôte URL valide");
     }
     if (parsed.port < 0 || parsed.port > 65535)
     {
-        runtime.raise_runtime_error(site, context + " requiert un port URL entre 0 et 65535");
+        throw NetworkFailure(context + " requiert un port URL entre 0 et 65535");
     }
 
     return parsed;

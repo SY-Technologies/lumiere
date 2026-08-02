@@ -35,6 +35,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
 
     object->fields["définir_délai"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurDélai", "définir_délai", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "ConnexionTCP.définir_délai", native_args.site);
             apply_timeout(runtime,
@@ -43,10 +44,12 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
                           "ConnexionTCP.définir_délai",
                           native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["écrire"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "écrire", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "ConnexionTCP.écrire", native_args.site);
             const std::string text = stdlib_expect_text(runtime, args[0].value, "ConnexionTCP.écrire", native_args.site);
@@ -57,19 +60,23 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
                      "ConnexionTCP.écrire",
                      native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["écrire_octets"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "écrire_octets", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "ConnexionTCP.écrire_octets", native_args.site);
             const std::vector<unsigned char> bytes = expect_byte_vector(runtime, args[0].value, "ConnexionTCP.écrire_octets", native_args.site);
             send_all(runtime, state->fd, bytes.data(), bytes.size(), "ConnexionTCP.écrire_octets", native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["lire"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "lire", [&]() -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.lire", native_args.site);
             std::string result;
             char buffer[4096];
@@ -85,10 +92,12 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             }
             result.assign(buffer, buffer + received);
             return Value::texte(std::move(result));
+            });
         }));
 
     object->fields["lire_ligne"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "lire_ligne", [&]() -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "ConnexionTCP.lire_ligne", native_args.site);
             std::string result;
             char ch = '\0';
@@ -114,10 +123,12 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
                 }
             }
             return Value::texte(std::move(result));
+            });
         }));
 
     object->fields["lire_octets"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "lire_octets", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "ConnexionTCP.lire_octets", native_args.site);
             const int64_t count = stdlib_expect_integer(runtime, args[0].value, "ConnexionTCP.lire_octets", native_args.site);
@@ -139,6 +150,7 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             Value result = Value::liste(bytes_to_list(buffer));
             runtime.annotate_value(result, "Liste[Entier]", native_args.site);
             return result;
+            });
         }));
 
     return Value::objet(std::move(object));
@@ -177,6 +189,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
 
     object->fields["écouter"] = Value::fonction(make_native_function(
         [state, make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "écouter", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 2, "ServeurTCP.écouter", native_args.site);
             const std::string host = stdlib_expect_text(runtime, args[0].value, "ServeurTCP.écouter", native_args.site);
@@ -213,6 +226,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 {
                     continue;
                 }
+                platform_socket_enable_nosigpipe(listen_fd);
                 platform_socket_enable_reuse_address(listen_fd);
                 if (::bind(listen_fd, entry->ai_addr, entry->ai_addrlen) == 0 &&
                     ::listen(listen_fd, 16) == 0)
@@ -271,6 +285,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                 close_socket_fd(state->fd);
             }
             return Value::rien();
+            });
         }));
 
     return Value::objet(std::move(object));

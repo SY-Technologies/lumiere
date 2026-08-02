@@ -8,6 +8,17 @@ void TreeWalker::visit(ExprStmt &stmt)
     m_result = evaluate(*stmt.expr);
 }
 
+void TreeWalker::visit(IgnorerStmt &stmt)
+{
+    const Value value = evaluate(*stmt.expr);
+    if (!value.is_resultat())
+    {
+        throw_runtime_error(stmt.keyword,
+                            "ignorer exige une valeur Résultat");
+    }
+    m_result = Value::rien();
+}
+
 void TreeWalker::visit(BlockStmt &stmt)
 {
     execute_block(stmt);
@@ -21,12 +32,12 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     }
 
     Value value = stmt.initializer ? evaluate(*stmt.initializer) : Value::rien();
-    ensure_value_matches_annotation(value, stmt.type_token, stmt.name, "la variable '" + stmt.name.lexeme + "'");
+    ensure_value_matches_annotation(value, stmt.type, stmt.name, "la variable '" + stmt.name.lexeme + "'");
     if (stmt.is_fixe)
     {
         try
         {
-            m_env->define_fixe(stmt.name.lexeme, std::move(value), stmt.type_token.lexeme);
+            m_env->define_fixe(stmt.name.lexeme, std::move(value), stmt.type.to_string());
         }
         catch (const RuntimeError &error)
         {
@@ -37,7 +48,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     {
         try
         {
-            m_env->define(stmt.name.lexeme, std::move(value), stmt.type_token.lexeme);
+            m_env->define(stmt.name.lexeme, std::move(value), stmt.type.to_string());
         }
         catch (const RuntimeError &error)
         {
@@ -72,16 +83,17 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
 
     std::shared_ptr<LumiereClass> runtime_parent = nullptr;
     ClassDeclStmt *parent = nullptr;
-    if (!stmt.parent.lexeme.empty())
+    if (!stmt.parent.empty())
     {
-        if (!m_env->contains(stmt.parent.lexeme))
+        const std::string parent_name = stmt.parent.to_string();
+        if (!m_env->contains(parent_name))
         {
-            throw_runtime_error(stmt.parent, "classe parente introuvable: " + stmt.parent.lexeme);
+            throw_runtime_error(stmt.parent.source, "classe parente introuvable: " + parent_name);
         }
-        const Value parent_value = m_env->get(stmt.parent.lexeme);
+        const Value parent_value = m_env->get(parent_name);
         if (!parent_value.is_classe())
         {
-            throw_runtime_error(stmt.parent, "la classe parente n'est pas une classe: " + stmt.parent.lexeme);
+            throw_runtime_error(stmt.parent.source, "la classe parente n'est pas une classe: " + parent_name);
         }
         runtime_parent = parent_value.as_classe();
         parent = class_decl(runtime_parent);
@@ -140,6 +152,11 @@ void TreeWalker::visit(InterfaceDeclStmt &stmt)
     }
 }
 
+void TreeWalker::visit(TypeAliasDeclStmt &stmt)
+{
+    m_type_aliases.insert_or_assign(stmt.name.lexeme, stmt.target);
+}
+
 void TreeWalker::visit(ImportStmt &stmt)
 {
     if (m_env == nullptr)
@@ -152,6 +169,17 @@ void TreeWalker::visit(ImportStmt &stmt)
     {
         for (const auto &imported_member : stmt.imported_members)
         {
+            if (module->public_type_aliases.contains(imported_member.name.lexeme))
+            {
+                const std::string binding_name =
+                    imported_member.alias.lexeme.empty()
+                        ? imported_member.name.lexeme
+                        : imported_member.alias.lexeme;
+                m_type_aliases.insert_or_assign(
+                    binding_name,
+                    module->type_aliases.at(imported_member.name.lexeme));
+                continue;
+            }
             if (module->public_members.count(imported_member.name.lexeme) == 0)
             {
                 throw_runtime_error(imported_member.name, "membre non exporte ou introuvable dans le module: " + imported_member.name.lexeme);
@@ -194,6 +222,12 @@ void TreeWalker::visit(ImportStmt &stmt)
         {
             namespace_object->fields[public_name] = member_it->second;
         }
+    }
+    for (const std::string &name : module->public_type_aliases)
+    {
+        m_type_aliases.insert_or_assign(
+            binding_name + '.' + name,
+            module->type_aliases.at(name));
     }
 
     try
@@ -279,95 +313,6 @@ void TreeWalker::visit(ContinueStmt &)
     throw ContinueSignal{};
 }
 
-void TreeWalker::visit(ThrowStmt &stmt)
-{
-    throw ThrownSignal{
-        evaluate(*stmt.value),
-        m_current_source_path,
-        m_current_source_text,
-        stmt.keyword.line,
-        stmt.keyword.column,
-        m_stack_trace,
-    };
-}
-
-void TreeWalker::visit(TryStmt &stmt)
-{
-    auto run_finally = [&]() {
-        if (stmt.finally_body)
-        {
-            execute(*stmt.finally_body);
-        }
-    };
-
-    try
-    {
-        execute(*stmt.body);
-    }
-    catch (const ReturnSignal &signal)
-    {
-        run_finally();
-        throw;
-    }
-    catch (const BreakSignal &)
-    {
-        run_finally();
-        throw;
-    }
-    catch (const ContinueSignal &)
-    {
-        run_finally();
-        throw;
-    }
-    catch (const ThrownSignal &signal)
-    {
-        bool handled = false;
-
-        for (auto &clause : stmt.catch_clauses)
-        {
-            if (!matches_catch_clause(clause, signal.value))
-            {
-                continue;
-            }
-
-            execute_branch_with_optional_binding(*clause.body, &clause.variable, &signal.value);
-            handled = true;
-            break;
-        }
-
-        if (!handled)
-        {
-            run_finally();
-            throw;
-        }
-    }
-    catch (const RuntimeError &error)
-    {
-        bool handled = false;
-        const Value thrown_value = Value::texte(error.what());
-
-        for (auto &clause : stmt.catch_clauses)
-        {
-            if (!matches_catch_clause(clause, thrown_value))
-            {
-                continue;
-            }
-
-            execute_branch_with_optional_binding(*clause.body, &clause.variable, &thrown_value);
-            handled = true;
-            break;
-        }
-
-        if (!handled)
-        {
-            run_finally();
-            throw;
-        }
-    }
-
-    run_finally();
-}
-
 void TreeWalker::visit(AgirSelonStmt &stmt)
 {
     const Value matched_value = evaluate(*stmt.expression);
@@ -389,7 +334,7 @@ void TreeWalker::visit(AgirSelonStmt &stmt)
                 }
                 break;
             case PatternKind::TYPE_BINDING:
-                if (matches_type_name(matched_value, pattern.type_token))
+                if (matches_type_name(matched_value, pattern.type))
                 {
                     branch_matches = true;
                     binding_name = &pattern.name;
@@ -402,10 +347,41 @@ void TreeWalker::visit(AgirSelonStmt &stmt)
                     branch_matches = true;
                 }
                 break;
+            case PatternKind::RESULT_SUCCESS:
+            case PatternKind::RESULT_FAILURE:
+                if (matched_value.is_resultat() &&
+                    matched_value.as_resultat()->success ==
+                        (pattern.kind == PatternKind::RESULT_SUCCESS) &&
+                    (pattern.type.empty() ||
+                     matches_type_name(matched_value.as_resultat()->payload,
+                                       pattern.type)))
+                {
+                    branch_matches = true;
+                    if (pattern.name.lexeme != "_")
+                    {
+                        binding_name = &pattern.name;
+                        binding_value = &matched_value.as_resultat()->payload;
+                    }
+                }
+                break;
             }
 
             if (branch_matches)
             {
+                if (branch.terminator == BranchTerminator::PROPAGER)
+                {
+                    throw PropagateSignal{matched_value};
+                }
+                if (branch.terminator == BranchTerminator::IGNORER)
+                {
+                    if (!matched_value.is_resultat())
+                    {
+                        throw_runtime_error(
+                            branch.terminator_token,
+                            "ignorer exige une valeur Résultat");
+                    }
+                    return;
+                }
                 execute_branch_with_optional_binding(*branch.body, binding_name, binding_value);
                 return;
             }

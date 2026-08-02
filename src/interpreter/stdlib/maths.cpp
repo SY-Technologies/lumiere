@@ -28,7 +28,12 @@ void register_maths_module(Module &module)
             stdlib_expect_positional(runtime, args, 1, "Maths.absolu", call_site);
             if (args[0].value.is_entier())
             {
-                return Value::entier(std::llabs(args[0].value.as_entier()));
+                const int64_t val = args[0].value.as_entier();
+                if (val == std::numeric_limits<int64_t>::min())
+                {
+                    runtime.raise_runtime_error(call_site, "Maths.absolu: la valeur absolue de -2^63 depasse la limite d'un Entier");
+                }
+                return Value::entier(std::llabs(val));
             }
             return Value::decimal(std::fabs(stdlib_expect_decimal(runtime, args[0].value, "Maths.absolu", call_site)));
         });
@@ -72,7 +77,13 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.arrondir", call_site);
-            return Value::entier(static_cast<int64_t>(std::llround(stdlib_expect_decimal(runtime, args[0].value, "Maths.arrondir", call_site))));
+            const double arrondir_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.arrondir", call_site);
+            if (arrondir_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+                arrondir_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
+            {
+                runtime.raise_runtime_error(call_site, "Maths.arrondir: le resultat depasse la limite d'un Entier");
+            }
+            return Value::entier(static_cast<int64_t>(std::llround(arrondir_val)));
         });
     stdlib_bind_public_value(module, "arrondir", Value::fonction(arrondir_function));
     stdlib_bind_public_value(module, "arrondi", Value::fonction(arrondir_function));
@@ -85,7 +96,13 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.plancher", call_site);
-            return Value::entier(static_cast<int64_t>(std::floor(stdlib_expect_decimal(runtime, args[0].value, "Maths.plancher", call_site))));
+            const double plancher_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.plancher", call_site);
+            if (plancher_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+                plancher_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
+            {
+                runtime.raise_runtime_error(call_site, "Maths.plancher: le resultat depasse la limite d'un Entier");
+            }
+            return Value::entier(static_cast<int64_t>(std::floor(plancher_val)));
         });
 
     stdlib_bind_public_function(
@@ -96,7 +113,13 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.plafond", call_site);
-            return Value::entier(static_cast<int64_t>(std::ceil(stdlib_expect_decimal(runtime, args[0].value, "Maths.plafond", call_site))));
+            const double plafond_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.plafond", call_site);
+            if (plafond_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+                plafond_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
+            {
+                runtime.raise_runtime_error(call_site, "Maths.plafond: le resultat depasse la limite d'un Entier");
+            }
+            return Value::entier(static_cast<int64_t>(std::ceil(plafond_val)));
         });
 
     stdlib_bind_public_function(
@@ -107,7 +130,13 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.tronquer", call_site);
-            return Value::entier(static_cast<int64_t>(std::trunc(stdlib_expect_decimal(runtime, args[0].value, "Maths.tronquer", call_site))));
+            const double tronquer_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.tronquer", call_site);
+            if (tronquer_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+                tronquer_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
+            {
+                runtime.raise_runtime_error(call_site, "Maths.tronquer: le resultat depasse la limite d'un Entier");
+            }
+            return Value::entier(static_cast<int64_t>(std::trunc(tronquer_val)));
         });
 
     stdlib_bind_public_function(
@@ -119,7 +148,7 @@ void register_maths_module(Module &module)
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.racine", call_site);
             const double value = stdlib_expect_decimal(runtime, args[0].value, "Maths.racine", call_site);
-            if (value < 0.0)
+            if (std::isnan(value) || value < 0.0)
             {
                 runtime.raise_runtime_error(call_site, "Maths.racine attend une valeur non negative");
             }
@@ -136,6 +165,10 @@ void register_maths_module(Module &module)
             stdlib_expect_positional(runtime, args, 2, "Maths.racine_n", call_site);
             const double value = stdlib_expect_decimal(runtime, args[0].value, "Maths.racine_n", call_site);
             const double degree = stdlib_expect_decimal(runtime, args[1].value, "Maths.racine_n", call_site);
+            if (std::isnan(degree) || std::isnan(value) || std::isinf(degree) || std::isinf(value))
+            {
+                runtime.raise_runtime_error(call_site, "Maths.racine_n attend des valeurs finies valides");
+            }
             if (degree == 0.0)
             {
                 runtime.raise_runtime_error(call_site, "Maths.racine_n attend un degre non nul");
@@ -168,7 +201,12 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.log", call_site);
-            return Value::decimal(std::log(stdlib_expect_decimal(runtime, args[0].value, "Maths.log", call_site)));
+            const double log_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.log", call_site);
+            if (log_val <= 0.0)
+            {
+                runtime.raise_runtime_error(call_site, "Maths.log attend une valeur positive");
+            }
+            return Value::decimal(std::log(log_val));
         });
 
     stdlib_bind_public_function(
@@ -179,7 +217,12 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.log10", call_site);
-            return Value::decimal(std::log10(stdlib_expect_decimal(runtime, args[0].value, "Maths.log10", call_site)));
+            const double log10_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.log10", call_site);
+            if (log10_val <= 0.0)
+            {
+                runtime.raise_runtime_error(call_site, "Maths.log10 attend une valeur positive");
+            }
+            return Value::decimal(std::log10(log10_val));
         });
 
     stdlib_bind_public_function(
@@ -190,7 +233,12 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.log2", call_site);
-            return Value::decimal(std::log2(stdlib_expect_decimal(runtime, args[0].value, "Maths.log2", call_site)));
+            const double log2_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.log2", call_site);
+            if (log2_val <= 0.0)
+            {
+                runtime.raise_runtime_error(call_site, "Maths.log2 attend une valeur positive");
+            }
+            return Value::decimal(std::log2(log2_val));
         });
 
     const auto sin_function = make_native_function(
@@ -231,7 +279,12 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.asin", call_site);
-            return Value::decimal(std::asin(stdlib_expect_decimal(runtime, args[0].value, "Maths.asin", call_site)));
+            const double asin_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.asin", call_site);
+            if (asin_val < -1.0 || asin_val > 1.0)
+            {
+                runtime.raise_runtime_error(call_site, "Maths.asin attend une valeur entre -1 et 1");
+            }
+            return Value::decimal(std::asin(asin_val));
         });
 
     stdlib_bind_public_function(
@@ -242,7 +295,12 @@ void register_maths_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             stdlib_expect_positional(runtime, args, 1, "Maths.acos", call_site);
-            return Value::decimal(std::acos(stdlib_expect_decimal(runtime, args[0].value, "Maths.acos", call_site)));
+            const double acos_val = stdlib_expect_decimal(runtime, args[0].value, "Maths.acos", call_site);
+            if (acos_val < -1.0 || acos_val > 1.0)
+            {
+                runtime.raise_runtime_error(call_site, "Maths.acos attend une valeur entre -1 et 1");
+            }
+            return Value::decimal(std::acos(acos_val));
         });
 
     stdlib_bind_public_function(

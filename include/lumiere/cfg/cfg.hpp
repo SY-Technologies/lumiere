@@ -82,12 +82,6 @@ struct Instruction
         BRANCH,     // src[0] ? → jump_target : → branch_false
         RETURN,     // return src[0]  (NONE operand = bare retourne)
 
-        // exceptions
-        THROW,          // throw src[0]
-        PUSH_HANDLER,   // push catch handler → jump_target
-        POP_HANDLER,    // pop catch handler
-        MATCH_CATCH,    // src[0] instanceof label → jump_target else → branch_false
-
         // objects
         GET_FIELD,  // dst = src[0].label
         SET_FIELD,  // src[0].label = src[1]

@@ -115,21 +115,9 @@ void collect_imports_from_stmt(Stmt &stmt,
             collect_imports_from_expr(*result->value, imports);
         }
     }
-    else if (auto *thrown = dynamic_cast<ThrowStmt *>(&stmt))
+    else if (auto *ignorer = dynamic_cast<IgnorerStmt *>(&stmt))
     {
-        collect_imports_from_expr(*thrown->value, imports);
-    }
-    else if (auto *attempt = dynamic_cast<TryStmt *>(&stmt))
-    {
-        collect_imports_from_stmt(*attempt->body, imports);
-        for (CatchClause &clause : attempt->catch_clauses)
-        {
-            collect_imports_from_stmt(*clause.body, imports);
-        }
-        if (attempt->finally_body)
-        {
-            collect_imports_from_stmt(*attempt->finally_body, imports);
-        }
+        collect_imports_from_expr(*ignorer->expr, imports);
     }
     else if (auto *match = dynamic_cast<AgirSelonStmt *>(&stmt))
     {
@@ -143,7 +131,10 @@ void collect_imports_from_stmt(Stmt &stmt,
                     collect_imports_from_expr(*pattern.literal, imports);
                 }
             }
-            collect_imports_from_stmt(*branch.body, imports);
+            if (branch.terminator == BranchTerminator::NONE && branch.body)
+            {
+                collect_imports_from_stmt(*branch.body, imports);
+            }
         }
         if (match->else_branch)
         {
@@ -213,6 +204,10 @@ void collect_imports_from_expr(Expr &expr, std::vector<CollectedImport> &imports
     {
         collect_imports_from_expr(*index->object, imports);
         collect_imports_from_expr(*index->index, imports);
+    }
+    else if (auto *propagation = dynamic_cast<PropagationExpr *>(&expr))
+    {
+        collect_imports_from_expr(*propagation->operand, imports);
     }
 }
 
@@ -304,8 +299,8 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
 
     std::vector<std::size_t> globals;
     static const std::unordered_set<std::string> core_globals{
-        "afficher", "afficher_inline", "lire", "lire_entier", "lire_décimal",
-        "lire_decimal", "lire_logique", "type_de"};
+        "afficher", "lire", "lire_entier", "lire_décimal",
+        "lire_decimal", "lire_logique", "type_de", "Succès", "Échec"};
     for (const LirGlobal &global : source.globals)
     {
         globals.push_back(target.add_global(
@@ -390,6 +385,7 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
     {
         LirFunction &function = target.append_function(prefix + source_function.name);
         function.params = source_function.params;
+        function.return_type = source_function.return_type;
         function.source_path = source_function.source_path;
         function.source_text = source_function.source_text;
         function.locals = source_function.locals;

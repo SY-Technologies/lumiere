@@ -15,6 +15,11 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
         make_native_function,
         "connecter",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurConnexion",
+                "connecter",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             if (args.size() < 2 || args.size() > 3)
             {
@@ -54,6 +59,7 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
                 {
                     continue;
                 }
+                platform_socket_enable_nosigpipe(fd);
                 if (timeout_ms.has_value())
                 {
                     apply_timeout(runtime, fd, *timeout_ms, "LumiNet.TCP.connecter", native_args.site);
@@ -74,6 +80,7 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
             auto state = std::make_shared<TcpConnectionState>();
             state->fd = fd;
             return make_tcp_connection_value(state, peer_address.empty() ? host : peer_address, port, make_native_function);
+                });
         });
     bind_object_method(
         tcp,
@@ -94,6 +101,11 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
         make_native_function,
         "ouvrir",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurIO",
+                "ouvrir",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             if (args.size() > 1)
             {
@@ -118,6 +130,7 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.UDP.ouvrir", socket_error_text("socket"));
             }
+            platform_socket_enable_nosigpipe(fd);
 
             sockaddr_in addr{};
             addr.sin_family = AF_INET;
@@ -143,6 +156,7 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
             state->fd = fd;
             state->port = ntohs(bound.sin_port);
             return make_udp_socket_value(state, make_native_function);
+                });
         });
     return Value::objet(std::move(udp));
 }

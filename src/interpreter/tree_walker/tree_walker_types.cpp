@@ -3,9 +3,132 @@
 namespace lumiere
 {
 
+    bool TreeWalker::matches_type_name(const Value &value, const TypeExpr &type) const
+    {
+        if (type.empty())
+        {
+            return true;
+        }
+        if (type.kind == TypeExprKind::UNION)
+        {
+            for (const TypeExpr &alternative : type.children)
+            {
+                if (matches_type_name(value, alternative))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (type.kind == TypeExprKind::NAMED)
+        {
+            if (const auto alias = m_type_aliases.find(type.name);
+                alias != m_type_aliases.end())
+            {
+                return matches_type_name(value, alias->second);
+            }
+            return matches_type_name(value, type.as_token());
+        }
+        if (type.kind != TypeExprKind::GENERIC)
+        {
+            return false;
+        }
+
+        if (type.name == "Liste" && type.children.size() == 1 && value.is_liste())
+        {
+            for (const Value &element : value.as_liste()->elements)
+            {
+                if (!matches_type_name(element, type.children[0]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (type.name == "ListeFixe" && type.children.size() == 2 &&
+            type.children[1].kind == TypeExprKind::INTEGER_ARGUMENT && value.is_liste_fixe())
+        {
+            const auto list = value.as_liste_fixe();
+            if (list->elements.size() != type.children[1].integer)
+            {
+                return false;
+            }
+            for (const Value &element : list->elements)
+            {
+                if (!matches_type_name(element, type.children[0]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (type.name == "Dictionnaire" && type.children.size() == 2 && value.is_dictionnaire())
+        {
+            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+            {
+                if (!matches_type_name(key, type.children[0]) ||
+                    !matches_type_name(entry_value, type.children[1]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (type.name == "Ensemble" && type.children.size() == 1 && value.is_ensemble())
+        {
+            for (const Value &element : value.as_ensemble()->elements)
+            {
+                if (!matches_type_name(element, type.children[0]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (type.name == "Résultat" && type.children.size() == 2 &&
+            value.is_resultat())
+        {
+            const auto result = value.as_resultat();
+            return matches_type_name(
+                result->payload,
+                type.children[result->success ? 0 : 1]);
+        }
+        return false;
+    }
+
     bool TreeWalker::matches_type_name(const Value &value, const Token &type_token) const
     {
         const std::string &full_type_name = type_token.lexeme;
+        int union_depth = 0;
+        for (std::size_t i = 0; i < full_type_name.size(); ++i)
+        {
+            if (full_type_name[i] == '[')
+            {
+                ++union_depth;
+            }
+            else if (full_type_name[i] == ']')
+            {
+                --union_depth;
+            }
+            else if (full_type_name[i] == '|' && union_depth == 0)
+            {
+                auto trim = [](std::string name)
+                {
+                    const std::size_t first = name.find_first_not_of(" \t\r\n");
+                    if (first == std::string::npos)
+                    {
+                        return std::string{};
+                    }
+                    return name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
+                };
+                return matches_type_name(
+                           value,
+                           Token(TokenType::IDENT, trim(full_type_name.substr(0, i)), type_token.line, type_token.column)) ||
+                       matches_type_name(
+                           value,
+                           Token(TokenType::IDENT, trim(full_type_name.substr(i + 1)), type_token.line, type_token.column));
+            }
+        }
         const std::string::size_type generic_start = full_type_name.find('[');
         const std::string type_name = generic_start == std::string::npos
                                           ? full_type_name
@@ -41,6 +164,30 @@ namespace lumiere
         if (type_name == "Universel")
         {
             return true;
+        }
+        if (type_name == "Résultat")
+        {
+            if (!value.is_resultat())
+            {
+                return false;
+            }
+            if (generic_spec.empty())
+            {
+                return true;
+            }
+            const std::vector<std::string> generic_args =
+                split_generic_arguments(generic_spec);
+            if (generic_args.size() != 2)
+            {
+                return false;
+            }
+            const auto result = value.as_resultat();
+            return matches_type_name(
+                result->payload,
+                Token(TokenType::IDENT,
+                      generic_args[result->success ? 0 : 1],
+                      type_token.line,
+                      type_token.column));
         }
         if (type_name == "Liste")
         {
@@ -303,6 +450,58 @@ namespace lumiere
         }
     }
 
+    void TreeWalker::register_value_annotation(const Value &value, const TypeExpr &annotation) const
+    {
+        if (annotation.kind != TypeExprKind::GENERIC)
+        {
+            return;
+        }
+
+        if (annotation.name == "Liste" && annotation.children.size() == 1 && value.is_liste())
+        {
+            const TypeExpr &element_type = annotation.children[0];
+            m_list_constraints[value.as_liste().get()] = ListConstraint{element_type.to_string()};
+            for (const Value &element : value.as_liste()->elements)
+            {
+                register_value_annotation(element, element_type);
+            }
+            return;
+        }
+        if (annotation.name == "ListeFixe" && annotation.children.size() == 2 &&
+            annotation.children[1].kind == TypeExprKind::INTEGER_ARGUMENT && value.is_liste_fixe())
+        {
+            const TypeExpr &element_type = annotation.children[0];
+            m_fixed_list_constraints[value.as_liste_fixe().get()] = {
+                element_type.to_string(), static_cast<std::size_t>(annotation.children[1].integer)};
+            for (const Value &element : value.as_liste_fixe()->elements)
+            {
+                register_value_annotation(element, element_type);
+            }
+            return;
+        }
+        if (annotation.name == "Dictionnaire" && annotation.children.size() == 2 && value.is_dictionnaire())
+        {
+            const TypeExpr &key_type = annotation.children[0];
+            const TypeExpr &value_type = annotation.children[1];
+            m_dict_constraints[value.as_dictionnaire().get()] = {key_type.to_string(), value_type.to_string()};
+            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+            {
+                register_value_annotation(key, key_type);
+                register_value_annotation(entry_value, value_type);
+            }
+            return;
+        }
+        if (annotation.name == "Ensemble" && annotation.children.size() == 1 && value.is_ensemble())
+        {
+            const TypeExpr &element_type = annotation.children[0];
+            m_set_constraints[value.as_ensemble().get()] = SetConstraint{element_type.to_string()};
+            for (const Value &element : value.as_ensemble()->elements)
+            {
+                register_value_annotation(element, element_type);
+            }
+        }
+    }
+
     void TreeWalker::enforce_list_element_constraint(const std::shared_ptr<ListeData> &list,
                                                      const Value &element,
                                                      const Token &site,
@@ -413,6 +612,27 @@ namespace lumiere
         throw_runtime_error(
             site,
             context + " attend une valeur de type " + annotation.lexeme +
+                "; type recu: " + value.type_name());
+    }
+
+    void TreeWalker::ensure_value_matches_annotation(const Value &value,
+                                                     const TypeExpr &annotation,
+                                                     const Token &site,
+                                                     const std::string &context) const
+    {
+        if (annotation.empty())
+        {
+            return;
+        }
+        if (matches_type_name(value, annotation))
+        {
+            register_value_annotation(value, annotation);
+            return;
+        }
+
+        throw_runtime_error(
+            site,
+            context + " attend une valeur de type " + annotation.to_string() +
                 "; type recu: " + value.type_name());
     }
 

@@ -281,11 +281,12 @@ void send_http_response(IRuntime &runtime,
             has_length = true;
         }
     }
-    if (!has_type)
+    const bool skip_body_headers = (status >= 100 && status < 200) || status == 204 || status == 304;
+    if (!has_type && !skip_body_headers)
     {
         headers.push_back({"Content-Type", "text/plain; charset=utf-8"});
     }
-    if (!has_length)
+    if (!has_length && !skip_body_headers)
     {
         headers.push_back({"Content-Length", std::to_string(body.size())});
     }
@@ -335,6 +336,7 @@ Value make_http_response_writer_value(IRuntime &runtime,
 
     object->fields["envoyer"] = Value::fonction(make_native_function(
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurHTTP", "envoyer_réponse", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer", native_args.site);
             send_http_response(inner_runtime,
@@ -345,10 +347,12 @@ Value make_http_response_writer_value(IRuntime &runtime,
                                "RéponseServeurHTTP.envoyer",
                                native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["envoyer_json"] = Value::fonction(make_native_function(
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurHTTP", "envoyer_json", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer_json", native_args.site);
             send_http_response(inner_runtime,
@@ -359,14 +363,20 @@ Value make_http_response_writer_value(IRuntime &runtime,
                                "RéponseServeurHTTP.envoyer_json",
                                native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["envoyer_fichier"] = Value::fonction(make_native_function(
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurHTTP", "envoyer_fichier", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
             const int64_t status = stdlib_expect_integer(inner_runtime, args[0].value, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
             const std::string path = stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.envoyer_fichier", native_args.site);
+            if (path.find("..") != std::string::npos || path.empty())
+            {
+                inner_runtime.raise_runtime_error(native_args.site, "RéponseServeurHTTP.envoyer_fichier requiert un chemin valide sans '..'");
+            }
             if (!std::filesystem::is_regular_file(path))
             {
                 inner_runtime.raise_runtime_error(native_args.site, "RéponseServeurHTTP.envoyer_fichier requiert un fichier régulier");
@@ -374,7 +384,8 @@ Value make_http_response_writer_value(IRuntime &runtime,
             std::ifstream file(path, std::ios::binary);
             if (!file.is_open())
             {
-                inner_runtime.raise_runtime_error(native_args.site, "RéponseServeurHTTP.envoyer_fichier a échoué: impossible d'ouvrir le fichier demandé");
+                throw NetworkFailure(
+                    "RéponseServeurHTTP.envoyer_fichier a échoué: impossible d'ouvrir le fichier demandé");
             }
             std::ostringstream buffer;
             buffer << file.rdbuf();
@@ -386,10 +397,12 @@ Value make_http_response_writer_value(IRuntime &runtime,
                                "RéponseServeurHTTP.envoyer_fichier",
                                native_args.site);
             return Value::rien();
+            });
         }));
 
     object->fields["rediriger"] = Value::fonction(make_native_function(
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurHTTP", "rediriger", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional_range(inner_runtime, args, 1, 2, "RéponseServeurHTTP.rediriger", native_args.site);
             const std::string url = stdlib_expect_text(inner_runtime, args[0].value, "RéponseServeurHTTP.rediriger", native_args.site);
@@ -404,6 +417,7 @@ Value make_http_response_writer_value(IRuntime &runtime,
                                "RéponseServeurHTTP.rediriger",
                                native_args.site);
             return Value::rien();
+            });
         }));
 
     Value result = Value::objet(std::move(object));

@@ -52,14 +52,9 @@ struct ReturnSignal
     Value value = Value::rien();
 };
 
-struct ThrownSignal
+struct PropagateSignal
 {
-    Value value = Value::rien();
-    std::string source_path;
-    std::string source_text;
-    uint32_t line = 0;
-    uint32_t column = 0;
-    std::vector<StackFrame> stack_trace;
+    Value error;
 };
 
 struct BreakSignal {};

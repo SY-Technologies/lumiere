@@ -21,9 +21,9 @@ struct Declaration
     std::size_t offset;
 };
 
-std::string type_name(const Token &token)
+std::string type_name(const TypeExpr &type)
 {
-    return token.lexeme.empty() ? "Rien" : token.lexeme;
+    return type.empty() ? "Rien" : type.to_string();
 }
 
 std::string function_signature(const FunctionDeclStmt &function)
@@ -36,7 +36,7 @@ std::string function_signature(const FunctionDeclStmt &function)
         {
             output << ", ";
         }
-        output << function.params[i].name << ": " << type_name(function.params[i].type_token);
+        output << function.params[i].name << ": " << type_name(function.params[i].type);
     }
     output << ") -> " << type_name(function.return_type);
     return output.str();
@@ -49,9 +49,9 @@ void collect_statement(const Stmt &statement, std::vector<Declaration> &declarat
     if (const auto *variable = dynamic_cast<const VarDeclStmt *>(&statement))
     {
         const std::string qualifier = variable->is_fixe ? "fixe " : "soit ";
-        const std::string annotation = variable->type_token.lexeme.empty()
+        const std::string annotation = variable->type.empty()
             ? ""
-            : ": " + variable->type_token.lexeme;
+            : ": " + variable->type.to_string();
         declarations.push_back({variable->name.lexeme,
                                 qualifier + variable->name.lexeme + annotation,
                                 variable->name.start_offset});
@@ -98,21 +98,6 @@ void collect_statement(const Stmt &statement, std::vector<Declaration> &declarat
     {
         collect_statement(*loop->body, declarations);
     }
-    else if (const auto *attempt = dynamic_cast<const TryStmt *>(&statement))
-    {
-        collect_statement(*attempt->body, declarations);
-        for (const CatchClause &clause : attempt->catch_clauses)
-        {
-            declarations.push_back({clause.variable.lexeme,
-                                    clause.variable.lexeme + ": " + clause.type_token.lexeme,
-                                    clause.variable.start_offset});
-            collect_statement(*clause.body, declarations);
-        }
-        if (attempt->finally_body != nullptr)
-        {
-            collect_statement(*attempt->finally_body, declarations);
-        }
-    }
 }
 
 void collect_statements(const StmtList &statements, std::vector<Declaration> &declarations)
@@ -138,9 +123,6 @@ std::optional<std::string_view> keyword_detail(const TokenType type)
         {TokenType::POUR, "Commence une boucle d'itération."},
         {TokenType::TANT_QUE, "Répète un bloc tant que sa condition est vraie."},
         {TokenType::IMPORTER, "Importe un module Lumiere."},
-        {TokenType::LANCER, "Lance une erreur."},
-        {TokenType::ESSAYER, "Commence un bloc de gestion d'erreur."},
-        {TokenType::ATTRAPER, "Intercepte une erreur compatible."},
     };
     const auto found = details.find(type);
     if (found == details.end())

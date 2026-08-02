@@ -55,6 +55,7 @@ std::size_t instr_size(const LirModule &module,
     case LirOpcode::IR_OP_CAST:
     case LirOpcode::IR_OP_TYPE_CHECK:
     case LirOpcode::IR_OP_ASSERT_TYPE:
+    case LirOpcode::IR_OP_RESULT_FAILURE_TYPE:
         return instruction.operands.at(1).index <= 0xFF ? 2 : 4;
     case LirOpcode::IR_OP_LOAD_LOCAL:
     case LirOpcode::IR_OP_STORE_LOCAL:
@@ -63,13 +64,6 @@ std::size_t instr_size(const LirModule &module,
         return 2;
     case LirOpcode::IR_OP_CLOSURE:
         return 4 + (instruction.operands.size() - 1) * 2;
-    case LirOpcode::IR_OP_TRY_BEGIN:
-        return 3;
-    case LirOpcode::IR_OP_TRY_END:
-    case LirOpcode::IR_OP_THROW:
-        return 1;
-    case LirOpcode::IR_OP_EXCEPTION_VALUE:
-        return 0;
     case LirOpcode::IR_OP_NOT:
     case LirOpcode::IR_OP_NEGATE:
     case LirOpcode::IR_OP_ADD:
@@ -109,6 +103,10 @@ std::size_t instr_size(const LirModule &module,
     case LirOpcode::IR_OP_INDEX_GET:
     case LirOpcode::IR_OP_INDEX_SET:
     case LirOpcode::IR_OP_MATCH_ERROR:
+    case LirOpcode::IR_OP_RESULT_IS_SUCCESS:
+    case LirOpcode::IR_OP_RESULT_PAYLOAD:
+    case LirOpcode::IR_OP_PROPAGATE:
+    case LirOpcode::IR_OP_IGNORE_RESULT:
         return 1;
     default:
         throw VmCompileError("VM: calcul de taille bytecode LIR non pris en charge pour cette instruction");
@@ -135,7 +133,6 @@ std::size_t term_size(const LirTerminator &terminator)
 // Encodes one regular LIR instruction into bytecode.
 void emit_instr(const LirModule &module,
                 const LirInstruction &instruction,
-                const std::unordered_map<std::size_t, std::size_t> &block_offsets,
                 Chunk &chunk)
 {
     switch (instruction.opcode)
@@ -236,19 +233,6 @@ void emit_instr(const LirModule &module,
         }
         return;
     }
-    case LirOpcode::IR_OP_TRY_BEGIN:
-        chunk.write_opcode(Opcode::TRY_BEGIN, bc_loc(instruction.source));
-        chunk.write_u16(require_u16_offset(block_offsets.at(instruction.operands.at(0).index), "le gestionnaire"),
-                        bc_loc(instruction.source));
-        return;
-    case LirOpcode::IR_OP_TRY_END:
-        chunk.write_opcode(Opcode::TRY_END, bc_loc(instruction.source));
-        return;
-    case LirOpcode::IR_OP_EXCEPTION_VALUE:
-        return;
-    case LirOpcode::IR_OP_THROW:
-        chunk.write_opcode(Opcode::THROW, bc_loc(instruction.source));
-        return;
     case LirOpcode::IR_OP_NEGATE:
         chunk.write_opcode(Opcode::NEGATE, bc_loc(instruction.source));
         return;
@@ -420,8 +404,37 @@ void emit_instr(const LirModule &module,
     case LirOpcode::IR_OP_MATCH_ERROR:
         chunk.write_opcode(Opcode::MATCH_ERROR, bc_loc(instruction.source));
         return;
+    case LirOpcode::IR_OP_RESULT_IS_SUCCESS:
+        chunk.write_opcode(Opcode::RESULT_IS_SUCCESS, bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_RESULT_FAILURE_TYPE:
+    {
+        const std::size_t index = instruction.operands.at(1).index;
+        chunk.write_opcode(index <= 0xFF
+                               ? Opcode::RESULT_FAILURE_TYPE
+                               : Opcode::RESULT_FAILURE_TYPE_LONG,
+                           bc_loc(instruction.source));
+        if (index <= 0xFF)
+        {
+            chunk.write_byte(static_cast<std::uint8_t>(index), bc_loc(instruction.source));
+        }
+        else
+        {
+            chunk.write_u24(index, bc_loc(instruction.source));
+        }
+        return;
+    }
+    case LirOpcode::IR_OP_RESULT_PAYLOAD:
+        chunk.write_opcode(Opcode::RESULT_PAYLOAD, bc_loc(instruction.source));
+        return;
     case LirOpcode::IR_OP_DISCARD:
         chunk.write_opcode(Opcode::POP, bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_PROPAGATE:
+        chunk.write_opcode(Opcode::PROPAGATE, bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_IGNORE_RESULT:
+        chunk.write_opcode(Opcode::IGNORE_RESULT, bc_loc(instruction.source));
         return;
     default:
         throw VmCompileError("VM: l'emission bytecode LIR ne prend pas encore en charge cette instruction");
@@ -498,7 +511,7 @@ void emit_fn(const LirModule &module,
     {
         for (const LirInstruction &instruction : block.instructions)
         {
-            emit_instr(module, instruction, block_offsets, bytecode_function.chunk);
+            emit_instr(module, instruction, bytecode_function.chunk);
         }
 
         emit_term(*block.terminator, block_offsets, bytecode_function.chunk);
@@ -510,6 +523,7 @@ void emit_fn(const LirModule &module,
 ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t entry_function_index)
 {
     ModuleBytecode bytecode_module;
+    bytecode_module.source_path = module.name;
     bytecode_module.globals.reserve(module.globals.size());
     for (const LirGlobal &global : module.globals)
     {
@@ -598,6 +612,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         FunctionBytecode bytecode_function;
         bytecode_function.name = lir_function.name;
+        bytecode_function.return_type = lir_function.return_type;
         bytecode_function.source_path = lir_function.source_path;
         bytecode_function.source_text = lir_function.source_text;
         bytecode_function.arity = lir_function.params.size();

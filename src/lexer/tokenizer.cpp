@@ -336,6 +336,7 @@ namespace lumiere
             {"retourne", TokenType::RETOURNE},
             {"classe", TokenType::CLASSE},
             {"interface", TokenType::INTERFACE},
+            {"type", TokenType::TYPE},
             {"réalise", TokenType::REALISE},
             {"realise", TokenType::REALISE},
             {"remplace", TokenType::REMPLACE},
@@ -352,12 +353,6 @@ namespace lumiere
             {"arrêter", TokenType::ARRETER},
             {"arreter", TokenType::ARRETER},
             {"continuer", TokenType::CONTINUER},
-
-            // error handling
-            {"essayer", TokenType::ESSAYER},
-            {"attraper", TokenType::ATTRAPER},
-            {"finalement", TokenType::FINALEMENT},
-            {"lancer", TokenType::LANCER},
 
             // literals
             {"vrai", TokenType::VRAI},
@@ -376,6 +371,10 @@ namespace lumiere
             {"et", TokenType::ET},
             {"ou", TokenType::OU},
             {"non", TokenType::NON},
+
+            // result handling
+            {"propager", TokenType::PROPAGER},
+            {"ignorer", TokenType::IGNORER},
         };
 
         auto it = keywords.find(word);
