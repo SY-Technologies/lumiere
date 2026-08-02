@@ -178,6 +178,10 @@ Install a specific release:
 curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.6
 ```
 
+To upgrade an existing installation, repeat the original installation method.
+See [`INSTALL.md`](./INSTALL.md#upgrade-lumiere) for installer, package, MSI,
+source-build, and version-verification instructions.
+
 On Windows PowerShell:
 
 ```powershell
