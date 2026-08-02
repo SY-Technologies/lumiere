@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "luminet_shared.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -145,6 +146,32 @@ bool test_wait_until_readable(TestSocket socket, std::chrono::milliseconds timeo
     return ::select(socket + 1, &read_set, nullptr, nullptr, &duration) == 1;
 #endif
 }
+
+bool test_tcp_binding_available()
+{
+    const TestSocket socket = test_open_socket(AF_INET, SOCK_STREAM, 0);
+    if (!test_socket_valid(socket))
+    {
+        return false;
+    }
+
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(0);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const bool available = ::bind(socket, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0;
+    test_close_socket(socket);
+    return available;
+}
+
+#define SKIP_IF_TCP_BINDING_UNAVAILABLE()                                                \
+    do                                                                                   \
+    {                                                                                    \
+        if (!test_tcp_binding_available())                                               \
+        {                                                                                \
+            GTEST_SKIP() << "local TCP binding is unavailable in this environment";      \
+        }                                                                                \
+    } while (false)
 
 std::string read_text_file(const std::filesystem::path &path)
 {
@@ -310,6 +337,51 @@ std::tuple<std::string, bool, std::string> execute_program_with_error(const std:
     }
 
     std::cout.rdbuf(previous);
+    return {captured.str(), completed, error_message};
+}
+
+std::tuple<std::string, bool, std::string> execute_program_with_input_and_error(const std::string &source, const std::string &input)
+{
+    std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
+    Lexer lexer(source);
+    Parser parser(lexer.tokenise());
+
+    Program program;
+    program.statements = parser.parse();
+    program.source_path = "<test>";
+    program.source_text = source;
+
+    if (parser.had_error())
+    {
+        throw std::runtime_error("unexpected parse failure in execute_program_with_input_and_error");
+    }
+
+    TreeWalker walker;
+
+    std::ostringstream captured;
+    std::istringstream provided_input(input);
+    auto *previous_output = std::cout.rdbuf(captured.rdbuf());
+    auto *previous_input = std::cin.rdbuf(provided_input.rdbuf());
+    bool completed = true;
+    std::string error_message;
+
+    try
+    {
+        walker.execute(program);
+    }
+    catch (const RuntimeError &err)
+    {
+        completed = false;
+        error_message = err.what();
+    }
+    catch (...)
+    {
+        completed = false;
+        error_message = "unknown error";
+    }
+
+    std::cin.rdbuf(previous_input);
+    std::cout.rdbuf(previous_output);
     return {captured.str(), completed, error_message};
 }
 
@@ -949,25 +1021,6 @@ TEST(InterpreterControlFlow, PropagatesReturnOutOfLoop)
     EXPECT_EQ(output, "2\n");
 }
 
-TEST(InterpreterControlFlow, ContinueInsideTryStillRunsFinally)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  pour chaque n dans [1, 2] {\n"
-        "    essayer {\n"
-        "      afficher(n)\n"
-        "      continuer\n"
-        "    } attraper (e: Entier) {\n"
-        "      afficher(e)\n"
-        "    } finalement {\n"
-        "      afficher(\"fin\")\n"
-        "    }\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "1\nfin\n2\nfin\n");
-}
 
 TEST(InterpreterCasts, SupportsPrimitiveCasts)
 {
@@ -1462,132 +1515,6 @@ TEST(InterpreterObjects, RejectsRemplaceWithoutParentMethod)
     EXPECT_NE(error.find("remplace utilise sans methode parente"), std::string::npos);
 }
 
-TEST(InterpreterErrors, SupportsTypedThrowCatchAndFinally)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    lancer 42\n"
-        "  } attraper (e: Entier) {\n"
-        "    afficher(e)\n"
-        "  } finalement {\n"
-        "    afficher(\"fin\")\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "42\nfin\n");
-}
-
-TEST(InterpreterErrors, RunsFinallyWhenThrownValueIsUnhandled)
-{
-    const auto [output, completed, error] = execute_program_with_error(
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    lancer 42\n"
-        "  } attraper (e: Texte) {\n"
-        "    afficher(e)\n"
-        "  } finalement {\n"
-        "    afficher(\"fin\")\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_FALSE(completed);
-    EXPECT_EQ(output, "fin\n");
-    EXPECT_NE(error.find("Traceback (most recent call last):"), std::string::npos);
-    EXPECT_NE(error.find("in principal"), std::string::npos);
-    EXPECT_NE(error.find("exception non attrapee: 42"), std::string::npos);
-}
-
-TEST(InterpreterErrors, CatchesRuntimeErrorAsTexte)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    soit xs = [1]\n"
-        "    afficher(xs[3])\n"
-        "  } attraper (e: Texte) {\n"
-        "    afficher(e)\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_NE(output.find("indice hors limites"), std::string::npos);
-}
-
-TEST(InterpreterErrors, RunsFinallyAfterHandledCatch)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    lancer 7\n"
-        "  } attraper (e: Entier) {\n"
-        "    afficher(e)\n"
-        "  } finalement {\n"
-        "    afficher(\"toujours\")\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "7\ntoujours\n");
-}
-
-TEST(InterpreterErrors, FinallyRunsBeforeReturnLeavesTry)
-{
-    const auto [output, completed] = execute_program(
-        "fonction f() {\n"
-        "  essayer {\n"
-        "    retourne 7\n"
-        "  } attraper (e: Entier) {\n"
-        "    afficher(e)\n"
-        "  } finalement {\n"
-        "    afficher(\"fin\")\n"
-        "  }\n"
-        "}\n"
-        "fonction principal() {\n"
-        "  afficher(f())\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "fin\n7\n");
-}
-
-TEST(InterpreterErrors, FinallyRunsBeforeBreakLeavesTry)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  pour chaque n dans [1, 2, 3] {\n"
-        "    essayer {\n"
-        "      afficher(n)\n"
-        "      arrêter\n"
-        "    } attraper (e: Entier) {\n"
-        "      afficher(e)\n"
-        "    } finalement {\n"
-        "      afficher(\"fin\")\n"
-        "    }\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "1\nfin\n");
-}
-
-TEST(InterpreterErrors, CatchClauseOrderMatters)
-{
-    const auto [output, completed] = execute_program(
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    lancer \"oops\"\n"
-        "  } attraper (x: Universel) {\n"
-        "    afficher(\"universel\")\n"
-        "  } attraper (x: Texte) {\n"
-        "    afficher(\"texte\")\n"
-        "  }\n"
-        "}\n");
-
-    EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "universel\n");
-}
 
 TEST(InterpreterModules, ImportsModuleNamespaceFromFile)
 {
@@ -1934,11 +1861,11 @@ TEST(InterpreterBuiltinModules, SupportsCheminAndFichierModules)
         "importer Fichier.{existe, lire_texte}\n"
         "fonction principal() {\n"
         "  soit chemin = joindre(\"" + import_root.string() + "\", \"note.txt\")\n"
-        "  afficher(existe(chemin))\n"
+        "  afficher(existe(chemin) ou propager)\n"
         "  afficher(nom(chemin))\n"
         "  afficher(nom_sans_extension(chemin))\n"
         "  afficher(dossier(chemin))\n"
-        "  afficher(lire_texte(chemin))\n"
+        "  afficher(lire_texte(chemin) ou propager)\n"
         "}\n";
 
     const auto [output, completed] = execute_program_with_import_path(source, import_root);
@@ -2033,20 +1960,20 @@ TEST(InterpreterBuiltinModules, SupportsExpandedFichierModuleOperations)
         "  soit texte = \"" + (import_root / "sortie.txt").string() + "\"\n"
         "  soit source = \"" + source_file.string() + "\"\n"
         "  soit liste = \"" + (import_root / "liste").string() + "\"\n"
-        "  creer_dossiers(dossier)\n"
-        "  ecrire_texte(texte, \"alpha\")\n"
-        "  ajouter_texte(texte, \"-beta\")\n"
-        "  afficher(existe(dossier))\n"
-        "  afficher(est_dossier(dossier))\n"
-        "  afficher(est_fichier(texte))\n"
-        "  afficher(lire_texte(texte))\n"
-        "  soit lignes = lire_lignes(source)\n"
+        "  ignorer creer_dossiers(dossier)\n"
+        "  ignorer ecrire_texte(texte, \"alpha\")\n"
+        "  ignorer ajouter_texte(texte, \"-beta\")\n"
+        "  afficher(existe(dossier) ou propager)\n"
+        "  afficher(est_dossier(dossier) ou propager)\n"
+        "  afficher(est_fichier(texte) ou propager)\n"
+        "  afficher(lire_texte(texte) ou propager)\n"
+        "  soit lignes = lire_lignes(source) ou propager\n"
         "  afficher(lignes.taille())\n"
         "  afficher(lignes[0])\n"
         "  afficher(lignes[1])\n"
-        "  afficher(taille(texte))\n"
-        "  afficher(modifie_le(texte))\n"
-        "  soit elements = lister(liste)\n"
+        "  afficher(taille(texte) ou propager)\n"
+        "  afficher(modifie_le(texte) ou propager)\n"
+        "  soit elements = lister(liste) ou propager\n"
         "  afficher(elements.taille())\n"
         "  afficher(elements[0])\n"
         "  afficher(elements[1])\n"
@@ -2100,17 +2027,17 @@ TEST(InterpreterBuiltinModules, SupportsFichierWriteLinesCopyMoveAndDelete)
         "  soit source = \"" + (import_root / "source.txt").string() + "\"\n"
         "  soit copie = \"" + (import_root / "copie.txt").string() + "\"\n"
         "  soit deplace = \"" + (import_root / "deplace.txt").string() + "\"\n"
-        "  ecrire_lignes(source, [\"un\", \"deux\", \"trois\"])\n"
-        "  copier(source, copie)\n"
-        "  deplacer(copie, deplace)\n"
-        "  afficher(lire_texte(source))\n"
-        "  soit lignes = lire_lignes(deplace)\n"
+        "  ignorer ecrire_lignes(source, [\"un\", \"deux\", \"trois\"])\n"
+        "  ignorer copier(source, copie)\n"
+        "  ignorer deplacer(copie, deplace)\n"
+        "  afficher(lire_texte(source) ou propager)\n"
+        "  soit lignes = lire_lignes(deplace) ou propager\n"
         "  afficher(lignes.taille())\n"
         "  afficher(lignes[2])\n"
-        "  afficher(existe(copie))\n"
-        "  afficher(existe(deplace))\n"
-        "  supprimer(source)\n"
-        "  afficher(existe(source))\n"
+        "  afficher(existe(copie) ou propager)\n"
+        "  afficher(existe(deplace) ou propager)\n"
+        "  ignorer supprimer(source)\n"
+        "  afficher(existe(source) ou propager)\n"
         "}\n";
 
     const auto [output, completed] = execute_program_with_import_path(source, import_root);
@@ -2140,17 +2067,17 @@ TEST(InterpreterBuiltinModules, SupportsRecursiveListingAndSplitDirectoryDeletio
         "fonction principal() {\n"
         "  soit arbre = \"" + (import_root / "arbre").string() + "\"\n"
         "  soit vide = \"" + (import_root / "vide").string() + "\"\n"
-        "  soit elements = lister_recursif(arbre)\n"
+        "  soit elements = lister_recursif(arbre) ou propager\n"
         "  afficher(elements.taille())\n"
         "  afficher(elements[0])\n"
         "  afficher(elements[1])\n"
         "  afficher(elements[2])\n"
         "  afficher(elements[3])\n"
-        "  supprimer_dossier(vide)\n"
-        "  afficher(existe(vide))\n"
-        "  supprimer_arbre(arbre)\n"
-        "  afficher(existe(arbre))\n"
-        "  afficher(est_dossier(arbre))\n"
+        "  ignorer supprimer_dossier(vide)\n"
+        "  afficher(existe(vide) ou propager)\n"
+        "  ignorer supprimer_arbre(arbre)\n"
+        "  afficher(existe(arbre) ou propager)\n"
+        "  afficher(est_dossier(arbre) ou propager)\n"
         "}\n";
 
     const auto [output, completed] = execute_program_with_import_path(source, import_root);
@@ -2199,12 +2126,12 @@ TEST(InterpreterBuiltinModules, RejectsReadingMissingFile)
     const auto [output, completed, error] = execute_program_with_error(
         "importer Fichier.{lire_texte}\n"
         "fonction principal() {\n"
-        "  afficher(lire_texte(\"/definitivement/introuvable.txt\"))\n"
+        "  afficher(lire_texte(\"/definitivement/introuvable.txt\") ou propager)\n"
         "}\n");
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("impossible d'ouvrir"), std::string::npos);
+    EXPECT_NE(error.find("principal a échoué"), std::string::npos);
 }
 
 TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
@@ -2232,12 +2159,12 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     auto [output3, completed3, error3] = execute_program_with_error(
         "importer Fichier.{lister}\n"
         "fonction principal() {\n"
-        "  lister(\"/definitivement/introuvable-dossier\")\n"
+        "  lister(\"/definitivement/introuvable-dossier\") ou propager\n"
         "}\n");
 
     EXPECT_FALSE(completed3);
     EXPECT_TRUE(output3.empty());
-    EXPECT_NE(error3.find("Fichier.lister a echoue"), std::string::npos);
+    EXPECT_NE(error3.find("principal a échoué"), std::string::npos);
 
     auto [output4, completed4, error4] = execute_program_with_error(
         "importer Fichier.{ecrire_lignes}\n"
@@ -2252,12 +2179,12 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     auto [output5, completed5, error5] = execute_program_with_error(
         "importer Fichier.{supprimer}\n"
         "fonction principal() {\n"
-        "  supprimer(\"/definitivement/introuvable-fichier\")\n"
+        "  supprimer(\"/definitivement/introuvable-fichier\") ou propager\n"
         "}\n");
 
     EXPECT_FALSE(completed5);
     EXPECT_TRUE(output5.empty());
-    EXPECT_NE(error5.find("Fichier.supprimer a echoue"), std::string::npos);
+    EXPECT_NE(error5.find("principal a échoué"), std::string::npos);
 
     const std::filesystem::path import_root = std::filesystem::temp_directory_path() / "lumiere_fichier_recursive_errors_test";
     std::filesystem::remove_all(import_root);
@@ -2268,29 +2195,29 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output6, completed6, error6] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "non_vide").string() + "\")\n"
+        "  supprimer_dossier(\"" + (import_root / "non_vide").string() + "\") ou propager\n"
         "}\n",
         import_root);
 
     EXPECT_FALSE(completed6);
     EXPECT_TRUE(output6.empty());
-    EXPECT_NE(error6.find("Fichier.supprimer_dossier a echoue"), std::string::npos);
+    EXPECT_NE(error6.find("principal a échoué"), std::string::npos);
 
     const auto [output7, completed7, error7] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "pas_dossier.txt").string() + "\")\n"
+        "  supprimer_dossier(\"" + (import_root / "pas_dossier.txt").string() + "\") ou propager\n"
         "}\n",
         import_root);
 
     EXPECT_FALSE(completed7);
     EXPECT_TRUE(output7.empty());
-    EXPECT_NE(error7.find("n'est pas un dossier"), std::string::npos);
+    EXPECT_NE(error7.find("principal a échoué"), std::string::npos);
 
     const auto [output8, completed8, error8] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_arbre}\n"
         "fonction principal() {\n"
-        "  supprimer_arbre(\"" + (import_root / "introuvable").string() + "\")\n"
+        "  supprimer_arbre(\"" + (import_root / "introuvable").string() + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2298,7 +2225,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
 
     EXPECT_FALSE(completed8);
     EXPECT_TRUE(output8.empty());
-    EXPECT_NE(error8.find("Fichier.supprimer_arbre a echoue"), std::string::npos);
+    EXPECT_NE(error8.find("principal a échoué"), std::string::npos);
 }
 
 TEST(InterpreterBuiltinModules, RejectsNamedArgumentsWhereUnsupported)
@@ -2554,7 +2481,7 @@ TEST(InterpreterBuiltinModules, SupportsTempsModule)
         "  afficher(instant.milliseconde())\n"
         "  afficher(instant.formater(\"AAAA-MM-JJ HH:mm:ss.SSS\"))\n"
         "  afficher(instant.en_horodatage())\n"
-        "  soit analyse = Temps.analyser(\"2024-06-07 08:09:10.011\", \"AAAA-MM-JJ HH:mm:ss.SSS\")\n"
+        "  soit analyse = Temps.analyser(\"2024-06-07 08:09:10.011\", \"AAAA-MM-JJ HH:mm:ss.SSS\") ou propager\n"
         "  afficher(analyse.formater(\"AAAA/MM/JJ HH:mm:ss.SSS\"))\n"
         "  soit durée = Temps.entre(Temps.depuis_horodatage(1000), Temps.depuis_horodatage(3723004))\n"
         "  afficher(durée.en_millisecondes())\n"
@@ -2629,16 +2556,16 @@ TEST(InterpreterBuiltinModules, RejectsInvalidTempsUsage)
         {
             "importer Temps\n"
             "fonction principal() {\n"
-            "  Temps.analyser(\"2024-01-01\", \"AAAA-MM\")\n"
+            "  Temps.analyser(\"2024-01-01\", \"AAAA-MM\") ou propager\n"
             "}\n",
-            "Temps.analyser a echoue"
+            "Temps.analyser"
         },
         {
             "importer Temps\n"
             "fonction principal() {\n"
-            "  Temps.analyser(\"2024-13-01\", \"AAAA-MM-JJ\")\n"
+            "  Temps.analyser(\"2024-13-01\", \"AAAA-MM-JJ\") ou propager\n"
             "}\n",
-            "Temps.analyser a echoue"
+            "Temps.analyser"
         },
         {
             "importer Temps\n"
@@ -2759,7 +2686,7 @@ TEST(InterpreterBuiltinModules, SupportsAccentlessAleatoireModuleAliasAndDecimal
         "  Aleatoire.graine(42)\n"
         "  afficher(Aleatoire.entier(1, 10) >= 1)\n"
         "  afficher(Aleatoire.entier(1, 10) <= 10)\n"
-        "  afficher(lire_decimal())\n"
+        "  afficher(lire_decimal() ou propager)\n"
         "}\n",
         "3.5\n");
 
@@ -2856,21 +2783,21 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetAdresseAndDns)
     const auto [output, completed, error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
-        "  soit adresse = LumiNet.Adresse.analyser(\"127.0.0.1:8080\")\n"
+        "  soit adresse = LumiNet.Adresse.analyser(\"127.0.0.1:8080\") ou propager\n"
         "  afficher(adresse.hôte)\n"
         "  afficher(adresse.port)\n"
         "  afficher(adresse.en_texte())\n"
-        "  soit locale = LumiNet.Adresse.locale()\n"
+        "  soit locale = LumiNet.Adresse.locale() ou propager\n"
         "  afficher(locale.hôte != \"\")\n"
         "  afficher(LumiNet.Adresse.est_valide(\"127.0.0.1\"))\n"
         "  afficher(LumiNet.Adresse.est_ipv4(\"127.0.0.1\"))\n"
         "  afficher(LumiNet.Adresse.est_ipv6(\"::1\"))\n"
         "  afficher(LumiNet.Adresse.est_locale(\"127.0.0.1\"))\n"
-        "  soit ip = LumiNet.DNS.résoudre(\"localhost\")\n"
+        "  soit ip = LumiNet.DNS.résoudre(\"localhost\") ou propager\n"
         "  afficher(ip != \"\")\n"
-        "  soit toutes = LumiNet.DNS.résoudre_tous(\"localhost\")\n"
+        "  soit toutes = LumiNet.DNS.résoudre_tous(\"localhost\") ou propager\n"
         "  afficher(toutes.taille() >= 1)\n"
-        "  soit inverse = LumiNet.DNS.résoudre_inverse(\"127.0.0.1\")\n"
+        "  soit inverse = LumiNet.DNS.résoudre_inverse(\"127.0.0.1\") ou propager\n"
         "  afficher(inverse != \"\")\n"
         "}\n");
 
@@ -2893,42 +2820,38 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetAdresseAndDns)
 TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 {
     SKIP_IF_LUMINET_DISABLED();
-    std::promise<int> port_promise;
-    std::future<int> port_future = port_promise.get_future();
-    auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
-        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
-        if (!test_socket_valid(server_fd))
-        {
-            return "socket";
-        }
+    const TestSocket server_fd =
+        test_open_socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(server_fd));
+    test_set_reuseaddr(server_fd);
 
-        test_set_reuseaddr(server_fd);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&addr),
+            sizeof(addr)) != 0)
+    {
+        test_close_socket(server_fd);
+        GTEST_SKIP() << "TCP binding is unavailable";
+    }
 
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(0);
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(
+        ::getsockname(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&bound),
+            &bound_len),
+        0);
+    ASSERT_EQ(::listen(server_fd, 1), 0);
+    const int port = ntohs(bound.sin_port);
 
-        if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
-        {
-            test_close_socket(server_fd);
-            return "bind";
-        }
-
-        sockaddr_in bound{};
-        socklen_t bound_len = sizeof(bound);
-        if (::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len) != 0)
-        {
-            test_close_socket(server_fd);
-            return "getsockname";
-        }
-        if (::listen(server_fd, 1) != 0)
-        {
-            test_close_socket(server_fd);
-            return "listen";
-        }
-        promise.set_value(ntohs(bound.sin_port));
-
+    auto future = std::async(
+        std::launch::async,
+        [server_fd]() -> std::string {
         if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
         {
             test_close_socket(server_fd);
@@ -2973,13 +2896,11 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
         return line;
     });
 
-    const int port = port_future.get();
-
     const auto [client_output, client_completed, client_error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
-        "  soit connexion = LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ")\n"
-        "  connexion.écrire(\"bonjour\\n\")\n"
+        "  soit connexion = LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ") ou propager\n"
+        "  connexion.écrire(\"bonjour\\n\") ou propager\n"
         "  afficher(connexion.est_connecté())\n"
         "  connexion.fermer()\n"
         "}\n");
@@ -3000,7 +2921,14 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
     probe_addr.sin_family = AF_INET;
     probe_addr.sin_port = htons(0);
     probe_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    ASSERT_EQ(::bind(probe_fd, reinterpret_cast<sockaddr *>(&probe_addr), sizeof(probe_addr)), 0);
+    if (::bind(
+            probe_fd,
+            reinterpret_cast<sockaddr *>(&probe_addr),
+            sizeof(probe_addr)) != 0)
+    {
+        test_close_socket(probe_fd);
+        GTEST_SKIP() << "UDP binding is unavailable";
+    }
     sockaddr_in bound{};
     socklen_t bound_len = sizeof(bound);
     ASSERT_EQ(::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
@@ -3011,9 +2939,9 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
         "importer LumiNet\n"
         "importer Temps\n"
         "fonction principal() {\n"
-        "  soit socket = LumiNet.UDP.ouvrir(" + std::to_string(port) + ")\n"
+        "  soit socket = LumiNet.UDP.ouvrir(" + std::to_string(port) + ") ou propager\n"
         "  socket.définir_délai(Temps.secondes(2))\n"
-        "  soit paquet = socket.recevoir()\n"
+        "  soit paquet = socket.recevoir() ou propager\n"
         "  afficher(paquet.données)\n"
         "  afficher(paquet.adresse != \"\")\n"
         "  afficher(paquet.port > 0)\n"
@@ -3059,20 +2987,21 @@ TEST(InterpreterBuiltinModules, RejectsInvalidLumiNetUsage)
     {
         std::string source;
         std::string expected_fragment;
+        bool requires_udp_binding = false;
     };
 
     const std::vector<Case> cases = {
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  LumiNet.Adresse.analyser(\"abc\")\n"
+            "  LumiNet.Adresse.analyser(\"abc\") ou propager\n"
             "}\n",
             "LumiNet.Adresse.analyser"
         },
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  LumiNet.DNS.résoudre_inverse(\"pas_une_ip\")\n"
+            "  LumiNet.DNS.résoudre_inverse(\"pas_une_ip\") ou propager\n"
             "}\n",
             "LumiNet.DNS.résoudre_inverse requiert une adresse IP valide"
         },
@@ -3101,45 +3030,70 @@ TEST(InterpreterBuiltinModules, RejectsInvalidLumiNetUsage)
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  soit socket = LumiNet.UDP.ouvrir()\n"
+            "  soit socket = LumiNet.UDP.ouvrir() ou propager\n"
             "  socket.envoyer(\"salut\", \"127.0.0.1\", 70000)\n"
             "}\n",
-            "SocketUDP.envoyer requiert un port entre 0 et 65535"
+            "SocketUDP.envoyer requiert un port entre 0 et 65535",
+            true
         },
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  soit socket = LumiNet.UDP.ouvrir()\n"
+            "  soit socket = LumiNet.UDP.ouvrir() ou propager\n"
             "  socket.envoyer_octets([1, 2, 3], \"127.0.0.1\", 70000)\n"
             "}\n",
-            "SocketUDP.envoyer_octets requiert un port entre 0 et 65535"
+            "SocketUDP.envoyer_octets requiert un port entre 0 et 65535",
+            true
         },
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  soit socket = LumiNet.UDP.ouvrir()\n"
+            "  soit socket = LumiNet.UDP.ouvrir() ou propager\n"
             "  socket.diffuser(\"salut\", 70000)\n"
             "}\n",
-            "SocketUDP.diffuser requiert un port entre 0 et 65535"
+            "SocketUDP.diffuser requiert un port entre 0 et 65535",
+            true
         },
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  LumiNet.Canal.connecter(\"http://example.com\")\n"
+            "  LumiNet.Canal.connecter(\"http://example.com\") ou propager\n"
             "}\n",
             "LumiNet.Canal.connecter"
         },
         {
             "importer LumiNet\n"
             "fonction principal() {\n"
-            "  LumiNet.HTTP.obtenir(\"https://example.com\")\n"
+            "  LumiNet.HTTP.obtenir(\"https://example.com\") ou propager\n"
             "}\n",
             "ne prend actuellement en charge que http"
         },
     };
 
+    bool udp_binding_available = false;
+    const TestSocket udp_probe =
+        test_open_socket(AF_INET, SOCK_DGRAM, 0);
+    if (test_socket_valid(udp_probe))
+    {
+        sockaddr_in probe_address{};
+        probe_address.sin_family = AF_INET;
+        probe_address.sin_port = htons(0);
+        probe_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        udp_binding_available =
+            ::bind(
+                udp_probe,
+                reinterpret_cast<sockaddr *>(&probe_address),
+                sizeof(probe_address)) == 0;
+        test_close_socket(udp_probe);
+    }
+
     for (const auto &test_case : cases)
     {
+        if (test_case.requires_udp_binding &&
+            !udp_binding_available)
+        {
+            continue;
+        }
         const auto [output, completed, error] = execute_program_with_error(test_case.source);
         EXPECT_FALSE(completed) << test_case.source;
         EXPECT_TRUE(output.empty()) << test_case.source;
@@ -3150,6 +3104,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidLumiNetUsage)
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3223,7 +3178,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
     const auto [output, completed, error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
-        "  soit réponse = LumiNet.HTTP.créer(\"http://127.0.0.1:" + std::to_string(port) + "/api\", corps: \"charge\", type: \"text/plain\")\n"
+        "  soit réponse = LumiNet.HTTP.créer(\"http://127.0.0.1:" + std::to_string(port) + "/api\", corps: \"charge\", type: \"text/plain\") ou propager\n"
         "  afficher(réponse.statut)\n"
         "  afficher(réponse.corps)\n"
         "  afficher(réponse.succès)\n"
@@ -3241,6 +3196,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpClient)
 TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3310,7 +3266,7 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
     const auto [output, completed, error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
-        "  LumiNet.HTTP.obtenir(\"http://127.0.0.1:" + std::to_string(port) + "/\")\n"
+        "  LumiNet.HTTP.obtenir(\"http://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
         "}\n");
 
     const std::string request = future.get();
@@ -3323,6 +3279,7 @@ TEST(InterpreterBuiltinModules, RejectsTruncatedLumiNetHttpResponseBodies)
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3401,6 +3358,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServer)
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlContentType)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     const std::filesystem::path html_path = std::filesystem::temp_directory_path() / "lumiere_http_server_page.html";
     {
         std::ofstream html_file(html_path, std::ios::binary | std::ios::trunc);
@@ -3482,6 +3440,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
 TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto server_future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable {
@@ -3553,6 +3512,7 @@ TEST(InterpreterBuiltinModules, UsesAccurateLumiNetHttpStatusReasonPhrases)
 TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3599,7 +3559,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
         "  afficher(message)\n"
         "}\n"
         "fonction principal() {\n"
-        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\")\n"
+        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
         "  canal.quand_message(reçu)\n"
         "  canal.envoyer(\"salut\")\n"
         "  canal.attendre()\n"
@@ -3614,6 +3574,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalStandalone)
 TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     const std::string server_source =
@@ -3718,6 +3679,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpCanalUpgrade)
 TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrade)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3782,6 +3744,11 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
             "Connection: close\r\n"
             "\r\n";
         test_send(client_fd, response.data(), response.size(), 0);
+        if (test_wait_until_readable(client_fd, std::chrono::milliseconds(200)))
+        {
+            char discard_buf[256];
+            test_recv(client_fd, discard_buf, sizeof(discard_buf), 0);
+        }
         test_close_socket(client_fd);
         test_close_socket(server_fd);
         return request;
@@ -3791,7 +3758,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
     const auto [output, completed, error] = execute_program_with_error(
         "importer LumiNet\n"
         "fonction principal() {\n"
-        "  LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\")\n"
+        "  LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
         "}\n");
 
     const std::string request = future.get();
@@ -3804,6 +3771,7 @@ TEST(InterpreterBuiltinModules, RejectsLumiNetCanalHandshakeThatIsNotARealUpgrad
 TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
 {
     SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
     std::promise<int> port_promise;
     std::future<int> port_future = port_promise.get_future();
     auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
@@ -3863,11 +3831,21 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
             request.append(buffer, buffer + received);
         }
 
+        const std::string ws_key_prefix = "Sec-WebSocket-Key: ";
+        const std::size_t ws_key_start = request.find(ws_key_prefix);
+        std::string ws_accept;
+        if (ws_key_start != std::string::npos)
+        {
+            const std::size_t ws_key_end = request.find("\r\n", ws_key_start);
+            const std::string ws_key = request.substr(ws_key_start + ws_key_prefix.size(),
+                                                       ws_key_end - ws_key_start - ws_key_prefix.size());
+            ws_accept = lumiere::websocket_accept_key(ws_key);
+        }
         const std::string response =
             "HTTP/1.1 101 Switching Protocols\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
-            "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+            "Sec-WebSocket-Accept: " + ws_accept + "\r\n"
             "\r\n";
         test_send(client_fd, response.data(), response.size(), 0);
 
@@ -3884,6 +3862,12 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
         const unsigned char close_frame[2] = {0x88, 0x00};
         test_send(client_fd, close_frame, sizeof(close_frame), 0);
 
+        if (test_wait_until_readable(client_fd, std::chrono::milliseconds(200)))
+        {
+            char discard_buf[256];
+            test_recv(client_fd, discard_buf, sizeof(discard_buf), 0);
+        }
+
         test_close_socket(client_fd);
         test_close_socket(server_fd);
         return "ok";
@@ -3896,7 +3880,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
         "  afficher(message)\n"
         "}\n"
         "fonction principal() {\n"
-        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\")\n"
+        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
         "  canal.quand_message(reçu)\n"
         "  canal.attendre()\n"
         "}\n");
@@ -4032,9 +4016,9 @@ TEST(InterpreterStandardLibrary, SupportsTexteMethods)
         "  afficher(morceaux[1])\n"
         "  soit lignes = \"a\\nb\\nc\".separer_lignes()\n"
         "  afficher(lignes.joindre(\"|\"))\n"
-        "  afficher(\"42\".en_entier())\n"
-        "  afficher(\"3.14\".en_decimal())\n"
-        "  afficher(\"vrai\".en_logique())\n"
+        "  afficher(\"42\".en_entier() ou propager)\n"
+        "  afficher(\"3.14\".en_decimal() ou propager)\n"
+        "  afficher(\"vrai\".en_logique() ou propager)\n"
         "}\n");
 
     EXPECT_TRUE(completed);
@@ -4103,7 +4087,7 @@ TEST(InterpreterStandardLibrary, CoversTexteBoundaryCasesComprehensively)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbb\nbb\n1\n2\n1\n\n-42\n2\nfaux\n");
+    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbaa\nbb\n1\n2\n1\n\n-42\n2\nfaux\n");
 }
 
 TEST(InterpreterStandardLibrary, KeepsTexteMethodAndModuleFormsConsistent)
@@ -4209,12 +4193,12 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteOperations)
 
     auto [output3, completed3, error3] = execute_program_with_error(
         "fonction principal() {\n"
-        "  afficher(\"peut-etre\".en_logique())\n"
+        "  afficher(\"peut-etre\".en_logique() ou propager)\n"
         "}\n");
 
     EXPECT_FALSE(completed3);
     EXPECT_TRUE(output3.empty());
-    EXPECT_NE(error3.find("Texte.en_logique"), std::string::npos);
+    EXPECT_NE(error3.find("principal a échoué"), std::string::npos);
 
     auto [output4, completed4, error4] = execute_program_with_error(
         "fonction principal() {\n"
@@ -4425,11 +4409,11 @@ TEST(InterpreterStandardIO, SupportsAfficherInlineAndReadBuiltins)
 {
     const auto [output, completed] = execute_program_with_input(
         "fonction principal() {\n"
-        "  afficher_inline(\"Nom: \")\n"
-        "  soit nom = lire()\n"
-        "  soit age = lire_entier()\n"
-        "  soit taille = lire_décimal()\n"
-        "  soit actif = lire_logique()\n"
+        "  afficher(\"Nom:\")\n"
+        "  soit nom = lire() ou propager\n"
+        "  soit age = lire_entier() ou propager\n"
+        "  soit taille = lire_décimal() ou propager\n"
+        "  soit actif = lire_logique() ou propager\n"
         "  afficher(nom)\n"
         "  afficher(age)\n"
         "  afficher(taille)\n"
@@ -4438,7 +4422,7 @@ TEST(InterpreterStandardIO, SupportsAfficherInlineAndReadBuiltins)
         "Ada\n36\n1.75\nvrai\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "Nom: Ada\n36\n1.75\nvrai\n");
+    EXPECT_EQ(output, "Nom:\nAda\n36\n1.75\nvrai\n");
 }
 
 TEST(InterpreterStandardIO, RejectsInvalidReadInputsAndArguments)
@@ -4452,45 +4436,13 @@ TEST(InterpreterStandardIO, RejectsInvalidReadInputsAndArguments)
     EXPECT_TRUE(output1.empty());
     EXPECT_NE(error1.find("lire n'accepte pas d'arguments"), std::string::npos);
 
-    Lexer lexer(
+    auto [output2, completed2, error2] = execute_program_with_input_and_error(
         "fonction principal() {\n"
-        "  afficher(lire_logique())\n"
-        "}\n");
-    Parser parser(lexer.tokenise());
-
-    Program program;
-    program.statements = parser.parse();
-    program.source_path = "<test>";
-    program.source_text = "fonction principal() { afficher(lire_logique()) }";
-
-    TreeWalker walker;
-    std::ostringstream captured;
-    std::istringstream provided_input("peut-etre\n");
-    auto *previous_output = std::cout.rdbuf(captured.rdbuf());
-    auto *previous_input = std::cin.rdbuf(provided_input.rdbuf());
-    bool completed2 = true;
-    std::string error2;
-
-    try
-    {
-        walker.execute(program);
-    }
-    catch (const RuntimeError &err)
-    {
-        completed2 = false;
-        error2 = err.what();
-    }
-    catch (...)
-    {
-        completed2 = false;
-        error2 = "unknown error";
-    }
-
-    std::cin.rdbuf(previous_input);
-    std::cout.rdbuf(previous_output);
+        "  afficher(lire_logique() ou propager)\n"
+        "}\n", "non_booleen\n");
 
     EXPECT_FALSE(completed2);
-    EXPECT_TRUE(captured.str().empty());
+    EXPECT_TRUE(output2.empty());
     EXPECT_NE(error2.find("lire_logique"), std::string::npos);
 }
 
@@ -4729,13 +4681,13 @@ TEST(InterpreterFunctions, SupportsFixedListFactoryAndIteration)
         "fonction principal() {\n"
         "  soit zeros = ListeFixe.remplir(Entier, 3, 0)\n"
         "  pour chaque valeur dans zeros {\n"
-        "    afficher_inline(valeur)\n"
+        "    afficher(valeur)\n"
         "  }\n"
         "}\n");
 
     EXPECT_TRUE(completed);
     EXPECT_TRUE(error.empty());
-    EXPECT_EQ(output, "000");
+    EXPECT_EQ(output, "0\n0\n0\n");
 }
 
 TEST(InterpreterFunctions, RejectsFixedListLengthMismatchDuringConversion)

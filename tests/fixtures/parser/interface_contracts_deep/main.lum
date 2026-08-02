@@ -20,13 +20,8 @@ classe Rapport : BaseDocument réalise Presentable, Etiquetable {
   privé tags: Liste[Texte]
 
   fonction presenter() {
-    essayer {
-      retourne encadrer(parent.base())
-    } attraper (e: Texte) {
-      retourne e
-    } finalement {
-      afficher("trace")
-    }
+    afficher("trace")
+    retourne encadrer(parent.base())
   }
 
   fonction etiquette() {

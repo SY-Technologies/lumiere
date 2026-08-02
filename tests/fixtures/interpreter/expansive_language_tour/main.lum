@@ -44,11 +44,4 @@ fonction principal() {
   afficher(etiquette("salut"))
   afficher(etiquette(rien))
 
-  essayer {
-    afficher(valeurs[99])
-  } attraper (e: Texte) {
-    afficher(e.contient("indice hors limites"))
-  } finalement {
-    afficher("cleanup")
-  }
 }

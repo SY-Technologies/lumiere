@@ -18,6 +18,7 @@ using lumiere::AstPrinter;
 using lumiere::Lexer;
 using lumiere::Parser;
 using lumiere::SOURCE_FILE_EXTENSION;
+using lumiere::TypeExprKind;
 using lumiere::is_source_file;
 using lumiere::is_test_source_file;
 
@@ -96,6 +97,26 @@ TEST(ParserAgirSelon, ParsesTypedLiteralAndElseBranches)
         "(agir-selon (ident valeur) [(branch [(literal (literal 1)) (literal (literal 2))] (expr (call (ident afficher) (args (arg _ (literal \"petit\")))))) (branch [(typed n Entier)] (block (expr (call (ident afficher) (args (arg _ (ident n)))))))] (expr (call (ident afficher) (args (arg _ (literal \"autre\"))))))");
 }
 
+TEST(ParserTypeAliases, ParsesInternalAndPublicAliasesStructurally)
+{
+    const StmtList program = parse_program(
+        "type Lecture = Résultat[Texte, ErreurFichier | ErreurPermission]\n"
+        "public type Réponse = Lecture\n");
+
+    ASSERT_EQ(program.size(), 2u);
+    const auto *lecture =
+        dynamic_cast<const lumiere::TypeAliasDeclStmt *>(program[0].get());
+    const auto *response =
+        dynamic_cast<const lumiere::TypeAliasDeclStmt *>(program[1].get());
+    ASSERT_NE(lecture, nullptr);
+    ASSERT_NE(response, nullptr);
+    EXPECT_FALSE(lecture->is_public);
+    EXPECT_TRUE(response->is_public);
+    EXPECT_EQ(lecture->target.to_string(),
+              "Résultat[Texte,ErreurFichier | ErreurPermission]");
+    EXPECT_EQ(response->target.to_string(), "Lecture");
+}
+
 TEST(ParserImports, ParsesDottedModuleIdentifiers)
 {
     const StmtList program = parse_program("importer outils.maths.calcul comme calc\n");
@@ -159,15 +180,15 @@ TEST(ParserFunctions, ParsesTypedParametersDefaultsAndReturnType)
     ASSERT_EQ(function->params.size(), 2u);
     EXPECT_EQ(function->name.lexeme, "somme");
     EXPECT_EQ(function->params[0].name, "a");
-    EXPECT_EQ(function->params[0].type_token.lexeme, "Entier");
+    EXPECT_EQ(function->params[0].type.to_string(), "Entier");
     EXPECT_EQ(function->params[0].default_value, nullptr);
     EXPECT_EQ(function->params[1].name, "b");
-    EXPECT_EQ(function->params[1].type_token.lexeme, "Entier");
+    EXPECT_EQ(function->params[1].type.to_string(), "Entier");
     ASSERT_NE(function->params[1].default_value, nullptr);
     const auto *default_literal = dynamic_cast<const lumiere::LiteralExpr *>(function->params[1].default_value.get());
     ASSERT_NE(default_literal, nullptr);
     EXPECT_EQ(default_literal->token.lexeme, "2");
-    EXPECT_EQ(function->return_type.lexeme, "Entier");
+    EXPECT_EQ(function->return_type.to_string(), "Entier");
     EXPECT_NE(function->body, nullptr);
 }
 
@@ -183,8 +204,8 @@ TEST(ParserFunctions, ParsesGenericTypeAnnotationsInParametersAndReturnType)
     ASSERT_NE(function, nullptr);
     ASSERT_EQ(function->params.size(), 1u);
     EXPECT_EQ(function->params[0].name, "nombs");
-    EXPECT_EQ(function->params[0].type_token.lexeme, "Liste[Entier]");
-    EXPECT_EQ(function->return_type.lexeme, "Décimal");
+    EXPECT_EQ(function->params[0].type.to_string(), "Liste[Entier]");
+    EXPECT_EQ(function->return_type.to_string(), "Décimal");
 }
 
 TEST(ParserFunctions, ParsesFixedListTypeAnnotations)
@@ -198,8 +219,101 @@ TEST(ParserFunctions, ParsesFixedListTypeAnnotations)
     const auto *function = dynamic_cast<const lumiere::FunctionDeclStmt *>(program.front().get());
     ASSERT_NE(function, nullptr);
     ASSERT_EQ(function->params.size(), 1u);
-    EXPECT_EQ(function->params[0].type_token.lexeme, "ListeFixe[Entier,3]");
-    EXPECT_EQ(function->return_type.lexeme, "ListeFixe[Entier,3]");
+    EXPECT_EQ(function->params[0].type.to_string(), "ListeFixe[Entier,3]");
+    EXPECT_EQ(function->return_type.to_string(), "ListeFixe[Entier,3]");
+}
+
+TEST(ParserTypes, PreservesNestedGenericAndUnionStructure)
+{
+    const std::string source =
+        "fonction charger(x: pkg.Enveloppe[ListeFixe[Texte, 12]]) "
+        "-> Résultat[Liste[Texte], ErreurFichier | ErreurSyntaxe | ErreurRéseau] {}\n";
+    const StmtList program = parse_program(source);
+
+    ASSERT_EQ(program.size(), 1u);
+    const auto *function = dynamic_cast<const lumiere::FunctionDeclStmt *>(program.front().get());
+    ASSERT_NE(function, nullptr);
+
+    const auto &parameter = function->params.front().type;
+    ASSERT_EQ(parameter.kind, TypeExprKind::GENERIC);
+    EXPECT_EQ(parameter.name, "pkg.Enveloppe");
+    ASSERT_EQ(parameter.children.size(), 1u);
+    ASSERT_EQ(parameter.children[0].kind, TypeExprKind::GENERIC);
+    EXPECT_EQ(parameter.children[0].name, "ListeFixe");
+    ASSERT_EQ(parameter.children[0].children.size(), 2u);
+    EXPECT_EQ(parameter.children[0].children[0].name, "Texte");
+    EXPECT_EQ(parameter.children[0].children[1].kind, TypeExprKind::INTEGER_ARGUMENT);
+    EXPECT_EQ(parameter.children[0].children[1].integer, 12u);
+    EXPECT_EQ(source.substr(parameter.source.start_offset,
+                            parameter.source.end_offset - parameter.source.start_offset),
+              "pkg.Enveloppe[ListeFixe[Texte, 12]]");
+
+    const auto &result = function->return_type;
+    ASSERT_EQ(result.kind, TypeExprKind::GENERIC);
+    EXPECT_EQ(result.name, "Résultat");
+    ASSERT_EQ(result.children.size(), 2u);
+    EXPECT_EQ(result.children[0].to_string(), "Liste[Texte]");
+    ASSERT_EQ(result.children[1].kind, TypeExprKind::UNION);
+    ASSERT_EQ(result.children[1].children.size(), 3u);
+    EXPECT_EQ(result.children[1].children[0].name, "ErreurFichier");
+    EXPECT_EQ(result.children[1].children[1].name, "ErreurSyntaxe");
+    EXPECT_EQ(result.children[1].children[2].name, "ErreurRéseau");
+    EXPECT_EQ(result.to_string(),
+              "Résultat[Liste[Texte],ErreurFichier | ErreurSyntaxe | ErreurRéseau]");
+    EXPECT_EQ(source.substr(result.source.start_offset,
+                            result.source.end_offset - result.source.start_offset),
+              "Résultat[Liste[Texte], ErreurFichier | ErreurSyntaxe | ErreurRéseau]");
+}
+
+TEST(ParserTypes, ParsesStandaloneUnionAnnotation)
+{
+    const StmtList program = parse_program(
+        "soit erreur: ErreurFichier | ErreurSyntaxe = valeur\n");
+
+    ASSERT_EQ(program.size(), 1u);
+    const auto *variable = dynamic_cast<const lumiere::VarDeclStmt *>(program[0].get());
+    ASSERT_NE(variable, nullptr);
+    ASSERT_EQ(variable->type.kind, TypeExprKind::UNION);
+    ASSERT_EQ(variable->type.children.size(), 2u);
+    EXPECT_EQ(variable->type.to_string(), "ErreurFichier | ErreurSyntaxe");
+}
+
+TEST(ParserTypes, ParsesUnionsInBothResultArguments)
+{
+    const StmtList program = parse_program(
+        "fonction convertir() -> Résultat[Entier | Texte, ErreurEntrée | ErreurFormat] {}\n");
+
+    ASSERT_EQ(program.size(), 1u);
+    const auto *function = dynamic_cast<const lumiere::FunctionDeclStmt *>(program.front().get());
+    ASSERT_NE(function, nullptr);
+    ASSERT_EQ(function->return_type.kind, TypeExprKind::GENERIC);
+    ASSERT_EQ(function->return_type.children.size(), 2u);
+    EXPECT_EQ(function->return_type.children[0].kind, TypeExprKind::UNION);
+    EXPECT_EQ(function->return_type.children[1].kind, TypeExprKind::UNION);
+    EXPECT_EQ(function->return_type.to_string(),
+              "Résultat[Entier | Texte,ErreurEntrée | ErreurFormat]");
+}
+
+TEST(ParserTypes, RejectsEveryMalformedGenericOrUnionBoundary)
+{
+    const std::vector<std::string> malformed = {
+        "fonction f(x: Liste[]) {}\n",
+        "fonction f(x: Liste[Entier,]) {}\n",
+        "fonction f(x: Liste[Entier Texte]) {}\n",
+        "fonction f(x: Liste[Entier) {}\n",
+        "fonction f(x: | Entier) {}\n",
+        "fonction f(x: Entier |) {}\n",
+        "fonction f(x: 12) {}\n",
+        "fonction f(x: Liste[18446744073709551616]) {}\n",
+        "fonction f(x: pkg.) {}\n",
+    };
+
+    for (const std::string &source : malformed)
+    {
+        const auto [program, had_error] = parse_program_with_status(source);
+        EXPECT_TRUE(program.empty()) << source;
+        EXPECT_TRUE(had_error) << source;
+    }
 }
 
 TEST(ParserErrors, RejectsMalformedGenericTypeAnnotation)
@@ -301,22 +415,35 @@ TEST(ParserVisibility, AcceptsAccentlessAliasesForAccentedKeywords)
     const auto *class_decl = dynamic_cast<const lumiere::ClassDeclStmt *>(program.front().get());
     ASSERT_NE(class_decl, nullptr);
     ASSERT_EQ(class_decl->interfaces.size(), 1u);
-    EXPECT_EQ(class_decl->interfaces[0].lexeme, "Presentable");
+    EXPECT_EQ(class_decl->interfaces[0].to_string(), "Presentable");
 }
 
-TEST(ParserControlFlow, ParsesTryCatchFinallyAndLoops)
+TEST(ParserControlFlow, ParsesForEachAndWhileLoops)
 {
     const StmtList program = parse_program(
-        "essayer { afficher(1) } attraper (e: Entier) { afficher(e) } finalement { afficher(2) }\n"
         "pour chaque x dans [1, 2] { afficher(x) }\n"
         "tant que (faux) { afficher(0) }\n");
 
-    ASSERT_EQ(program.size(), 3u);
+    ASSERT_EQ(program.size(), 2u);
 
     AstPrinter printer;
-    EXPECT_EQ(printer.print(*program[0]), "(try (block (expr (call (ident afficher) (args (arg _ (literal 1)))))) [(catch e Entier (block (expr (call (ident afficher) (args (arg _ (ident e)))))))] (block (expr (call (ident afficher) (args (arg _ (literal 2)))))))");
-    EXPECT_EQ(printer.print(*program[1]), "(for x (list (literal 1) (literal 2)) (block (expr (call (ident afficher) (args (arg _ (ident x)))))))");
-    EXPECT_EQ(printer.print(*program[2]), "(while (literal faux) (block (expr (call (ident afficher) (args (arg _ (literal 0)))))))");
+    EXPECT_EQ(printer.print(*program[0]), "(for x (list (literal 1) (literal 2)) (block (expr (call (ident afficher) (args (arg _ (ident x)))))))");
+    EXPECT_EQ(printer.print(*program[1]), "(while (literal faux) (block (expr (call (ident afficher) (args (arg _ (literal 0)))))))");
+}
+
+TEST(ParserIdentifiers, FormerExceptionKeywordsWorkAcrossIdentifierPositions)
+{
+    const StmtList program = parse_program(
+        "fonction essayer(attraper: Entier) -> Entier {\n"
+        "  soit finalement = attraper + 1\n"
+        "  retourne finalement\n"
+        "}\n"
+        "fonction lancer() { essayer(attraper: 41) }\n");
+
+    ASSERT_EQ(program.size(), 2u);
+    AstPrinter printer;
+    EXPECT_NE(printer.print(*program[0]).find("func-decl essayer"), std::string::npos);
+    EXPECT_NE(printer.print(*program[1]).find("func-decl lancer"), std::string::npos);
 }
 
 TEST(ParserClasses, RejectsFieldInitializersInClassBodyForNow)
@@ -344,11 +471,6 @@ TEST(ParserImports, RejectsMissingModuleName)
     const auto [program, had_error] = parse_program_with_status("importer comme alias\n");
     EXPECT_TRUE(program.empty());
     EXPECT_TRUE(had_error);
-}
-
-TEST(ParserErrors, RejectsTryWithoutCatch)
-{
-    EXPECT_TRUE(parse_program("essayer { afficher(1) }\n").empty());
 }
 
 TEST(ParserErrors, RejectsInterfaceMembersThatAreNotFunctions)
@@ -416,6 +538,45 @@ TEST(ParserErrors, RejectsDictionaryLiteralMissingColon)
         "soit x = {\"a\" 1}\n");
     EXPECT_TRUE(program.empty());
     EXPECT_TRUE(had_error);
+}
+
+TEST(ParserResults, UsesStatementSyntaxForIgnorer)
+{
+    const auto [canonical, canonical_error] =
+        parse_program_with_status("ignorer opération()\n");
+    EXPECT_FALSE(canonical.empty());
+    EXPECT_FALSE(canonical_error);
+
+    const auto [call_syntax, call_syntax_error] =
+        parse_program_with_status("ignorer(opération())\n");
+    EXPECT_TRUE(call_syntax.empty());
+    EXPECT_TRUE(call_syntax_error);
+}
+
+TEST(ParserResults, EnforcesPropagationSuffixShape)
+{
+    const auto [canonical, canonical_error] =
+        parse_program_with_status(
+            "fonction f() { opération() ou propager }\n");
+    EXPECT_FALSE(canonical.empty());
+    EXPECT_FALSE(canonical_error);
+
+    const auto [composed, composed_error] =
+        parse_program_with_status(
+            "fonction f() { (opération() ou propager) et vrai }\n");
+    EXPECT_FALSE(composed.empty());
+    EXPECT_FALSE(composed_error);
+
+    for (const std::string source : {
+             "fonction f() { propager opération() }\n",
+             "fonction f() { opération() ou propager ou autre() }\n",
+         })
+    {
+        const auto [program, had_error] =
+            parse_program_with_status(source);
+        EXPECT_TRUE(program.empty()) << source;
+        EXPECT_TRUE(had_error) << source;
+    }
 }
 
 TEST(ParserExamples, ParsesAllRepositoryExamples)

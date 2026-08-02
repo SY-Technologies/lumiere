@@ -1,0 +1,28 @@
+classe ErreurTest réalise Erreur {}
+
+type Sortie = Résultat[Entier, ErreurTest]
+type SortieAlias = Sortie
+
+fonction produire(ok: Logique) -> SortieAlias {
+    si ok {
+        retourne Succès(42)
+    }
+    retourne Échec(ErreurTest())
+}
+
+fonction principal() {
+    soit premier = agir selon produire(vrai) {
+        Succès(valeur) -> valeur
+        Échec(_) -> 0
+    }
+    soit second = agir selon produire(faux) {
+        Succès(valeur) -> valeur
+        Échec(erreur) -> erreur
+    }
+    afficher(premier)
+    afficher(second)
+    soit succès: Sortie = Succès(7)
+    soit échec: Sortie = Échec(ErreurTest())
+    afficher(succès)
+    afficher(échec)
+}

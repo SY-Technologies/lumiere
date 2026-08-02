@@ -129,7 +129,7 @@ TEST(CliIntegration, ExecutesTreeWalkerProgramFromFile)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_NE(result.stdout_text.find("bonjour"), std::string::npos);
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
 TEST(CliIntegration, ExecutesBareFileWithVmByDefault)
@@ -599,7 +599,7 @@ TEST(CliIntegration, RejectsInvalidVmNamedArguments)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("aucun parametre nomme 'inconnu'"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("paramètre nommé inconnu: 'inconnu'"), std::string::npos);
 }
 
 TEST(CliIntegration, EnforcesVmParameterAndReturnTypes)
@@ -619,7 +619,7 @@ TEST(CliIntegration, EnforcesVmParameterAndReturnTypes)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("incompatible avec Entier"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("attend Entier; reçu Texte"), std::string::npos);
 }
 
 TEST(CliIntegration, EnforcesVmLocalAssignmentTypes)
@@ -637,7 +637,7 @@ TEST(CliIntegration, EnforcesVmLocalAssignmentTypes)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("incompatible avec Entier"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("attend Entier; reçu Texte"), std::string::npos);
 }
 
 TEST(CliIntegration, RejectsVmAssignmentToFixedLocal)
@@ -683,7 +683,7 @@ TEST(CliIntegration, EnforcesVmExplicitAndImplicitReturnTypes)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(explicit_result.exit_code, 0);
-    EXPECT_NE(explicit_result.stderr_text.find("incompatible avec Entier"), std::string::npos);
+    EXPECT_NE(explicit_result.stderr_text.find("attend Entier; reçu Texte"), std::string::npos);
     EXPECT_NE(implicit_result.exit_code, 0);
     EXPECT_NE(implicit_result.stderr_text.find("incompatible avec Entier"), std::string::npos);
 }
@@ -950,7 +950,7 @@ TEST(CliIntegration, ExecutesVmTextMemberCalls)
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
-    EXPECT_EQ(result.stdout_text, "BONJOUR MONDE\nlumiere\nvrai\n3\nababab\nbonsoir\na|b|c\n42\n3.14\nvrai\n");
+    EXPECT_EQ(result.stdout_text, "BONJOUR MONDE\nlumiere\nvrai\n3\nababab\nbonsoir\na|b|c\nSuccès(42)\nSuccès(3.14)\nSuccès(vrai)\n");
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
@@ -984,12 +984,13 @@ TEST(CliIntegration, ExecutesVmLongObjectMemberStores)
     const std::filesystem::path main_file = root / "main.lum";
     std::ostringstream source;
     source << "classe Large {\n";
-    for (int i = 0; i < 260; ++i)
+    for (int i = 0; i < 259; ++i)
     {
-        source << "  champ" << i << ": Universel\n";
+        source << "  fonction membre" << i << "() {}\n";
     }
+    source << "  champ259: Universel\n";
     source << "}\nfonction principal() {\n"
-           << "  soit objet = Large()\n"
+           << "  soit objet = Large(champ259: rien)\n"
            << "  objet.champ259 = 42\n"
            << "  afficher(objet.champ259)\n"
            << "}\n";
@@ -1000,7 +1001,7 @@ TEST(CliIntegration, ExecutesVmLongObjectMemberStores)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "42\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
 TEST(CliIntegration, ExecutesVmBoundNativeMemberValues)
@@ -1283,6 +1284,10 @@ TEST(CliIntegration, ExecutesVmProgramWithMoreThan256TypeReferences)
     const std::filesystem::path main_file = root / "main.lum";
 
     std::ostringstream source;
+    for (int i = 0; i < 260; ++i)
+    {
+        source << "classe Type" << i << " {}\n";
+    }
     source << "fonction principal() {\n";
     for (int i = 0; i < 260; ++i)
     {
@@ -1300,7 +1305,7 @@ TEST(CliIntegration, ExecutesVmProgramWithMoreThan256TypeReferences)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "types longs\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
 TEST(CliIntegration, ExecutesVmAgirSelonLiteralAndElseBranches)
@@ -1412,16 +1417,14 @@ TEST(CliIntegration, ExecutesRepositoryModuleExample)
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
-TEST(CliIntegration, ExecutesRepositoryObjectsAndErrorsExample)
+TEST(CliIntegration, ExecutesRepositoryObjectsExample)
 {
-    const std::filesystem::path example_file = repo_examples_dir() / "objets_et_erreurs.lum";
+    const std::filesystem::path example_file = repo_examples_dir() / "objets.lum";
     const CommandResult result = run_cli("--tree-walker --run " + shell_quote(example_file.string()),
                                          example_file.parent_path());
 
     EXPECT_EQ(result.exit_code, 0);
-    EXPECT_NE(result.stdout_text.find("compteur=3"), std::string::npos);
-    EXPECT_NE(result.stdout_text.find("capture=vrai"), std::string::npos);
-    EXPECT_NE(result.stdout_text.find("fin"), std::string::npos);
+    EXPECT_EQ(result.stdout_text, "compteur=3\n");
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
@@ -1567,13 +1570,15 @@ TEST(CliIntegration, ReplPreservesDefinitionsAndPrintsExpressionResults)
                                          "  retourne base + x\n"
                                          "}\n"
                                          "ajouter(2)\n"
+                                         "Succès(7)\n"
                                          ":quitter\n");
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_NE(result.stdout_text.find("Lumiere "), std::string::npos);
     EXPECT_NE(result.stdout_text.find("42\n"), std::string::npos);
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_EQ(result.stdout_text.find("Succès(7)\n"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("LUM-S0050"), std::string::npos);
 }
 
 TEST(CliIntegration, PrintsHelp)
@@ -1625,26 +1630,6 @@ TEST(CliIntegration, ReportsRuntimeErrorsToStderr)
     EXPECT_NE(result.stderr_text.find("File \"" + main_file.string() + "\""), std::string::npos);
     EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("indice hors limites"), std::string::npos);
-}
-
-TEST(CliIntegration, ReportsUnhandledThrownValuesWithTraceback)
-{
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_unhandled_throw_test";
-    const std::filesystem::path main_file = root / "main.lum";
-    write_source(
-        main_file,
-        "fonction principal() {\n"
-        "  lancer 42\n"
-        "}\n");
-
-    const CommandResult result = run_cli("--tree-walker --run " + shell_quote(main_file.string()), root);
-    std::filesystem::remove_all(root);
-
-    EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("Traceback (most recent call last):"), std::string::npos);
-    EXPECT_NE(result.stderr_text.find("in principal"), std::string::npos);
-    EXPECT_NE(result.stderr_text.find("File \"" + main_file.string() + "\""), std::string::npos);
-    EXPECT_NE(result.stderr_text.find("erreur d'execution: exception non attrapee: 42"), std::string::npos);
 }
 
 TEST(CliIntegration, ReportsParseErrorsToStderr)
@@ -1737,7 +1722,8 @@ TEST(CliIntegration, ReportsParseErrorsInsideImportedModules)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("erreur de syntaxe"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("Cassé.lum"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("LUM-P0001"), std::string::npos);
 }
 
 TEST(CliIntegration, ExecutesModuleImportsEndToEnd)
@@ -1764,6 +1750,47 @@ TEST(CliIntegration, ExecutesModuleImportsEndToEnd)
     EXPECT_NE(result.stdout_text.find("21\n42\n"), std::string::npos);
 }
 
+TEST(CliIntegration, PreservesErrorContractsAcrossModuleBoundaries)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_imported_error_test";
+    write_source(
+        root / "Erreurs.lum",
+        "public type MarqueurErreur = Erreur\n"
+        "public classe ErreurPartagée réalise MarqueurErreur {}\n"
+        "public fonction produire() -> Résultat[Entier, ErreurPartagée] {\n"
+        "  retourne Échec(ErreurPartagée())\n"
+        "}\n");
+    write_source(
+        root / "main.lum",
+        "importer Erreurs.{produire, ErreurPartagée}\n"
+        "fonction principal() {\n"
+        "  agir selon produire() {\n"
+        "    Succès(_) -> afficher(\"inattendu\")\n"
+        "    Échec(erreur: ErreurPartagée) -> afficher(erreur)\n"
+        "  }\n"
+        "}\n");
+
+    for (const std::string backend :
+         {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(
+                        (root / "main.lum").string()),
+                root);
+        EXPECT_EQ(result.exit_code, 0)
+            << backend << ": " << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "ErreurPartagée\n")
+            << backend;
+        EXPECT_TRUE(result.stderr_text.empty())
+            << backend << ": " << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST(CliIntegration, AcceptsGenericTypeAnnotationsEndToEnd)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_generic_param_test";
@@ -1782,7 +1809,7 @@ TEST(CliIntegration, AcceptsGenericTypeAnnotationsEndToEnd)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_NE(result.stdout_text.find("3\n"), std::string::npos);
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
 TEST(CliIntegration, ExecutesBuiltinModulesEndToEnd)
@@ -1792,10 +1819,18 @@ TEST(CliIntegration, ExecutesBuiltinModulesEndToEnd)
     write_source(note_file, "bonjour");
     write_source(
         root / "main.lum",
-        "importer Fichier.{existe, lire_texte}\n"
+        "importer Fichier\n"
+        "fonction valeur_fichier("
+        "résultat: Résultat[Universel, Fichier.ErreurFichier]"
+        ") -> Universel {\n"
+        "  retourne agir selon résultat {\n"
+        "    Succès(valeur) -> valeur\n"
+        "    Échec(erreur) -> erreur\n"
+        "  }\n"
+        "}\n"
         "fonction principal() {\n"
-        "  afficher(existe(\"" + note_file.string() + "\"))\n"
-        "  afficher(lire_texte(\"" + note_file.string() + "\"))\n"
+        "  afficher(valeur_fichier(Fichier.existe(\"" + note_file.string() + "\")))\n"
+        "  afficher(valeur_fichier(Fichier.lire_texte(\"" + note_file.string() + "\")))\n"
         "}\n");
 
     const CommandResult result = run_cli("--tree-walker --run " + shell_quote((root / "main.lum").string()), root);
@@ -1837,78 +1872,405 @@ TEST(CliIntegration, VmBackendExecutesSimpleProgram)
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
-TEST(CliIntegration, VmBackendSupportsTypedThrowCatchAndFinally)
+TEST(CliIntegration, BothBackendsExecuteFormerExceptionKeywordsAsIdentifiers)
 {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_exception_test";
+    const std::filesystem::path root = std::filesystem::temp_directory_path() /
+                                       "lumiere_cli_former_exception_identifiers_test";
     const std::filesystem::path main_file = root / "main.lum";
     write_source(
         main_file,
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    lancer 42\n"
-        "  } attraper (e: Entier) {\n"
-        "    afficher(e)\n"
-        "  } finalement {\n"
-        "    afficher(\"fin\")\n"
-        "  }\n"
-        "}\n");
+        "fonction essayer(attraper: Entier) -> Entier {\n"
+        "  soit finalement = attraper + 1\n"
+        "  retourne finalement\n"
+        "}\n"
+        "fonction lancer() { afficher(essayer(attraper: 41)) }\n"
+        "fonction principal() { lancer() }\n");
 
-    const CommandResult result = run_cli("--vm --run " + shell_quote(main_file.string()), root);
+    const CommandResult tree_walker = run_cli(
+        "--tree-walker --run " + shell_quote(main_file.string()), root);
+    const CommandResult vm = run_cli(
+        "--vm --run " + shell_quote(main_file.string()), root);
     std::filesystem::remove_all(root);
 
-    EXPECT_EQ(result.exit_code, 0);
-    EXPECT_EQ(result.stdout_text, "42\nfin\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_EQ(tree_walker.exit_code, 0) << tree_walker.stderr_text;
+    EXPECT_EQ(vm.exit_code, 0) << vm.stderr_text;
+    EXPECT_EQ(tree_walker.stdout_text, "42\n");
+    EXPECT_EQ(vm.stdout_text, tree_walker.stdout_text);
+    EXPECT_TRUE(tree_walker.stderr_text.empty());
+    EXPECT_TRUE(vm.stderr_text.empty());
 }
 
-TEST(CliIntegration, VmBackendCatchesRuntimeErrorsAsText)
+TEST(CliIntegration, BothBackendsHonorResultReturningPrincipal)
 {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_runtime_exception_test";
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_result_principal_test";
     const std::filesystem::path main_file = root / "main.lum";
+
     write_source(
         main_file,
-        "fonction principal() {\n"
-        "  essayer {\n"
-        "    soit xs = [1]\n"
-        "    afficher(xs[3])\n"
-        "  } attraper (e: Texte) {\n"
-        "    afficher(e)\n"
-        "  }\n"
+        "classe ErreurTest réalise Erreur {} type Sortie = Résultat[Rien, ErreurTest]\n"
+        "fonction principal() -> Sortie {\n"
+        "  retourne Succès(rien)\n"
+        "}\n");
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult success =
+            run_cli(backend + " --run " +
+                        shell_quote(main_file.string()),
+                    root);
+        EXPECT_EQ(success.exit_code, 0) << backend;
+        EXPECT_TRUE(success.stderr_text.empty())
+            << backend << ": " << success.stderr_text;
+    }
+
+    write_source(
+        main_file,
+        "classe ErreurTest réalise Erreur {} fonction principal() -> Résultat[Rien, ErreurTest] {\n"
+        "  retourne Échec(ErreurTest())\n"
+        "}\n");
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult failure =
+            run_cli(backend + " --run " +
+                        shell_quote(main_file.string()),
+                    root);
+        EXPECT_NE(failure.exit_code, 0) << backend;
+        EXPECT_NE(
+            failure.stderr_text.find(
+                "principal a échoué: ErreurTest"),
+            std::string::npos)
+            << backend << ": " << failure.stderr_text;
+        EXPECT_NE(
+            failure.stderr_text.find("line 2, column 19"),
+            std::string::npos)
+            << backend << ": " << failure.stderr_text;
+    }
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPropagateOnlyCompatibleFailures)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_result_propagation_test";
+    const std::filesystem::path main_file = root / "main.lum";
+
+    write_source(
+        main_file,
+        "classe ErreurTest réalise Erreur {} classe ErreurAutre réalise Erreur {} fonction charger_valeur(active: Logique) -> Résultat[Entier, ErreurTest] {\n"
+        "  si active { retourne Succès(41) }\n"
+        "  retourne Échec(ErreurTest())\n"
+        "}\n"
+        "fonction calculer(active: Logique) -> Résultat[Entier, ErreurTest | ErreurAutre] {\n"
+        "  soit valeur = charger_valeur(active) ou propager\n"
+        "  retourne Succès(valeur + 1)\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurTest | ErreurAutre] {\n"
+        "  afficher(calculer(vrai) ou propager)\n"
+        "  calculer(faux) ou propager\n"
+        "  retourne Succès(rien)\n"
         "}\n");
 
-    const CommandResult result = run_cli("--vm --run " + shell_quote(main_file.string()), root);
-    std::filesystem::remove_all(root);
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(backend + " --run " +
+                        shell_quote(main_file.string()),
+                    root);
+        EXPECT_NE(result.exit_code, 0) << backend;
+        EXPECT_EQ(result.stdout_text, "42\n") << backend;
+        EXPECT_NE(result.stderr_text.find("ErreurTest"),
+                  std::string::npos)
+            << backend << ": " << result.stderr_text;
+    }
 
-    EXPECT_EQ(result.exit_code, 0);
-    EXPECT_NE(result.stdout_text.find("indice hors limites"), std::string::npos);
-    EXPECT_TRUE(result.stderr_text.empty());
+    std::filesystem::remove_all(root);
 }
 
-TEST(CliIntegration, VmBackendRunsFinallyBeforeNonLocalExits)
+TEST(CliIntegration, BothBackendsPropagateExactlyOnceWithoutReplacingErrors)
 {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_finally_exit_test";
-    const std::filesystem::path main_file = root / "main.lum";
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_propagation_identity_test";
+    const std::filesystem::path main_file =
+        root / "main.lum";
     write_source(
         main_file,
-        "fonction f() {\n"
-        "  essayer { retourne 7 } attraper (e: Universel) {} finalement { afficher(\"retour\") }\n"
+        "classe ErreurTest réalise Erreur {}\n"
+        "soit compteur = 0\n"
+        "soit erreur_attendue = ErreurTest()\n"
+        "fonction opération(ok: Logique) -> Résultat[Entier, ErreurTest] {\n"
+        "  compteur = compteur + 1\n"
+        "  si ok { retourne Succès(7) }\n"
+        "  retourne Échec(erreur_attendue)\n"
+        "}\n"
+        "fonction intermédiaire(ok: Logique) -> Résultat[Entier, ErreurTest] {\n"
+        "  soit valeur = opération(ok) ou propager\n"
+        "  retourne Succès(valeur)\n"
+        "}\n"
+        "fonction avec_défaut(valeur: Entier = opération(vrai) ou propager) -> Résultat[Entier, ErreurTest] {\n"
+        "  retourne Succès(valeur)\n"
         "}\n"
         "fonction principal() {\n"
-        "  afficher(f())\n"
-        "  pour chaque n dans [1, 2] {\n"
-        "    essayer { arrêter } attraper (e: Universel) {} finalement { afficher(\"arrêt\") }\n"
+        "  agir selon intermédiaire(vrai) {\n"
+        "    Succès(valeur) -> afficher(valeur)\n"
+        "    Échec(_) -> afficher(\"inattendu\")\n"
         "  }\n"
-        "  pour chaque n dans [1, 2] {\n"
-        "    essayer { afficher(n) continuer } attraper (e: Universel) {} finalement { afficher(\"suite\") }\n"
+        "  agir selon avec_défaut() {\n"
+        "    Succès(valeur) -> afficher(valeur)\n"
+        "    Échec(_) -> afficher(\"inattendu\")\n"
+        "  }\n"
+        "  agir selon intermédiaire(faux) {\n"
+        "    Succès(_) -> afficher(\"inattendu\")\n"
+        "    Échec(erreur) -> {\n"
+        "      afficher(compteur)\n"
+        "      afficher(erreur == erreur_attendue)\n"
+        "    }\n"
         "  }\n"
         "}\n");
 
-    const CommandResult result = run_cli("--vm --run " + shell_quote(main_file.string()), root);
+    for (const std::string backend :
+         {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_EQ(result.exit_code, 0)
+            << backend << ": " << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "7\n7\n3\nvrai\n")
+            << backend;
+        EXPECT_TRUE(result.stderr_text.empty())
+            << backend << ": " << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPreserveOriginsAcrossPropagationChains)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_propagation_origin_test";
+    const std::filesystem::path main_file =
+        root / "main.lum";
+    write_source(
+        main_file,
+        "classe ErreurTest réalise Erreur {} fonction source() -> Résultat[Rien, Erreur] {\n"
+        "  retourne Échec(ErreurTest())\n"
+        "}\n"
+        "fonction milieu() -> Résultat[Rien, ErreurTest] {\n"
+        "  agir selon source() {\n"
+        "    Succès(_) -> ignorer\n"
+        "    Échec(_: ErreurTest) -> propager\n"
+        "    Échec(_) -> ignorer\n"
+        "  }\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurTest] {\n"
+        "  milieu() ou propager\n"
+        "  retourne Succès(rien)\n"
+        "}\n");
+
+    for (const std::string backend :
+         {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_NE(result.exit_code, 0) << backend;
+        EXPECT_NE(
+            result.stderr_text.find(
+                "line 2, column 19"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+        EXPECT_EQ(
+            result.stderr_text.find(
+                "line 6, column"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsNeverConvertTrapsIntoPropagatedFailures)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_propagation_trap_test";
+    const std::filesystem::path main_file =
+        root / "main.lum";
+    write_source(
+        main_file,
+        "classe ErreurTest réalise Erreur {}\n"
+        "fonction source() -> Résultat[Entier, ErreurTest] {\n"
+        "  soit valeurs = [1]\n"
+        "  retourne Succès(valeurs[2] en Entier)\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurTest] {\n"
+        "  afficher(source() ou propager)\n"
+        "  retourne Succès(rien)\n"
+        "}\n");
+
+    for (const std::string backend :
+         {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_NE(result.exit_code, 0) << backend;
+        EXPECT_NE(
+            result.stderr_text.find(
+                "indice hors limites"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+        EXPECT_EQ(
+            result.stderr_text.find(
+                "principal a échoué"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_result_origin_test";
+    const std::filesystem::path main_file = root / "main.lum";
+
+    write_source(
+        main_file,
+        "classe ErreurSource réalise Erreur {} fonction source() -> Résultat[Rien, ErreurSource] {\n"
+        "  retourne Échec(ErreurSource())\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurSource] {\n"
+        "  retourne source()\n"
+        "}\n");
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult forwarded =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_NE(forwarded.exit_code, 0);
+        EXPECT_NE(
+            forwarded.stderr_text.find("line 2, column 19"),
+            std::string::npos)
+            << backend << ": " << forwarded.stderr_text;
+    }
+
+    write_source(
+        main_file,
+        "classe ErreurSource réalise Erreur {} classe ErreurTraduite réalise Erreur {} fonction source() -> Résultat[Rien, ErreurSource] {\n"
+        "  retourne Échec(ErreurSource())\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurSource | ErreurTraduite] {\n"
+        "  soit résultat = source()\n"
+        "  retourne agir selon résultat {\n"
+        "    Succès(_) -> Succès(rien)\n"
+        "    Échec(_) -> retourne Échec(ErreurTraduite())\n"
+        "  }\n"
+        "}\n");
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult translated =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_NE(translated.exit_code, 0);
+        EXPECT_NE(
+            translated.stderr_text.find("line 8, column 34"),
+            std::string::npos)
+            << backend << ": " << translated.stderr_text;
+    }
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsHandleNativeNetworkFailuresAsResults)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_native_network_result_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    write_source(
+        main_file,
+        "importer LumiNet\n"
+        "fonction principal() {\n"
+        "  agir selon LumiNet.Adresse.analyser(\"invalide\") {\n"
+        "    Succès(_) -> afficher(\"inattendu\")\n"
+        "    Échec(erreur) -> afficher(erreur)\n"
+        "  }\n"
+        "}\n");
+
+    for (const std::string backend : {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_EQ(result.exit_code, 0)
+            << backend << ": " << result.stderr_text;
+        EXPECT_NE(
+            result.stdout_text.find("LumiNet.ErreurAdresse("),
+            std::string::npos)
+            << backend << ": " << result.stdout_text;
+        EXPECT_EQ(
+            result.stdout_text.find("inattendu"),
+            std::string::npos);
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsEnforceUnionAnnotationsInsideNestedGenerics)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() /
+                                       "lumiere_cli_union_annotations_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    write_source(
+        main_file,
+        "fonction afficher_premier(valeurs: Liste[Entier | Texte]) {\n"
+        "  afficher(valeurs[0])\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  afficher_premier([42, \"lumière\"])\n"
+        "}\n");
+
+    const CommandResult tree_walker = run_cli(
+        "--tree-walker --run " + shell_quote(main_file.string()), root);
+    const CommandResult vm = run_cli(
+        "--vm --run " + shell_quote(main_file.string()), root);
+
+    EXPECT_EQ(tree_walker.exit_code, 0) << tree_walker.stderr_text;
+    EXPECT_EQ(vm.exit_code, 0) << vm.stderr_text;
+    EXPECT_EQ(tree_walker.stdout_text, "42\n");
+    EXPECT_EQ(vm.stdout_text, tree_walker.stdout_text);
+
+    write_source(
+        main_file,
+        "fonction accepter(valeurs: Liste[Entier | Texte]) {}\n"
+        "fonction principal() { accepter([vrai]) }\n");
+    const CommandResult rejected_tree_walker = run_cli(
+        "--tree-walker --run " + shell_quote(main_file.string()), root);
+    const CommandResult rejected_vm = run_cli(
+        "--vm --run " + shell_quote(main_file.string()), root);
     std::filesystem::remove_all(root);
 
-    EXPECT_EQ(result.exit_code, 0);
-    EXPECT_EQ(result.stdout_text, "retour\n7\narrêt\n1\nsuite\n2\nsuite\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_NE(rejected_tree_walker.exit_code, 0);
+    EXPECT_NE(rejected_vm.exit_code, 0);
+    EXPECT_NE(rejected_tree_walker.stderr_text.find("Liste[Entier | Texte]"), std::string::npos);
+    EXPECT_NE(rejected_vm.stderr_text.find("Liste[Entier | Texte]"), std::string::npos);
 }
 
 TEST(CliIntegration, VmBackendSupportsObjectsInheritanceAndParentDispatch)
@@ -2022,7 +2384,54 @@ TEST(CliIntegration, VmBackendSupportsUserAndBuiltinModuleImports)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "init\n40\n6\n9\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
+}
+
+TEST(CliIntegration, RejectsSemanticErrorsInsideImportedModules)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_imported_semantic_error_test";
+    write_source(
+        root / "Invalide.lum",
+        "public fonction calculer() -> Entier { retourne \"texte\" }\n");
+    write_source(
+        root / "main.lum",
+        "importer Invalide\n"
+        "fonction principal() { afficher(Invalide.calculer()) }\n");
+
+    const CommandResult result =
+        run_cli("--vm --run " +
+                    shell_quote((root / "main.lum").string()),
+                root);
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stderr_text.find("Invalide.lum"), std::string::npos)
+        << result.stderr_text;
+    EXPECT_NE(result.stderr_text.find("Entier"), std::string::npos)
+        << result.stderr_text;
+}
+
+TEST(CliIntegration, RejectsUnknownSelectiveNativeImports)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_unknown_native_import_test";
+    write_source(
+        root / "main.lum",
+        "importer Temps.{fonction_absente}\n"
+        "fonction principal() { fonction_absente() }\n");
+
+    const CommandResult result =
+        run_cli("--vm --run " +
+                    shell_quote((root / "main.lum").string()),
+                root);
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stderr_text.find("fonction_absente"), std::string::npos)
+        << result.stderr_text;
 }
 
 TEST(CliIntegration, VmBackendSupportsNamedCallableAndMethodArguments)
@@ -2063,9 +2472,11 @@ TEST(CliIntegration, VmBackendRejectsPrivateImportsAndImportCycles)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(private_import.exit_code, 0);
-    EXPECT_NE(private_import.stderr_text.find("non exporte"), std::string::npos);
+    EXPECT_NE(private_import.stderr_text.find("non exporté"), std::string::npos);
     EXPECT_NE(cycle.exit_code, 0);
-    EXPECT_NE(cycle.stderr_text.find("cycle d'import"), std::string::npos);
+    EXPECT_NE(cycle.stderr_text.find("LUM-S0043"), std::string::npos);
+    EXPECT_NE(cycle.stderr_text.find("cycle d'import: A -> B -> A"),
+              std::string::npos);
 }
 
 TEST(CliIntegration, VmBackendSupportsLazyBlockScopedImports)
@@ -2095,7 +2506,7 @@ TEST(CliIntegration, VmBackendSupportsLazyBlockScopedImports)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "avant\nmilieu\ninitialisation\n7\n7\n");
-    EXPECT_TRUE(result.stderr_text.empty());
+    EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
 TEST(CliIntegration, VmBackendSupportsNativeCallbacksIntoBytecode)

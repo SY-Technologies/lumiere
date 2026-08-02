@@ -1,3 +1,1 @@
 compteur=3
-capture=vrai
-fin

@@ -1,0 +1,38 @@
+fonction partitionner(valeurs: Liste[Entier], debut: Entier, fin: Entier) -> Entier {
+    soit pivot = valeurs[fin]
+    soit position = debut
+    soit index = debut
+
+    tant que (index < fin) {
+        si valeurs[index] <= pivot {
+            soit temporaire = valeurs[position]
+            valeurs[position] = valeurs[index]
+            valeurs[index] = temporaire
+            position = position + 1
+        }
+        index = index + 1
+    }
+
+    soit temporaire = valeurs[position]
+    valeurs[position] = valeurs[fin]
+    valeurs[fin] = temporaire
+    retourne position
+}
+
+fonction trier_intervalle(valeurs: Liste[Entier], debut: Entier, fin: Entier) {
+    si debut < fin {
+        soit pivot = partitionner(valeurs, debut, fin)
+        trier_intervalle(valeurs, debut, pivot - 1)
+        trier_intervalle(valeurs, pivot + 1, fin)
+    }
+}
+
+fonction tri_rapide(valeurs: Liste[Entier]) {
+    trier_intervalle(valeurs, 0, valeurs.taille() - 1)
+}
+
+fonction principal() {
+    soit valeurs = [9, -2, 7, 3, 7, 0, 1]
+    tri_rapide(valeurs)
+    afficher(valeurs)
+}
