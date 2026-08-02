@@ -24,6 +24,7 @@ struct RuntimeClassBody;
 struct RuntimeInterfaceBody;
 struct RuntimeModuleState;
 class Environment;
+struct TraceFrame;
 class IRuntime;
 struct Value;
 struct FunctionDeclStmt;
@@ -199,6 +200,11 @@ struct Value
         Value payload,
         std::optional<RuntimeSite> origin = std::nullopt);
 
+    // Returns a copy of a failing Résultat with an extra frame appended to its
+    // propagation traceback. Non-result values and successful results are
+    // returned unchanged. Consecutive identical frames are collapsed.
+    Value with_trace_frame(const TraceFrame &frame) const;
+
     //accessors
 
     int64_t     as_entier()  const { return std::get<int64_t>(data); }
@@ -286,11 +292,20 @@ struct Value
     std::string type_name() const;
 };
 
+struct TraceFrame
+{
+    std::string function_name;
+    std::string source_path;
+    uint32_t line = 0;
+    uint32_t column = 0;
+};
+
 struct ResultData
 {
     bool success;
     Value payload;
     std::optional<RuntimeSite> origin;
+    std::vector<TraceFrame> trace;
 };
 
 //  LumiereFunction

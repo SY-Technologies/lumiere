@@ -80,7 +80,7 @@ Value lire_entier(const std::vector<Value> &args)
         }
         if (parsed != line.size())
         {
-            throw std::invalid_argument("trailing input");
+            throw std::invalid_argument("caractères restants");
         }
         return Value::resultat(
             true,
@@ -114,7 +114,7 @@ Value lire_decimal(const std::vector<Value> &args)
         }
         if (parsed != line.size())
         {
-            throw std::invalid_argument("trailing input");
+            throw std::invalid_argument("caractères restants");
         }
         return Value::resultat(
             true,

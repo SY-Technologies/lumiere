@@ -134,6 +134,16 @@ namespace lumiere
                 {
                     const std::optional<RuntimeSite> &origin =
                         result.as_resultat()->origin;
+                    const auto &traced = result.as_resultat()->trace;
+                    std::vector<StackFrame> stack_trace;
+                    stack_trace.reserve(traced.size());
+                    for (const TraceFrame &tf : traced)
+                    {
+                        stack_trace.push_back({tf.function_name,
+                                               tf.source_path,
+                                               tf.line,
+                                               tf.column});
+                    }
                     throw RuntimeError(
                         "principal a échoué: " +
                             result.as_resultat()->payload.to_string(),
@@ -150,7 +160,8 @@ namespace lumiere
                             : 0,
                         origin.has_value()
                             ? static_cast<uint32_t>(origin->column)
-                            : 0);
+                            : 0,
+                        std::move(stack_trace));
                 }
             }
         }

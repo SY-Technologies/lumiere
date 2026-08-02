@@ -995,6 +995,21 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
 
     StackFrameGuard frame(*this, make_stack_frame(function_name, m_current_source_path, site_token));
 
+    // When a failing Résultat escapes this function (via propagation or an
+    // explicit return), record this function's frame on the result so that an
+    // unhandled failure produces a meaningful stack traceback.
+    const auto add_propagation_frame = [&](Value error) {
+        if (error.is_resultat() && !error.as_resultat()->success)
+        {
+            return error.with_trace_frame(TraceFrame{
+                function_name,
+                m_current_source_path,
+                site_token.line,
+                site_token.column});
+        }
+        return error;
+    };
+
     Environment *previous_env = m_env;
     std::shared_ptr<Environment> previous_env_owner = m_env_owner;
     Value previous_self = m_self;
@@ -1101,16 +1116,17 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
         m_env = previous_env;
         m_env_owner = previous_env_owner;
         m_self = previous_self;
+        Value error = add_propagation_frame(signal.error);
         ensure_value_matches_annotation(
-            signal.error,
+            error,
             return_type,
             site_token,
             "la fonction '" + function_name + "'");
-        return signal.error;
+        return error;
     }
     catch (const ReturnSignal &signal)
     {
-        const Value return_value = signal.value;
+        Value return_value = add_propagation_frame(signal.value);
         m_env = previous_env;
         m_env_owner = previous_env_owner;
         m_self = previous_self;
@@ -1236,7 +1252,7 @@ Value TreeWalker::call_builtin(const std::string &name,
             }
             if (parsed != line.size())
             {
-                throw std::invalid_argument("trailing");
+                throw std::invalid_argument("caractères restants");
             }
             return stdlib_success(Value::entier(value));
         }
@@ -1272,7 +1288,7 @@ Value TreeWalker::call_builtin(const std::string &name,
             }
             if (parsed != line.size())
             {
-                throw std::invalid_argument("trailing");
+                throw std::invalid_argument("caractères restants");
             }
             return stdlib_success(Value::decimal(value));
         }

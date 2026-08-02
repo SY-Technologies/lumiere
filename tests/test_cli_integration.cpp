@@ -2197,6 +2197,66 @@ TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
     std::filesystem::remove_all(root);
 }
 
+TEST(CliIntegration, BothBackendsRenderStackTraceForUnhandledPropagatedResults)
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "lumiere_cli_propagated_traceback_test";
+    const std::filesystem::path main_file = root / "main.lum";
+    write_source(
+        main_file,
+        "classe ErreurTest réalise Erreur {}\n"
+        "fonction source() -> Résultat[Entier, ErreurTest] {\n"
+        "    retourne Échec(ErreurTest())\n"
+        "}\n"
+        "fonction milieu() -> Résultat[Entier, ErreurTest] {\n"
+        "  source() ou propager\n"
+        "  retourne Succès(0)\n"
+        "}\n"
+        "fonction principal() -> Résultat[Rien, ErreurTest] {\n"
+        "  milieu() ou propager\n"
+        "  retourne Succès(rien)\n"
+        "}\n");
+
+    for (const std::string backend :
+         {"--tree-walker", "--vm"})
+    {
+        const CommandResult result =
+            run_cli(
+                backend + " --run " +
+                    shell_quote(main_file.string()),
+                root);
+        EXPECT_NE(result.exit_code, 0) << backend;
+        EXPECT_NE(
+            result.stderr_text.find("Traceback (most recent call last):"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+
+        const std::size_t source_frame =
+            result.stderr_text.find("in source (");
+        const std::size_t milieu_frame =
+            result.stderr_text.find("in milieu (");
+        const std::size_t principal_frame =
+            result.stderr_text.find("in principal");
+        EXPECT_NE(source_frame, std::string::npos) << backend;
+        EXPECT_NE(milieu_frame, std::string::npos) << backend;
+        EXPECT_NE(principal_frame, std::string::npos) << backend;
+        EXPECT_LT(source_frame, milieu_frame) << backend;
+        EXPECT_LT(milieu_frame, principal_frame) << backend;
+
+        EXPECT_NE(
+            result.stderr_text.find("line 3, column 21"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+        EXPECT_NE(
+            result.stderr_text.find(
+                "principal a échoué: ErreurTest"),
+            std::string::npos)
+            << backend << ": " << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST(CliIntegration, BothBackendsHandleNativeNetworkFailuresAsResults)
 {
     const std::filesystem::path root =

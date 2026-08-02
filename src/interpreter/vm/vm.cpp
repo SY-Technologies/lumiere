@@ -2580,6 +2580,11 @@ Value run_frames(VmExecutionState &execution,
                         frame.function->return_type + "' accepte " +
                         error.type_name());
                 }
+                error = error.with_trace_frame(TraceFrame{
+                    frame.function->name,
+                    frame.function->source_path,
+                    static_cast<std::uint32_t>(frame.call_site.line),
+                    static_cast<std::uint32_t>(frame.call_site.column)});
                 stack.resize(frame.stack_base);
                 frames.pop_back();
                 if (frames.empty())
@@ -2602,6 +2607,11 @@ Value run_frames(VmExecutionState &execution,
         case Opcode::RETURN:
         {
             Value result = stack.size() > frame.stack_base ? stack.back() : Value::rien();
+            result = result.with_trace_frame(TraceFrame{
+                frame.function->name,
+                frame.function->source_path,
+                static_cast<std::uint32_t>(frame.call_site.line),
+                static_cast<std::uint32_t>(frame.call_site.column)});
             stack.resize(frame.stack_base);
             frames.pop_back();
             if (frames.empty())
@@ -2633,6 +2643,16 @@ void VM::execute(Program &program)
     {
         const std::optional<RuntimeSite> &origin =
             result.as_resultat()->origin;
+        const auto &traced = result.as_resultat()->trace;
+        std::vector<StackFrame> stack_trace;
+        stack_trace.reserve(traced.size());
+        for (const TraceFrame &tf : traced)
+        {
+            stack_trace.push_back({tf.function_name,
+                                   tf.source_path,
+                                   tf.line,
+                                   tf.column});
+        }
         throw RuntimeError(
             "principal a échoué: " +
                 result.as_resultat()->payload.to_string(),
@@ -2648,7 +2668,8 @@ void VM::execute(Program &program)
                 : 0,
             origin.has_value()
                 ? static_cast<uint32_t>(origin->column)
-                : 0);
+                : 0,
+            std::move(stack_trace));
     }
 }
 

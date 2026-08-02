@@ -17,7 +17,38 @@ Value Value::resultat(
         ResultData{
             success,
             std::move(payload),
-            success ? std::nullopt : std::move(origin)});
+            success ? std::nullopt : std::move(origin),
+            {}});
+    return value;
+}
+
+Value Value::with_trace_frame(const TraceFrame &frame) const
+{
+    if (!is_resultat() || as_resultat()->success)
+    {
+        return *this;
+    }
+
+    const auto result = as_resultat();
+    std::vector<TraceFrame> trace = result->trace;
+    if (!trace.empty() &&
+        trace.back().function_name == frame.function_name &&
+        trace.back().source_path == frame.source_path &&
+        trace.back().line == frame.line &&
+        trace.back().column == frame.column)
+    {
+        return *this;
+    }
+    trace.push_back(frame);
+
+    Value value;
+    value.type = Type::RESULTAT;
+    value.data = std::make_shared<const ResultData>(
+        ResultData{
+            result->success,
+            result->payload,
+            result->origin,
+            std::move(trace)});
     return value;
 }
 

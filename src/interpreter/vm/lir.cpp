@@ -46,7 +46,7 @@ void validate_block_target(const LirOperand &operand)
 {
     if (operand.kind != LirOperandKind::IR_OPERAND_BLOCK)
     {
-        throw std::logic_error("LIR: block terminators must target blocks");
+        throw std::logic_error("LIR: les terminateurs de bloc doivent cibler des blocs");
     }
 }
 
@@ -169,7 +169,7 @@ LirInstruction &LirFunction::append_instruction(const std::size_t block_index,
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: cannot append instruction after terminator");
+        throw std::logic_error("LIR: impossible d'ajouter une instruction apres un terminateur");
     }
 
     target_block.instructions.push_back(std::move(instruction));
@@ -181,7 +181,7 @@ void LirFunction::set_terminator(const std::size_t block_index, LirTerminator te
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: block already has a terminator");
+        throw std::logic_error("LIR: le bloc possède déjà un terminateur");
     }
 
     if (terminator_value.kind == LirTerminatorKind::IR_TERM_JUMP)
@@ -440,7 +440,7 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_IGNORE_RESULT";
     }
 
-    throw std::logic_error("LIR: unknown opcode");
+    throw std::logic_error("LIR: opcode inconnu");
 }
 
 std::string to_string(const LirInstruction &instruction)
