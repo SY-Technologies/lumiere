@@ -535,8 +535,9 @@ TEST(SourceInspection, DescribesFunctionDeclarationsAndReferences)
 
     ASSERT_TRUE(declaration.has_value());
     ASSERT_TRUE(reference.has_value());
-    EXPECT_EQ(declaration->detail, "fonction doubler(valeur: Entier) -> Entier");
-    EXPECT_EQ(reference->detail, declaration->detail);
+    EXPECT_EQ(declaration->signature, "fonction doubler(valeur: Entier) -> Entier");
+    EXPECT_EQ(declaration->return_type, "Entier");
+    EXPECT_EQ(reference->signature, declaration->signature);
     EXPECT_EQ(reference->start_offset, source.rfind("doubler"));
 }
 
@@ -546,7 +547,86 @@ TEST(SourceInspection, DescribesLanguageKeywords)
 
     ASSERT_TRUE(inspection.has_value());
     EXPECT_EQ(inspection->label, "soit");
-    EXPECT_EQ(inspection->detail, "Déclare une variable.");
+    EXPECT_EQ(inspection->kind, "mot-clé");
+    EXPECT_EQ(inspection->documentation, "Déclare une variable.");
+}
+
+TEST(SourceInspection, AttachesDocumentationCommentsToDeclarations)
+{
+    const std::string source =
+        "/// Informe du double d'une valeur.\n"
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
+
+    const auto inspection = inspect_source(source, source.rfind("doubler"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "doubler");
+    EXPECT_EQ(inspection->kind, "fonction");
+    EXPECT_EQ(inspection->documentation, "Informe du double d'une valeur.");
+}
+
+TEST(SourceInspection, DocumentsCommonBuiltins)
+{
+    const std::string source = "afficher(\"bonjour\")\n";
+
+    const auto inspection = inspect_source(source, 0);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "afficher");
+    EXPECT_EQ(inspection->kind, "fonction");
+    EXPECT_EQ(inspection->signature, "afficher(texte : Texte) -> Rien");
+    EXPECT_FALSE(inspection->documentation.empty());
+}
+
+TEST(SourceInspection, DocumentsStdlibMethodsOnTextValues)
+{
+    const std::string source =
+        "soit message: Texte = \"Bonjour\"\n"
+        "afficher(message.taille())\n";
+
+    const auto inspection =
+        inspect_source(source, source.rfind("taille"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "taille");
+    EXPECT_EQ(inspection->kind, "méthode");
+    EXPECT_EQ(inspection->signature, "taille() -> Entier");
+    EXPECT_EQ(inspection->return_type, "Entier");
+    EXPECT_FALSE(inspection->documentation.empty());
+}
+
+TEST(SourceInspection, DocumentsModuleFreeFunctions)
+{
+    const std::string source = "afficher(racine(9))\n";
+
+    const auto inspection = inspect_source(source, source.find("racine"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "racine");
+    EXPECT_EQ(inspection->kind, "fonction");
+    EXPECT_EQ(inspection->signature, "racine(valeur : Décimal) -> Décimal");
+    EXPECT_FALSE(inspection->documentation.empty());
+}
+
+TEST(SourceInspection, DocumentsUserClassMethodReferences)
+{
+    const std::string source =
+        "/// Un point dans le plan.\n"
+        "classe Point {\n"
+        "  /// Fixe l'abscisse du point.\n"
+        "  fonction abscisse(valeur: Entier) { retourne valeur }\n"
+        "}\n"
+        "soit point = Point()\n"
+        "point.abscisse(3)\n";
+
+    const auto inspection =
+        inspect_source(source, source.rfind("abscisse"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "abscisse");
+    EXPECT_EQ(inspection->kind, "méthode");
+    EXPECT_EQ(inspection->signature, "fonction abscisse(valeur: Entier) -> Rien");
+    EXPECT_EQ(inspection->documentation, "Fixe l'abscisse du point.");
 }
 
 TEST(AnalysisDiagnostics, RejectsLocalVariableShadowingImportModuleName)
@@ -695,7 +775,7 @@ TEST(AnalysisDiagnostics, AllowsImportUsageWithoutShadowing)
 TEST(SourceInspection, ReturnsNullForUnknownIdentifiers)
 {
     EXPECT_EQ(inspection_to_json(inspect_source("inconnu()\n", 2)),
-              "{\"protocolVersion\":1,\"inspection\":null}");
+              "{\"protocolVersion\":2,\"inspection\":null}");
 }
 
 } // namespace

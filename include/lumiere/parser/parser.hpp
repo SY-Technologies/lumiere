@@ -137,6 +137,23 @@ namespace lumiere
         StmtPtr parse_statement();
 
         /**
+         * @brief Parses a single statement without consuming or attaching any
+         * preceding documentation comment.
+         */
+        StmtPtr parse_statement_core();
+
+        /**
+         * @brief Consumes any consecutive `///` documentation comments preceding
+         * the current statement and returns their joined text.
+         */
+        std::string consume_documentation();
+
+        /**
+         * @brief Stores documentation text on a declaration statement.
+         */
+        static void attach_documentation(Stmt *statement, std::string documentation);
+
+        /**
          * @brief Parses a block of statements enclosed in { }.
          */
         StmtPtr parse_block();

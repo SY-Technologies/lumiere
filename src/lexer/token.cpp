@@ -98,6 +98,7 @@ namespace lumiere
             // Special
             {TokenType::FIN_FICHIER, "FIN_FICHIER"},
             {TokenType::ERREUR, "ERREUR"},
+            {TokenType::DOCUMENTATION, "DOCUMENTATION"},
         };
 
         auto it = names.find(type);

@@ -205,6 +205,57 @@ namespace lumiere
 
     StmtPtr Parser::parse_statement()
     {
+        const std::string documentation = consume_documentation();
+        StmtPtr statement = parse_statement_core();
+        attach_documentation(statement.get(), documentation);
+        return statement;
+    }
+
+    std::string Parser::consume_documentation()
+    {
+        std::string text;
+        while (check(TokenType::DOCUMENTATION))
+        {
+            const Token token = advance();
+            if (!text.empty())
+            {
+                text.push_back('\n');
+            }
+            text += token.lexeme;
+        }
+        return text;
+    }
+
+    void Parser::attach_documentation(Stmt *statement, std::string documentation)
+    {
+        if (statement == nullptr || documentation.empty())
+        {
+            return;
+        }
+        if (auto *variable = dynamic_cast<VarDeclStmt *>(statement))
+        {
+            variable->documentation = std::move(documentation);
+        }
+        else if (auto *function = dynamic_cast<FunctionDeclStmt *>(statement))
+        {
+            function->documentation = std::move(documentation);
+        }
+        else if (auto *klass = dynamic_cast<ClassDeclStmt *>(statement))
+        {
+            klass->documentation = std::move(documentation);
+        }
+        else if (auto *interface = dynamic_cast<InterfaceDeclStmt *>(statement))
+        {
+            interface->documentation = std::move(documentation);
+        }
+        else if (auto *alias = dynamic_cast<TypeAliasDeclStmt *>(statement))
+        {
+            alias->documentation = std::move(documentation);
+        }
+    }
+
+    StmtPtr Parser::parse_statement_core()
+    {
         if (check(TokenType::SOIT))
         {
             return parse_var_decl();

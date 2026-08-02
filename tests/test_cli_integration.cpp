@@ -1699,7 +1699,7 @@ TEST(CliIntegration, InspectReadsEditorBufferFromStdinAsJson)
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_TRUE(result.stderr_text.empty());
-    EXPECT_NE(result.stdout_text.find("\"protocolVersion\":1"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("\"protocolVersion\":2"), std::string::npos);
     EXPECT_NE(result.stdout_text.find("fonction doubler(x: Entier) -> Entier"), std::string::npos);
 }
 

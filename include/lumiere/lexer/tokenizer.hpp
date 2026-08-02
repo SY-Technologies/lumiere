@@ -38,6 +38,17 @@ namespace lumiere
          * @return An ERREUR token at the current source position.
          */
         Token error_token(const std::string& msg) const;
+
+        /**
+         * @brief Scans a `///` documentation comment, including any consecutive
+         * `///` lines, and returns a DOCUMENTATION token whose lexeme is the
+         * comment text with the `///` markers stripped.
+         *
+         * Prerequisites: the Lexer stopped at a `///` after
+         * skip_whitespace_and_comments(); mark_start() points at the first `/`.
+         * @return A DOCUMENTATION token.
+         */
+        Token scan_documentation();
                 /**
          * @brief Skips whitespace and comments, advancing m_current.
          *
@@ -52,6 +63,12 @@ namespace lumiere
         
     private:
         Scanner& m_scanner;
+
+        /**
+         * @brief Returns true when the scanner sits directly on a `///` doc
+         * comment (three consecutive slashes), without consuming anything.
+         */
+        bool at_documentation_comment();
         /**
          * @brief Scans a double-quoted text literal.
          *

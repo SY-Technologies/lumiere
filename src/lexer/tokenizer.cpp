@@ -1,5 +1,6 @@
 #include <vector>
 #include <unordered_map>
+#include <cstdint>
 #include "lumiere/lexer/tokenizer.hpp"
 #include "lumiere/lexer/scanner.hpp"
 #include "lumiere/parser/utf8.hpp"
@@ -31,6 +32,79 @@ namespace lumiere
                      m_scanner.start_line(),
                      m_scanner.start_column());
     }
+
+    bool Tokenizer::at_documentation_comment()
+    {
+        const Scanner::State saved = m_scanner.save();
+        const bool is_doc = m_scanner.match('/') && m_scanner.match('/') && m_scanner.peek() == '/';
+        m_scanner.restore(saved);
+        return is_doc;
+    }
+
+    Token Tokenizer::scan_documentation()
+    {
+        // The Lexer has consumed the first '/' via scan_token's initial
+        // advance(); consume the remaining two '//' of '///'.
+        m_scanner.advance();
+        m_scanner.advance();
+        if (m_scanner.peek() == ' ')
+        {
+            m_scanner.advance();
+        }
+
+        const std::size_t start_offset = m_scanner.start_offset();
+        const uint32_t start_line = static_cast<uint32_t>(m_scanner.start_line());
+        const uint32_t start_column = static_cast<uint32_t>(m_scanner.start_column());
+
+        std::string text;
+        while (true)
+        {
+            while (!m_scanner.is_at_end() && m_scanner.peek() != '\n')
+            {
+                text.push_back(m_scanner.peek());
+                m_scanner.advance();
+            }
+            if (m_scanner.is_at_end())
+            {
+                break;
+            }
+            // At '\n': see whether the next line continues the doc block.
+            m_scanner.mark_line_end();
+            m_scanner.advance();
+            const Scanner::State saved = m_scanner.save();
+            while (!m_scanner.is_at_end() &&
+                   (m_scanner.peek() == ' ' || m_scanner.peek() == '\t'))
+            {
+                m_scanner.advance();
+            }
+            const bool continues = !m_scanner.is_at_end() &&
+                                   m_scanner.match('/') && m_scanner.match('/') && m_scanner.peek() == '/';
+            if (!continues)
+            {
+                m_scanner.restore(saved);
+                break;
+            }
+            m_scanner.restore(saved);
+            m_scanner.advance();
+            m_scanner.advance();
+            m_scanner.advance();
+            if (m_scanner.peek() == ' ')
+            {
+                m_scanner.advance();
+            }
+            text.push_back('\n');
+        }
+
+        const std::size_t end_offset = m_scanner.current_offset();
+        return Token(TokenType::DOCUMENTATION,
+                     std::move(text),
+                     start_line,
+                     start_column,
+                     start_offset,
+                     end_offset,
+                     start_line,
+                     start_column);
+    }
     void Tokenizer::skip_whitespace_and_comments()
     {
         while (!Tokenizer::m_scanner.is_at_end())
@@ -53,6 +127,12 @@ namespace lumiere
             case '/':
                 if (m_scanner.peek_next() == '/')
                 {
+                    // A documentation comment (///) is a real token: stop here
+                    // so the Lexer can scan it as DOCUMENTATION.
+                    if (at_documentation_comment())
+                    {
+                        return;
+                    }
                     // single-line comment // consume until end of line
                     while (!m_scanner.is_at_end() && m_scanner.peek() != '\n')
                     {
@@ -123,7 +203,9 @@ namespace lumiere
         case '|':
             return make_token(TokenType::PIPE);
         case '/':
-            return make_token(TokenType::SLASH);
+            // skip_whitespace_and_comments() stops a `///` doc comment here;
+            // after consuming the first '/', a following '/' means a doc block.
+            return m_scanner.peek() == '/' ? scan_documentation() : make_token(TokenType::SLASH);
 
         // ── One or two character tokens
         case '=':

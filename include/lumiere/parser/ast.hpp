@@ -325,6 +325,7 @@ namespace lumiere
         bool is_prive;
         bool is_public;
         ExprPtr initializer; // nullptr if no initializer
+        std::string documentation;
 
         VarDeclStmt(Token name, TypeExpr type, bool is_fixe, bool is_prive, bool is_public, ExprPtr initializer)
             : name(std::move(name)), type(std::move(type)), is_fixe(is_fixe), is_prive(is_prive), is_public(is_public), initializer(std::move(initializer)) {}
@@ -341,6 +342,7 @@ namespace lumiere
         bool is_prive;
         bool is_public;
         bool is_remplace;
+        std::string documentation;
 
         FunctionDeclStmt(Token name, std::vector<Parameter> params,
                          TypeExpr return_type, StmtPtr body,
@@ -357,6 +359,7 @@ namespace lumiere
         bool is_public;
         std::vector<TypeExpr> interfaces;
         std::vector<StmtPtr> members;  // VarDeclStmt and FunctionDeclStmt
+        std::string documentation;
 
         ClassDeclStmt(Token name, TypeExpr parent, bool is_public,
                       std::vector<TypeExpr> interfaces, std::vector<StmtPtr> members)
@@ -370,6 +373,7 @@ namespace lumiere
         Token name;
         bool is_public;
         std::vector<StmtPtr> methods; // FunctionDeclStmt with no body
+        std::string documentation;
 
         InterfaceDeclStmt(Token name, bool is_public, std::vector<StmtPtr> methods)
             : name(std::move(name)), is_public(is_public), methods(std::move(methods)) {}
@@ -382,6 +386,7 @@ namespace lumiere
         Token name;
         TypeExpr target;
         bool is_public;
+        std::string documentation;
 
         TypeAliasDeclStmt(Token name, TypeExpr target, bool is_public)
             : name(std::move(name)),

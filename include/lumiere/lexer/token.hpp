@@ -101,6 +101,7 @@ namespace lumiere
         // Special
         FIN_FICHIER,
         ERREUR,
+        DOCUMENTATION,
     };
 
     struct Token
