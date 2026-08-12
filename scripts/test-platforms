@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-quick}"
+case "$mode" in
+    quick)
+        linux_suites=(gcc-release)
+        ;;
+    full)
+        linux_suites=(gcc-release clang-release gcc-sanitized)
+        ;;
+    *)
+        echo "usage: scripts/test-platforms [quick|full]" >&2
+        exit 2
+        ;;
+esac
+
+command -v cmake >/dev/null || {
+    echo "cmake is required for the native host suite" >&2
+    exit 1
+}
+command -v docker >/dev/null || {
+    echo "docker is required for the Linux suites" >&2
+    exit 1
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+echo "==> Native host suite"
+cmake -S . -B build-platform-host -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build-platform-host --config Release --target lumiere_unit_tests
+ctest --test-dir build-platform-host -C Release --output-on-failure
+
+for suite in "${linux_suites[@]}"; do
+    echo "==> Building and testing $suite in Ubuntu 24.04 (linux/amd64)"
+    docker build \
+        --platform linux/amd64 \
+        --file docker/linux-tests.Dockerfile \
+        --target test \
+        --build-arg "SUITE=$suite" \
+        --tag "lumiere-tests:$suite" \
+        --progress plain \
+        .
+done
+
+echo "==> Platform test matrix passed ($mode)"

@@ -6,6 +6,9 @@ A programming language interpreter (WIP).
 
 Project notes live in [`docs/`](./docs/README.md). They are short design documents about both Lumiere internals and the C++ techniques used to build them.
 
+Start with [`UNDERSTANDING.md`](./UNDERSTANDING.md) for the current end-to-end
+architecture, execution, ownership, interview guide, and GC-readiness model.
+
 For a practical "what works today" reference, see [`docs/implemented-language-overview.md`](./docs/implemented-language-overview.md).
 The complete execution and inspection command matrix is in [`docs/cli.md`](./docs/cli.md).
 
@@ -143,6 +146,33 @@ Or with direnv:
 tests
 ```
 
+### Pre-push platform tests
+
+Enable the repository's pre-push check once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Every `git push` will then run the native host suite and the Ubuntu 24.04/GCC
+Release suite. Run the same check directly with:
+
+```bash
+scripts/test-platforms quick
+```
+
+Before opening or merging a pull request, run the full local matrix:
+
+```bash
+scripts/test-platforms full
+```
+
+The full matrix adds Ubuntu/Clang Release and GCC with AddressSanitizer and
+UndefinedBehaviorSanitizer. Docker always targets `linux/amd64`, matching GitHub's
+Ubuntu runners even from an Apple Silicon host. Docker cannot emulate the macOS
+or Windows kernels; the native host run and GitHub Actions' macOS/MSVC jobs remain
+the checks for those platforms.
+
 ## direnv setup
 
 ```bash
@@ -175,7 +205,7 @@ curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/script
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.6
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh -s -- --version v0.1.7
 ```
 
 To upgrade an existing installation, repeat the original installation method.
@@ -191,13 +221,13 @@ irm https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/insta
 To publish a release:
 
 ```bash
-git tag -a v0.1.6 -m "Release v0.1.6"
-git push origin v0.1.6
+git tag -a v0.1.7 -m "Release v0.1.7"
+git push origin v0.1.7
 ```
 
 Useful checks before or after pushing:
 
 ```bash
 git tag
-git show v0.1.6
+git show v0.1.7
 ```

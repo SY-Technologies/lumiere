@@ -1,0 +1,11 @@
+.git
+.github
+.githooks
+.agents
+.codex
+build*
+cmake-build-*
+out
+docs
+*.md
+!README.md

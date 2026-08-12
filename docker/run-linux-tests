@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+suite="${1:?missing suite name}"
+build_dir="/tmp/lumiere-${suite}"
+cmake_args=(
+    -S /workspace
+    -B "$build_dir"
+    -G Ninja
+    -DBUILD_TESTING=ON
+)
+
+case "$suite" in
+    gcc-release)
+        export CC=gcc
+        export CXX=g++
+        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+        ;;
+    clang-release)
+        export CC=clang
+        export CXX=clang++
+        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+        ;;
+    gcc-sanitized)
+        export CC=gcc
+        export CXX=g++
+        sanitizer_flags="-fsanitize=address,undefined -fno-omit-frame-pointer"
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_CXX_FLAGS=${sanitizer_flags}"
+            "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+        )
+        export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
+        export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+        ;;
+    *)
+        echo "Unknown Linux test suite: $suite" >&2
+        exit 2
+        ;;
+esac
+
+echo "==> Linux suite: $suite"
+"$CXX" --version
+cmake "${cmake_args[@]}"
+cmake --build "$build_dir" --target lumiere_unit_tests
+ctest --test-dir "$build_dir" --output-on-failure
