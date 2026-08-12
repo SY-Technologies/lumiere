@@ -21,7 +21,7 @@ struct Inspection
     std::vector<std::string> parameters;
     // Returned type, empty for values that return nothing meaningful.
     std::string return_type;
-    // Free-form documentation (from /// doc comments or the stdlib registry).
+    // Free-form documentation from source comments or the stdlib registry.
     std::string documentation;
     std::size_t start_offset = 0;
     std::size_t end_offset = 0;

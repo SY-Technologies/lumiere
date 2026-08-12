@@ -1,0 +1,44 @@
+/** Écrit la représentation en texte d'une valeur sur la sortie standard, puis passe à la ligne suivante. */
+fonction afficher(texte : Texte) -> Rien
+{
+}
+
+/** Lit une ligne entière depuis l'entrée standard et la retourne. Retourne une ErreurEntrée en fin de flux. */
+fonction lire() -> Résultat[Texte, ErreurEntrée]
+{
+}
+
+/** Lit une ligne depuis l'entrée standard et la convertit en Entier. Échoue avec une ErreurEntrée si la valeur n'est pas un entier valide. */
+fonction lire_entier() -> Résultat[Entier, ErreurEntrée]
+{
+}
+
+/** Lit une ligne depuis l'entrée standard et la convertit en Décimal. Échoue avec une ErreurEntrée si la valeur n'est pas un entier décimal valide. */
+fonction lire_décimal() -> Résultat[Décimal, ErreurEntrée]
+{
+}
+
+/** Variante sans accent de lire_décimal() : lit une ligne et la convertit en Décimal. */
+fonction lire_decimal() -> Résultat[Décimal, ErreurEntrée]
+{
+}
+
+/** Lit une ligne depuis l'entrée standard ('vrai' ou 'faux') et la convertit en Logique. Échoue en cas de valeur invalide. */
+fonction lire_logique() -> Résultat[Logique, ErreurEntrée]
+{
+}
+
+/** Construit un Résultat réussi contenant la valeur donnée. Charge le type d'erreur du contexte. */
+fonction Succès(payload : T) -> Résultat[T, E]
+{
+}
+
+/** Construit un Résultat en échec portant une valeur d'erreur réalisant Erreur. Charge le type attendu du contexte. */
+fonction Échec(erreur : E) -> Résultat[T, E]
+{
+}
+
+/** Retourne le nom du type dynamique d'une valeur. */
+fonction type_de(valeur : Universel) -> Texte
+{
+}

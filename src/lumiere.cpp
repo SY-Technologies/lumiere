@@ -111,6 +111,7 @@ std::unique_ptr<lumiere::Program> parse_program(
         }
         return nullptr;
     }
+    
     return std::make_unique<lumiere::Program>(
         lumiere::Program{std::move(analysis.statements), std::move(source_path), std::move(source)});
 }

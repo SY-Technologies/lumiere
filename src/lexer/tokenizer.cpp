@@ -1,12 +1,58 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <sstream>
 #include "lumiere/lexer/tokenizer.hpp"
 #include "lumiere/lexer/scanner.hpp"
 #include "lumiere/parser/utf8.hpp"
 
 namespace lumiere
 {
+    namespace
+    {
+        std::string normalize_block_documentation(const std::string &raw)
+        {
+            std::istringstream input(raw);
+            std::vector<std::string> lines;
+            std::string line;
+            while (std::getline(input, line))
+            {
+                const std::size_t content = line.find_first_not_of(" \t\r");
+                line = content == std::string::npos ? "" : line.substr(content);
+                if (!line.empty() && line.front() == '*')
+                {
+                    line.erase(0, 1);
+                    if (!line.empty() && line.front() == ' ')
+                    {
+                        line.erase(0, 1);
+                    }
+                }
+                const std::size_t end = line.find_last_not_of(" \t\r");
+                line = end == std::string::npos ? "" : line.substr(0, end + 1);
+                lines.push_back(std::move(line));
+            }
+            while (!lines.empty() && lines.front().empty())
+            {
+                lines.erase(lines.begin());
+            }
+            while (!lines.empty() && lines.back().empty())
+            {
+                lines.pop_back();
+            }
+
+            std::ostringstream output;
+            for (std::size_t i = 0; i < lines.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    output << '\n';
+                }
+                output << lines[i];
+            }
+            return output.str();
+        }
+    }
+
     Tokenizer::Tokenizer(Scanner &scanner) : m_scanner(scanner) {};
     Token Tokenizer::make_token(TokenType type) const
     {
@@ -36,18 +82,18 @@ namespace lumiere
     bool Tokenizer::at_documentation_comment()
     {
         const Scanner::State saved = m_scanner.save();
-        const bool is_doc = m_scanner.match('/') && m_scanner.match('/') && m_scanner.peek() == '/';
+        const bool is_block_doc =
+            m_scanner.match('/') && m_scanner.match('*') && m_scanner.peek() == '*';
         m_scanner.restore(saved);
-        return is_doc;
+        return is_block_doc;
     }
 
     Token Tokenizer::scan_documentation()
     {
-        // The Lexer has consumed the first '/' via scan_token's initial
-        // advance(); consume the remaining two '//' of '///'.
+        // The first '/' was consumed by scan_token(). Consume the opening
+        // stars, while allowing the compact empty form `/**/`.
         m_scanner.advance();
-        m_scanner.advance();
-        if (m_scanner.peek() == ' ')
+        if (!(m_scanner.peek() == '*' && m_scanner.peek_next() == '/'))
         {
             m_scanner.advance();
         }
@@ -55,53 +101,28 @@ namespace lumiere
         const std::size_t start_offset = m_scanner.start_offset();
         const uint32_t start_line = static_cast<uint32_t>(m_scanner.start_line());
         const uint32_t start_column = static_cast<uint32_t>(m_scanner.start_column());
-
-        std::string text;
-        while (true)
+        std::string raw;
+        while (!m_scanner.is_at_end() &&
+               !(m_scanner.peek() == '*' && m_scanner.peek_next() == '/'))
         {
-            while (!m_scanner.is_at_end() && m_scanner.peek() != '\n')
+            if (m_scanner.peek() == '\n')
             {
-                text.push_back(m_scanner.peek());
-                m_scanner.advance();
+                m_scanner.mark_line_end();
             }
-            if (m_scanner.is_at_end())
-            {
-                break;
-            }
-            // At '\n': see whether the next line continues the doc block.
-            m_scanner.mark_line_end();
+            raw.push_back(m_scanner.peek());
             m_scanner.advance();
-            const Scanner::State saved = m_scanner.save();
-            while (!m_scanner.is_at_end() &&
-                   (m_scanner.peek() == ' ' || m_scanner.peek() == '\t'))
-            {
-                m_scanner.advance();
-            }
-            const bool continues = !m_scanner.is_at_end() &&
-                                   m_scanner.match('/') && m_scanner.match('/') && m_scanner.peek() == '/';
-            if (!continues)
-            {
-                m_scanner.restore(saved);
-                break;
-            }
-            m_scanner.restore(saved);
-            m_scanner.advance();
-            m_scanner.advance();
-            m_scanner.advance();
-            if (m_scanner.peek() == ' ')
-            {
-                m_scanner.advance();
-            }
-            text.push_back('\n');
         }
-
-        const std::size_t end_offset = m_scanner.current_offset();
+        if (!m_scanner.is_at_end())
+        {
+            m_scanner.advance();
+            m_scanner.advance();
+        }
         return Token(TokenType::DOCUMENTATION,
-                     std::move(text),
+                     normalize_block_documentation(raw),
                      start_line,
                      start_column,
                      start_offset,
-                     end_offset,
+                     m_scanner.current_offset(),
                      start_line,
                      start_column);
     }
@@ -127,12 +148,6 @@ namespace lumiere
             case '/':
                 if (m_scanner.peek_next() == '/')
                 {
-                    // A documentation comment (///) is a real token: stop here
-                    // so the Lexer can scan it as DOCUMENTATION.
-                    if (at_documentation_comment())
-                    {
-                        return;
-                    }
                     // single-line comment // consume until end of line
                     while (!m_scanner.is_at_end() && m_scanner.peek() != '\n')
                     {
@@ -141,6 +156,10 @@ namespace lumiere
                 }
                 else if (m_scanner.peek_next() == '*')
                 {
+                    if (at_documentation_comment())
+                    {
+                        return;
+                    }
                     // block comment /* ... */
                     m_scanner.advance(); // consume /
                     m_scanner.advance(); // consume *
@@ -203,9 +222,11 @@ namespace lumiere
         case '|':
             return make_token(TokenType::PIPE);
         case '/':
-            // skip_whitespace_and_comments() stops a `///` doc comment here;
-            // after consuming the first '/', a following '/' means a doc block.
-            return m_scanner.peek() == '/' ? scan_documentation() : make_token(TokenType::SLASH);
+            // skip_whitespace_and_comments() leaves documentation comments for
+            // the tokenizer. Ordinary comments were already consumed there.
+            return m_scanner.peek() == '*' && m_scanner.peek_next() == '*'
+                       ? scan_documentation()
+                       : make_token(TokenType::SLASH);
 
         // ── One or two character tokens
         case '=':

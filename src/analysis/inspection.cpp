@@ -4,6 +4,8 @@
 #include "lumiere/analysis/semantic_analysis.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
+#include "lumiere/parser/parser.hpp"
+#include "stdlib_docs.generated.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -48,237 +50,181 @@ struct Declaration
     std::size_t offset;
 };
 
-/// Human-readable documentation for common global builtins. The compiler knows
-/// these functions without a source declaration; this registry lets hover show
-/// complete usage information even though they are never defined in the file.
+/// Documentation for a global builtin or stdlib module value. Built straight
+/// from the embedded stdlib/*.lum sources; sheds light on a name the compiler
+/// knows natively without a source declaration.
 struct BuiltinDocumentation
 {
-    std::string_view name;
-    std::string_view kind;
-    std::string_view signature;
-    std::string_view return_type;
-    std::string_view documentation;
+    std::string module;
+    std::string name;
+    std::string kind;
+    std::string signature;
+    std::string return_type;
+    std::string documentation;
 };
 
-const std::vector<BuiltinDocumentation> &builtin_documentation()
+std::string stdlib_module_name(const std::string_view file_name)
 {
-    static const std::vector<BuiltinDocumentation> registry = {
-        {"afficher",
-         "fonction",
-         "afficher(texte : Texte) -> Rien",
-         "Rien",
-         "Écrit la représentation en texte d'une valeur sur la sortie standard, puis passe à la ligne suivante."},
-        {"lire",
-         "fonction",
-         "lire() -> Résultat[Texte, ErreurEntrée]",
-         "Résultat[Texte, ErreurEntrée]",
-         "Lit une ligne entière depuis l'entrée standard et la retourne. Échoue avec une ErreurEntrée en fin de flux."},
-        {"lire_entier",
-         "fonction",
-         "lire_entier() -> Résultat[Entier, ErreurEntrée]",
-         "Résultat[Entier, ErreurEntrée]",
-         "Lit une ligne depuis l'entrée standard et la convertit en Entier. Échoue avec une ErreurEntrée si la valeur n'est pas un entier valide."},
-        {"lire_décimal",
-         "fonction",
-         "lire_décimal() -> Résultat[Décimal, ErreurEntrée]",
-         "Résultat[Décimal, ErreurEntrée]",
-         "Lit une ligne depuis l'entrée standard et la convertit en Décimal. Échoue avec une ErreurEntrée si la valeur n'est pas un entier décimal valide."},
-        {"lire_decimal",
-         "fonction",
-         "lire_decimal() -> Résultat[Décimal, ErreurEntrée]",
-         "Résultat[Décimal, ErreurEntrée]",
-         "Variante sans accent de lire_décimal() : lit une ligne et la convertit en Décimal."},
-        {"lire_logique",
-         "fonction",
-         "lire_logique() -> Résultat[Logique, ErreurEntrée]",
-         "Résultat[Logique, ErreurEntrée]",
-         "Lit une ligne depuis l'entrée standard ('vrai' ou 'faux') et la convertit en Logique. Échoue en cas de valeur invalide."},
-        {"Succès",
-         "constructeur",
-         "Succès(payload : T) -> Résultat[T, E]",
-         "Résultat[T, E]",
-         "Construit un Résultat réussi contenant la valeur donnée. Charge le type d'erreur du contexte."},
-        {"Échec",
-         "constructeur",
-         "Échec(erreur : E) -> Résultat[T, E]",
-         "Résultat[T, E]",
-         "Construit un Résultat en échec portant une valeur d'erreur réalisant Erreur. Charge le type attendu du contexte."},
-        {"ignorer",
-         "opérateur",
-         "ignorer <résultat>",
-         "",
-         "Ignore explicitement le résultat d'une opération et arrête de le propager, en exigeant que la valeur soit bien un Résultat."},
-        {"propager",
-         "mot-clé",
-         "expression ou propager",
-         "",
-         "Propage l'échec d'une expression Résultat : si elle échoue, la fonction courante se termine en retournant l'erreur ; sinon, unwra le valeur russie."},
+    static const std::unordered_map<std::string_view, std::string_view> modules = {
+        {"aleatoire.lum", "Aléatoire"},
+        {"chemin.lum", "Chemin"},
+        {"fichier.lum", "Fichier"},
+        {"luminet.lum", "LumiNet"},
+        {"lumitest.lum", "LumiTest"},
+        {"maths.lum", "Maths"},
+        {"temps.lum", "Temps"},
+        {"texte.lum", "Texte"},
     };
+    const auto found = modules.find(file_name);
+    return found == modules.end() ? "" : std::string(found->second);
+}
+
+std::string registration_type_name(const TypeExpr &type)
+{
+    return type.empty() ? "Rien" : type.to_string();
+}
+
+std::string registration_join_parameters(const std::vector<Parameter> &params)
+{
+    std::ostringstream output;
+    for (std::size_t i = 0; i < params.size(); ++i)
+    {
+        if (i > 0)
+        {
+            output << ", ";
+        }
+        output << params[i].name;
+        if (!params[i].type.empty())
+        {
+            output << " : " << params[i].type.to_string();
+        }
+    }
+    return output.str();
+}
+
+/// Parses the embedded stdlib sources once and collects top-level module values
+/// and methods. Documentation stays beside the API shape it describes.
+const std::vector<BuiltinDocumentation> &stdlib_documentation()
+{
+    static const std::vector<BuiltinDocumentation> registry = [] {
+        std::vector<BuiltinDocumentation> entries;
+        for (const EmbeddedStdlibFile &file : STDLIB_DOC_FILES)
+        {
+            const std::string module = stdlib_module_name(file.name);
+            Lexer lexer(std::string(file.source));
+            Parser parser(lexer.tokenise());
+            const StmtList statements = parser.parse();
+            if (parser.had_error())
+            {
+                continue;
+            }
+            for (const StmtPtr &statement : statements)
+            {
+                if (const auto *function = dynamic_cast<const FunctionDeclStmt *>(statement.get()))
+                {
+                    const std::string return_type = registration_type_name(function->return_type);
+                    const bool is_constructor =
+                        function->name.lexeme == "Succès" || function->name.lexeme == "Échec";
+                    entries.push_back({module,
+                                       function->name.lexeme,
+                                       is_constructor ? "constructeur" : "fonction",
+                                       function->name.lexeme + "(" +
+                                           registration_join_parameters(function->params) +
+                                           ") -> " + return_type,
+                                       return_type,
+                                       function->documentation});
+                }
+                else if (const auto *constant = dynamic_cast<const VarDeclStmt *>(statement.get()))
+                {
+                    if (!constant->is_fixe)
+                    {
+                        continue;
+                    }
+                    const std::string return_type = registration_type_name(constant->type);
+                    entries.push_back({module,
+                                       constant->name.lexeme,
+                                       "constante",
+                                       constant->name.lexeme,
+                                       return_type,
+                                       constant->documentation});
+                }
+                std::string qualified;
+                std::string owner_name;
+                std::string owner_kind;
+                std::string owner_documentation;
+                const StmtList *methods = nullptr;
+                if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
+                {
+                    owner_name = klass->name.lexeme;
+                    owner_kind = "classe";
+                    owner_documentation = klass->documentation;
+                    qualified = owner_name + ".";
+                    methods = &klass->members;
+                }
+                else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
+                {
+                    owner_name = interface->name.lexeme;
+                    owner_kind = "interface";
+                    owner_documentation = interface->documentation;
+                    qualified = owner_name + ".";
+                    methods = &interface->methods;
+                }
+                if (methods == nullptr)
+                {
+                    continue;
+                }
+                entries.push_back({module,
+                                   owner_name,
+                                   owner_kind,
+                                   owner_kind + " " + owner_name,
+                                   owner_name,
+                                   owner_documentation});
+                for (const StmtPtr &member : *methods)
+                {
+                    const auto *method = dynamic_cast<const FunctionDeclStmt *>(member.get());
+                    if (method == nullptr)
+                    {
+                        continue;
+                    }
+                    const std::string return_type = registration_type_name(method->return_type);
+                    const std::string parameters = registration_join_parameters(method->params);
+                    if (module == owner_name)
+                    {
+                        entries.push_back({module,
+                                           method->name.lexeme,
+                                           "fonction",
+                                           method->name.lexeme + "(texte : " + owner_name +
+                                               (parameters.empty() ? "" : ", " + parameters) +
+                                               ") -> " + return_type,
+                                           return_type,
+                                           method->documentation});
+                    }
+                    entries.push_back({module,
+                                       qualified + method->name.lexeme,
+                                       "méthode",
+                                       method->name.lexeme + "(" + parameters + ") -> " + return_type,
+                                       return_type,
+                                       method->documentation});
+                }
+            }
+        }
+        return entries;
+    }();
     return registry;
 }
 
-const std::vector<BuiltinDocumentation> &module_documentation()
+std::optional<Inspection> documented_inspection(const std::string_view module,
+                                                const std::string_view name,
+                                                const std::size_t start_offset,
+                                                const std::size_t end_offset)
 {
-    static const std::vector<BuiltinDocumentation> registry = {
-        // Maths
-        {"pi", "constante", "pi", "Décimal", "La constante mathématique π (environ 3,14159)."},
-        {"e", "constante", "e", "Décimal", "La constante d'Euler, base des logarithmes naturels (environ 2,71828)."},
-        {"infini", "constante", "infini", "Décimal", "Représente l'infini positif en arithmétique décimale."},
-        {"non_nombre", "constante", "non_nombre", "Décimal", "La valeur spéciale NaN (not a number), résultat d'un calcul indéterminé."},
-        {"absolu", "fonction", "absolu(valeur : Décimal) -> Entier | Décimal", "Entier | Décimal", "Retourne la valeur absolue (distance à zéro) d'un nombre."},
-        {"abs", "fonction", "abs(valeur : Décimal) -> Entier | Décimal", "Entier | Décimal", "Alias sans accent de absolu : valeur absolue d'un nombre."},
-        {"min", "fonction", "min(gauche : Décimal, droite : Décimal) -> Entier | Décimal", "Entier | Décimal", "Retourne l'élément minimal de deux valeurs."},
-        {"max", "fonction", "max(gauche : Décimal, droite : Décimal) -> Entier | Décimal", "Entier | Décimal", "Retourne l'élément maximal de deux valeurs."},
-        {"arrondir", "fonction", "arrondir(valeur : Décimal) -> Entier", "Entier", "Arrondit une décimale à l'entier le plus proche."},
-        {"arrondi", "fonction", "arrondi(valeur : Décimal) -> Entier", "Entier", "Alias sans accent de arrondir."},
-        {"plancher", "fonction", "plancher(valeur : Décimal) -> Entier", "Entier", "Retourne le plus grand entier inférieur ou égal à la valeur."},
-        {"plafond", "fonction", "plafond(valeur : Décimal) -> Entier", "Entier", "Retourne le plus petit entier supérieur ou égal à la valeur."},
-        {"tronquer", "fonction", "tronquer(valeur : Décimal) -> Entier", "Entier", "Coupe la partie décimale sans arrondir."},
-        {"racine", "fonction", "racine(valeur : Décimal) -> Décimal", "Décimal", "Retourne la racine carrée de la valeur."},
-        {"racine_n", "fonction", "racine_n(base : Décimal, n : Décimal) -> Décimal", "Décimal", "Retourne la racine n-ième de la valeur."},
-        {"puissance", "fonction", "puissance(base : Décimal, exposant : Décimal) -> Décimal", "Décimal", "Élève une base à un exposant."},
-        {"log", "fonction", "log(valeur : Décimal) -> Décimal", "Décimal", "Logarithme naturel (base e) de la valeur."},
-        {"log10", "fonction", "log10(valeur : Décimal) -> Décimal", "Décimal", "Logarithme en base 10 de la valeur."},
-        {"log2", "fonction", "log2(valeur : Décimal) -> Décimal", "Décimal", "Logarithme en base 2 de la valeur."},
-        {"sin", "fonction", "sin(valeur : Décimal) -> Décimal", "Décimal", "Sinus d'un angle exprimé en radians."},
-        {"sinus", "fonction", "sinus(valeur : Décimal) -> Décimal", "Décimal", "Alias sans accent de sin."},
-        {"cos", "fonction", "cos(valeur : Décimal) -> Décimal", "Décimal", "Cosinus d'un angle exprimé en radians."},
-        {"cosinus", "fonction", "cosinus(valeur : Décimal) -> Décimal", "Décimal", "Alias sans accent de cos."},
-        {"tan", "fonction", "tan(valeur : Décimal) -> Décimal", "Décimal", "Tangente d'un angle exprimé en radians."},
-        {"tangente", "fonction", "tangente(valeur : Décimal) -> Décimal", "Décimal", "Alias sans accent de tan."},
-        {"arctan", "fonction", "arctan(valeur : Décimal) -> Décimal", "Décimal", "Arc tangente d'une valeur."},
-        {"acos", "fonction", "acos(valeur : Décimal) -> Décimal", "Décimal", "Cosinus inverse (arccosinus) d'une valeur."},
-        {"asin", "fonction", "asin(valeur : Décimal) -> Décimal", "Décimal", "Sinus inverse (arcsinus) d'une valeur."},
-        {"atan", "fonction", "atan(valeur : Décimal) -> Décimal", "Décimal", "Tangente inverse (arctangente) d'une valeur."},
-        {"atan2", "fonction", "atan2(y : Décimal, x : Décimal) -> Décimal", "Décimal", "Arc tangente de y/x en tenant compte du quadrant."},
-        {"degres_vers_radians", "fonction", "degres_vers_radians(valeur : Décimal) -> Décimal", "Décimal", "Convertit des degrés en radians."},
-        {"radians_vers_degres", "fonction", "radians_vers_degres(valeur : Décimal) -> Décimal", "Décimal", "Convertit des radians en degrés."},
-        {"est_non_nombre", "fonction", "est_non_nombre(valeur : Décimal) -> Logique", "Logique", "Retourne vrai si la valeur est NaN."},
-        {"est_infini", "fonction", "est_infini(valeur : Décimal) -> Logique", "Logique", "Retourne vrai si la valeur est infinie."},
-        {"est_pair", "fonction", "est_pair(valeur : Entier) -> Logique", "Logique", "Retourne vrai si l'entier est pair."},
-        {"est_impair", "fonction", "est_impair(valeur : Entier) -> Logique", "Logique", "Retourne vrai si l'entier est impair."},
-
-        // Texte (free functions)
-        {"joindre", "fonction", "joindre(valeurs : Liste[Texte], séparateur : Texte) -> Texte", "Texte", "Assemble une liste de textes en un seul texte, en les séparant par séparateur."},
-        {"convertir_entier", "fonction", "convertir_entier(valeur : Entier) -> Texte", "Texte", "Convertit un entier en sa représentation textuelle décimale."},
-        {"convertir_decimal", "fonction", "convertir_decimal(valeur : Décimal) -> Texte", "Texte", "Convertit une décimale en sa représentation textuelle."},
-        {"convertir_logique", "fonction", "convertir_logique(valeur : Logique) -> Texte", "Texte", "Convertit un booléen en 'vrai' ou 'faux'."},
-
-        // Chemin
-        {"separateur", "constante", "separateur", "Texte", "Le séparateur de dossier du système courant ('/' sur Unix, '\\\\' sur Windows)."},
-        {"dossier_courant", "fonction", "dossier_courant() -> Texte", "Texte", "Retourne le chemin complet du dossier de travail courant."},
-        {"absolu", "fonction", "absolu(chemin : Texte) -> Texte", "Texte", "Convertit un chemin relatif en chemin absolu."},
-        {"nom", "fonction", "nom(chemin : Texte) -> Texte", "Texte", "Retourne le nom final du fichier ou dossier."},
-        {"nom_sans_extension", "fonction", "nom_sans_extension(chemin : Texte) -> Texte", "Texte", "Retourne le nom du fichier sans son extension."},
-        {"extension", "fonction", "extension(chemin : Texte) -> Texte", "Texte", "Retourne l'extension (avec le point) d'un fichier."},
-        {"dossier", "fonction", "dossier(chemin : Texte) -> Texte", "Texte", "Retourne le chemin du dossier contenant un chemin."},
-        {"normaliser", "fonction", "normaliser(chemin : Texte) -> Texte", "Texte", "Normalise un chemin (résout les points et les dossiers redondants)."},
-        {"parties", "fonction", "parties(chemin : Texte) -> Liste de Texte", "Liste de Texte", "Découpe un chemin en la liste de ses segments."},
-        {"est_absolu", "fonction", "est_absolu(chemin : Texte) -> Logique", "Logique", "Retourne vrai si le chemin est absolu."},
-        {"est_relatif", "fonction", "est_relatif(chemin : Texte) -> Logique", "Logique", "Retourne vrai si le chemin est relatif."},
-
-        // Aléatoire
-        {"graine", "fonction", "graine(graine : Entier) -> Rien", "Rien", "Fixe le germe du générateur pseudo-aléatoire pour obtenir des séquences reproductibles."},
-        {"entier", "fonction", "entier(minimum : Entier, maximum : Entier) -> Entier", "Entier", "Retourne un entier pseudo-aléatoire entre minimum et maximum inclus."},
-        {"décimal", "fonction", "décimal() -> Décimal", "Décimal", "Retourne un nombre décimal pseudo-aléatoire entre 0 (inclut) et 1 (exclu)."},
-        {"décimal_entre", "fonction", "décimal_entre(minimum : Décimal, maximum : Décimal) -> Décimal", "Décimal", "Retourne un nombre décimal pseudo-aléatoire entre deux bornes."},
-        {"choisir", "fonction", "choisir(valeurs) -> Universel", "Universel", "Retourne un élément aléatoire d'une séquence."},
-        {"mélanger", "fonction", "mélanger(valeurs) -> Liste", "Liste", "Retourne une nouvelle copie d'une liste dont les éléments ont été mélangés."},
-        {"échantillon", "fonction", "échantillon(valeurs, nombre : Entier) -> Liste", "Liste", "Retourne un nombre donné d'éléments aléatoires distincts d'une séquence."},
-
-        // LumiTest
-        {"test", "fonction", "test(description : Texte, corps) -> Rien", "Rien", "Déclare un test avec une description, dont le corps doit réussir sans lancer."},
-        {"groupe", "fonction", "groupe(nom : Texte, corps) -> Rien", "Rien", "Regroupe plusieurs tests sous un nom commun pour l'affichage."},
-        {"avant_tout", "fonction", "avant_tout(corps) -> Rien", "Rien", "Exécute le corps une fois avant tous les tests du groupe."},
-        {"avant_chaque", "fonction", "avant_chaque(corps) -> Rien", "Rien", "Exécute le corps avant chaque test du groupe."},
-        {"après_chaque", "fonction", "après_chaque(corps) -> Rien", "Rien", "Exécute le corps après chaque test du groupe."},
-        {"après_tout", "fonction", "après_tout(corps) -> Rien", "Rien", "Exécute le corps après tous les tests du groupe."},
-        {"vérifier", "fonction", "vérifier(condition : Logique) -> Rien", "Rien", "Fait échouer le test si la condition est fausse."},
-        {"vérifier_égal", "fonction", "vérifier_égal(attendu, obtenu) -> Rien", "Rien", "Échoue le test si attendu et obtenu diffèrent."},
-        {"vérifier_différent", "fonction", "vérifier_différent(a, b) -> Rien", "Rien", "Échoue le test si a et b sont égaux."},
-        {"vérifier_lance", "fonction", "vérifier_lance() -> Rien", "Rien", "Échoue le test si le corps suivant ne lance pas une erreur."},
-        {"vérifier_contient", "fonction", "vérifier_contient(collection, élément) -> Rien", "Rien", "Échoue le test si la collection ne contient pas l'élément."},
-        {"vérifier_approx", "fonction", "vérifier_approx(attendu : Décimal, obtenu : Décimal) -> Rien", "Rien", "Échoue le test si deux décimales ne sont pas approchées à une petite tolérance."},
-
-        {"indisponible", "constante", "indisponible", "Dans une autre dimension", "Valeur de repli quand une fonctionnalité (ex. LumiNet) n'est pas disponible sur la plateforme."},
-    };
-    return registry;
-}
-
-/// Documentation entries for methods called with the member syntax `objet.méthode(...)`.
-/// Keyed by `\"Type.méthode\"`.
-const std::vector<BuiltinDocumentation> &member_documentation()
-{
-    static const std::vector<BuiltinDocumentation> registry = {
-        // Texte.méthodes
-        {"Texte.taille", "méthode", "taille() -> Entier", "Entier", "Retourne le nombre de caractères du texte."},
-        {"Texte.est_vide", "méthode", "est_vide() -> Logique", "Logique", "Retourne vrai si le texte ne contient aucun caractère."},
-        {"Texte.contient", "méthode", "contient(recherche : Texte) -> Logique", "Logique", "Retourne vrai si le texte contient le sous-texte recherché."},
-        {"Texte.index_de", "méthode", "index_de(recherche : Texte) -> Entier", "Entier", "Retourne la position de la première occurrence de recherche dans le texte."},
-        {"Texte.commence_par", "méthode", "commence_par(prefixe : Texte) -> Logique", "Logique", "Retourne vrai si le texte commence par la préfixe donnée."},
-        {"Texte.finit_par", "méthode", "finit_par(suffixe : Texte) -> Logique", "Logique", "Retourne vrai si le texte se termine par le suffixe donnée."},
-        {"Texte.separer", "méthode", "separer(séparateur : Texte) -> Liste de Texte", "Liste de Texte", "Découpe le texte en segments selon un séparateur."},
-        {"Texte.separer_lignes", "méthode", "separer_lignes() -> Liste de Texte", "Liste de Texte", "Découpe le texte en lignes à chaque saut de ligne."},
-        {"Texte.remplacer", "méthode", "remplacer(recherche : Texte, remplacement : Texte) -> Texte", "Texte", "Remplace la première occurrence de recherche par remplacement."},
-        {"Texte.remplacer_tout", "méthode", "remplacer_tout(recherche : Texte, remplacement : Texte) -> Texte", "Texte", "Remplace toutes les occurrences de recherche par remplacement."},
-        {"Texte.elaguer", "méthode", "elaguer() -> Texte", "Texte", "Retire les espaces et tabulations aux deux extrémités du texte."},
-        {"Texte.elaguer_gauche", "méthode", "elaguer_gauche() -> Texte", "Texte", "Retire les espaces et tabulations au début du texte."},
-        {"Texte.elaguer_droite", "méthode", "elaguer_droite() -> Texte", "Texte", "Retire les espaces et tabulations en fin du texte."},
-        {"Texte.minuscules", "méthode", "minuscules() -> Texte", "Texte", "Convertit tous les caractères en minuscules."},
-        {"Texte.majuscules", "méthode", "majuscules() -> Texte", "Texte", "Convertit tous les caractères en majuscules."},
-        {"Texte.inverser", "méthode", "inverser() -> Texte", "Texte", "Inverse l'ordre des caractères du texte."},
-        {"Texte.repeter", "méthode", "repeter(nombre : Entier) -> Texte", "Texte", "Repète le texte un nombre donné de fois, bout à bout."},
-        {"Texte.inserer", "méthode", "inserer(position : Entier, ajout : Texte) -> Texte", "Texte", "Insère un texte à la position donnée (zéro-indexé)."},
-        {"Texte.supprimer", "méthode", "supprimer(position : Entier, longueur : Entier) -> Texte", "Texte", "Retire longueur caractères à partir de la position donnée."},
-        {"Texte.sous_texte", "méthode", "sous_texte(début : Entier, longueur : Entier) -> Texte", "Texte", "Extrait une sous-chaîne à partir d'une position et d'une longueur."},
-        {"Texte.en_entier", "méthode", "en_entier() -> Résultat[Entier, ErreurConversion]", "Résultat", "Tente de convertir le texte en Entier, retourne un Résultat."},
-        {"Texte.en_decimal", "méthode", "en_decimal() -> Résultat[Décimal, ErreurConversion]", "Résultat", "Tente de convertir le texte en Décimal, retourne un Résultat."},
-        {"Texte.en_logique", "méthode", "en_logique() -> Résultat[Logique, ErreurConversion]", "Résultat", "Tente de convertir le texte en Logique ('vrai'/'faux'), retourne un Résultat."},
-
-        // Liste.méthodes (présentes sur toute séquence)
-        {"Liste.taille", "méthode", "taille() -> Entier", "Entier", "Retourne le nombre d'éléments de la liste."},
-        {"Liste.est_vide", "méthode", "est_vide() -> Logique", "Logique", "Retourne vrai si la liste ne contient aucun élément."},
-        {"Liste.ajouter", "méthode", "ajouter(élément) -> Aucun", "Aucun", "Ajoute un élément à la fin de la liste."},
-        {"Liste.inserer", "méthode", "insérer(position : Entier, valeur) -> Aucun", "Aucun", "Insère une valeur à l'indice donné."},
-        {"Liste.supprimer", "méthode", "supprimer(position : Entier) -> Aucun", "Aucun", "Retire l'élément à l'indice donné."},
-        {"Liste.premier", "méthode", "premier() -> Aucun", "Aucun", "Retourne le premier élément de la liste."},
-        {"Liste.dernier", "méthode", "dernier() -> Aucun", "Aucun", "Retourne le dernier élément de la liste."},
-        {"Liste.contient", "méthode", "contient(valeur) -> Logique", "Logique", "Retourne vrai si la liste contient la valeur."},
-        {"Liste.index_de", "méthode", "indice(valeur) -> Entier", "Entier", "Retourne la position de la valeur dans la liste."},
-        {"Liste.trier", "méthode", "trier() -> Aucun", "Aucun", "Trie les éléments de la liste par ordre croissant."},
-        {"Liste.inverser", "méthode", "inverser() -> Aucun", "Aucun", "Inverse l'ordre des éléments sur place."},
-    };
-    return registry;
-}
-
-/// Returns documentation for a well-known global builtin, or nothing.
-std::optional<Inspection> builtin_inspection(const std::string &name,
-                                             const std::size_t start_offset,
-                                             const std::size_t end_offset)
-{
-    const auto &registry = builtin_documentation();
+    const auto &registry = stdlib_documentation();
     const auto found = std::find_if(registry.begin(), registry.end(),
                                     [&](const BuiltinDocumentation &entry)
-                                    { return entry.name == name; });
+                                    { return entry.module == module && entry.name == name; });
     if (found == registry.end())
     {
-        const auto &module_registry = module_documentation();
-        const auto module_found = std::find_if(module_registry.begin(), module_registry.end(),
-                                               [&](const BuiltinDocumentation &entry)
-                                               { return entry.name == name; });
-        if (module_found == module_registry.end())
-        {
-            return std::nullopt;
-        }
-        Inspection inspection;
-        inspection.label = name;
-        inspection.kind = std::string(module_found->kind);
-        inspection.signature = std::string(module_found->signature);
-        inspection.return_type = std::string(module_found->return_type);
-        inspection.documentation = std::string(module_found->documentation);
-        inspection.start_offset = start_offset;
-        inspection.end_offset = end_offset;
-        return inspection;
+        return std::nullopt;
     }
     Inspection inspection;
     inspection.label = name;
@@ -289,6 +235,135 @@ std::optional<Inspection> builtin_inspection(const std::string &name,
     inspection.start_offset = start_offset;
     inspection.end_offset = end_offset;
     return inspection;
+}
+
+std::string canonical_module_name(const std::string &name)
+{
+    return name == "Aleatoire" ? "Aléatoire" : name;
+}
+
+std::string default_module_alias(const std::string &module)
+{
+    const std::size_t separator = module.rfind('.');
+    return separator == std::string::npos ? module : module.substr(separator + 1);
+}
+
+std::optional<Inspection> imported_value_inspection(const StmtList &statements,
+                                                    const Token &selected)
+{
+    for (const StmtPtr &statement : statements)
+    {
+        const auto *import = dynamic_cast<const ImportStmt *>(statement.get());
+        if (import == nullptr)
+        {
+            continue;
+        }
+        for (const ImportStmt::ImportedMember &member : import->imported_members)
+        {
+            const std::string &binding = member.alias.lexeme.empty()
+                                             ? member.name.lexeme
+                                             : member.alias.lexeme;
+            if (binding != selected.lexeme)
+            {
+                continue;
+            }
+            auto inspection = documented_inspection(
+                canonical_module_name(import->module_name.lexeme),
+                member.name.lexeme,
+                selected.start_offset,
+                selected.end_offset);
+            if (inspection.has_value())
+            {
+                inspection->label = binding;
+            }
+            return inspection;
+        }
+    }
+    return std::nullopt;
+}
+
+bool member_path(const Expr &expression, std::string &root, std::string &path)
+{
+    if (const auto *identifier = dynamic_cast<const IdentifierExpr *>(&expression))
+    {
+        root = identifier->name.lexeme;
+        return true;
+    }
+    const auto *member = dynamic_cast<const MemberAccessExpr *>(&expression);
+    if (member == nullptr || !member_path(*member->object, root, path))
+    {
+        return false;
+    }
+    if (!path.empty())
+    {
+        path += '.';
+    }
+    path += member->member.lexeme;
+    return true;
+}
+
+std::optional<Inspection> imported_member_inspection(const StmtList &statements,
+                                                     const MemberAccessExpr &access)
+{
+    std::string root;
+    std::string path;
+    if (!member_path(*access.object, root, path))
+    {
+        return std::nullopt;
+    }
+    if (!path.empty())
+    {
+        path += '.';
+    }
+    path += access.member.lexeme;
+
+    for (const StmtPtr &statement : statements)
+    {
+        const auto *import = dynamic_cast<const ImportStmt *>(statement.get());
+        if (import == nullptr || !import->imported_members.empty())
+        {
+            continue;
+        }
+        const std::string alias = import->alias.lexeme.empty()
+                                      ? default_module_alias(import->module_name.lexeme)
+                                      : import->alias.lexeme;
+        if (root == alias)
+        {
+            return documented_inspection(
+                canonical_module_name(import->module_name.lexeme), path,
+                access.member.start_offset, access.member.end_offset);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<Inspection> builtin_inspection(const std::string &name,
+                                             const std::size_t start_offset,
+                                             const std::size_t end_offset)
+{
+    if (auto core = documented_inspection("", name, start_offset, end_offset))
+    {
+        return core;
+    }
+
+    // Preserve hover for incomplete editor buffers that omit imports. Only use
+    // this compatibility fallback when the name is unique across modules.
+    const BuiltinDocumentation *match = nullptr;
+    for (const BuiltinDocumentation &entry : stdlib_documentation())
+    {
+        if (entry.name != name || entry.name.find('.') != std::string::npos)
+        {
+            continue;
+        }
+        if (match != nullptr)
+        {
+            return std::nullopt;
+        }
+        match = &entry;
+    }
+    return match == nullptr
+               ? std::nullopt
+               : documented_inspection(match->module, name, start_offset, end_offset);
 }
 
 void collect_statements(const StmtList &statements, std::vector<Declaration> &declarations);
@@ -775,10 +850,10 @@ std::optional<Inspection> qualified_member_inspection(const std::string &object_
                                                        const std::size_t end_offset)
 {
     const std::string &qualified = object_type + "." + member_name;
-    const auto &registry = member_documentation();
+    const auto &registry = stdlib_documentation();
     const auto found = std::find_if(registry.begin(), registry.end(),
                                     [&](const BuiltinDocumentation &entry)
-                                    { return entry.name == qualified; });
+                                    { return entry.kind == "méthode" && entry.name == qualified; });
     if (found == registry.end())
     {
         return std::nullopt;
@@ -888,9 +963,9 @@ std::optional<Inspection> inspect_source(const std::string &source, const std::s
                                                            selected->end_offset);
 
     AnalysisResult analysis = analyze_source(source);
-    if (analysis.has_errors())
+    if (auto imported = imported_value_inspection(analysis.statements, *selected))
     {
-        return builtin;
+        return imported;
     }
 
     // If the cursor sits on `objet.membre`, resolve the member against the
@@ -904,6 +979,17 @@ std::optional<Inspection> inspect_source(const std::string &source, const std::s
             member_access = result;
             break;
         }
+    }
+    if (member_access != nullptr)
+    {
+        if (auto imported = imported_member_inspection(analysis.statements, *member_access))
+        {
+            return imported;
+        }
+    }
+    if (analysis.has_errors())
+    {
+        return builtin;
     }
     if (member_access != nullptr)
     {

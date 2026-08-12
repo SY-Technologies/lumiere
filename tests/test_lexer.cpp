@@ -46,6 +46,32 @@ TEST(LexerComments, IgnoresUnterminatedBlockCommentUntilEndOfFile)
     EXPECT_EQ(tokens[0].type, TokenType::FIN_FICHIER);
 }
 
+TEST(LexerComments, RecognisesJavadocStyleDocumentation)
+{
+    const std::vector<Token> tokens = lex(
+        "/**\n"
+        " * Calcule une valeur.\n"
+        " * Retourne le résultat.\n"
+        " */\n"
+        "fonction calculer() {}\n");
+
+    ASSERT_FALSE(tokens.empty());
+    EXPECT_EQ(tokens[0].type, TokenType::DOCUMENTATION);
+    EXPECT_EQ(tokens[0].lexeme,
+              "Calcule une valeur.\nRetourne le résultat.");
+    EXPECT_EQ(tokens[1].type, TokenType::FONCTION);
+}
+
+TEST(LexerComments, TreatsTripleSlashAsAnOrdinaryLineComment)
+{
+    const std::vector<Token> tokens = lex(
+        "/// Ancienne documentation.\n"
+        "fonction calculer() {}\n");
+
+    ASSERT_FALSE(tokens.empty());
+    EXPECT_EQ(tokens[0].type, TokenType::FONCTION);
+}
+
 TEST(LexerKeywords, RecognisesAgirSelonAsSingleToken)
 {
     const std::vector<Token> tokens = lex("agir selon valeur");

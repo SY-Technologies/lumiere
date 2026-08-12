@@ -1,0 +1,64 @@
+/** Un instant précis dans le temps, résolution en millisecondes. */
+classe Instant
+{
+}
+
+/** Une durée, mesurée en millisecondes. */
+classe Durée
+{
+}
+
+/** Analyse un texte selon un format et retourne l'Instant correspondant. */
+fonction analyser(texte : Texte, format : Texte) -> Résultat[Instant, ErreurTemps]
+{
+}
+
+/** Retourne l'horodatage Unix courant (millisecondes depuis l'époque). */
+fonction horodatage() -> Entier
+{
+}
+
+/** Retourne l'instant courant. */
+fonction maintenant() -> Instant
+{
+}
+
+/** Construit un Instant depuis un horodatage Unix en millisecondes. */
+fonction depuis_horodatage(millisecondes : Entier) -> Instant
+{
+}
+
+/** Calcule la Durée écoulée entre deux instants. */
+fonction entre(début : Instant, fin : Instant) -> Durée
+{
+}
+
+/** Met l'exécution en pause pendant la durée donnée. */
+fonction attendre(durée : Durée) -> Rien
+{
+}
+
+/** Construit une Durée de millisecondes. */
+fonction millisecondes(nombre : Entier) -> Durée
+{
+}
+
+/** Construit une Durée de secondes. */
+fonction secondes(nombre : Entier) -> Durée
+{
+}
+
+/** Construit une Durée de minutes. */
+fonction minutes(nombre : Entier) -> Durée
+{
+}
+
+/** Construit une Durée d'heures. */
+fonction heures(nombre : Entier) -> Durée
+{
+}
+
+/** Construit une Durée de jours. */
+fonction jours(nombre : Entier) -> Durée
+{
+}

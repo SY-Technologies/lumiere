@@ -1,0 +1,34 @@
+/** Fixe le germe du générateur pseudo-aléatoire pour obtenir des séquences reproductibles. */
+fonction graine(graine : Entier) -> Rien
+{
+}
+
+/** Retourne un entier pseudo-aléatoire entre minimum et maximum inclus. */
+fonction entier(minimum : Entier, maximum : Entier) -> Entier
+{
+}
+
+/** Retourne un nombre décimal pseudo-aléatoire entre 0 (inclus) et 1 (exclu). */
+fonction décimal() -> Décimal
+{
+}
+
+/** Retourne un nombre décimal pseudo-aléatoire entre deux bornes. */
+fonction décimal_entre(minimum : Décimal, maximum : Décimal) -> Décimal
+{
+}
+
+/** Retourne un élément aléatoire d'une séquence. */
+fonction choisir(valeurs : Universel) -> Universel
+{
+}
+
+/** Retourne une nouvelle copie d'une liste dont les éléments ont été mélangés. */
+fonction mélanger(valeurs : Universel) -> Liste
+{
+}
+
+/** Retourne un nombre donné d'éléments aléatoires distincts d'une séquence. */
+fonction échantillon(valeurs : Universel, nombre : Entier) -> Liste
+{
+}

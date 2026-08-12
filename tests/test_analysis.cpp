@@ -554,7 +554,7 @@ TEST(SourceInspection, DescribesLanguageKeywords)
 TEST(SourceInspection, AttachesDocumentationCommentsToDeclarations)
 {
     const std::string source =
-        "/// Informe du double d'une valeur.\n"
+        "/** Informe du double d'une valeur. */\n"
         "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
 
     const auto inspection = inspect_source(source, source.rfind("doubler"));
@@ -563,6 +563,18 @@ TEST(SourceInspection, AttachesDocumentationCommentsToDeclarations)
     EXPECT_EQ(inspection->label, "doubler");
     EXPECT_EQ(inspection->kind, "fonction");
     EXPECT_EQ(inspection->documentation, "Informe du double d'une valeur.");
+}
+
+TEST(SourceInspection, DoesNotAttachLegacyTripleSlashComments)
+{
+    const std::string source =
+        "/// Ancienne documentation.\n"
+        "fonction calculer() {}\n";
+
+    const auto inspection = inspect_source(source, source.find("calculer"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_TRUE(inspection->documentation.empty());
 }
 
 TEST(SourceInspection, DocumentsCommonBuiltins)
@@ -608,12 +620,83 @@ TEST(SourceInspection, DocumentsModuleFreeFunctions)
     EXPECT_FALSE(inspection->documentation.empty());
 }
 
+TEST(SourceInspection, ResolvesQualifiedModuleDocumentationWithoutNameCollisions)
+{
+    const std::string maths =
+        "importer Maths\n"
+        "soit valeur = Maths.absolu(-2)\n";
+    const std::string chemin =
+        "importer Chemin comme C\n"
+        "soit valeur = C.absolu(\".\")\n";
+
+    const auto maths_inspection = inspect_source(maths, maths.rfind("absolu"));
+    const auto chemin_inspection = inspect_source(chemin, chemin.rfind("absolu"));
+
+    ASSERT_TRUE(maths_inspection.has_value());
+    ASSERT_TRUE(chemin_inspection.has_value());
+    EXPECT_EQ(maths_inspection->signature, "absolu(valeur : Décimal) -> Entier | Décimal");
+    EXPECT_EQ(chemin_inspection->signature, "absolu(chemin : Texte) -> Texte");
+}
+
+TEST(SourceInspection, ResolvesSelectiveImportAliasesToTheirOriginalDocumentation)
+{
+    const std::string source =
+        "importer Chemin.{absolu comme chemin_absolu}\n"
+        "soit valeur = chemin_absolu(\".\")\n";
+
+    const auto inspection = inspect_source(source, source.rfind("chemin_absolu"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "chemin_absolu");
+    EXPECT_EQ(inspection->signature, "absolu(chemin : Texte) -> Texte");
+    EXPECT_FALSE(inspection->documentation.empty());
+}
+
+TEST(SourceInspection, DocumentsNewlyCoveredNativeApis)
+{
+    const std::string source =
+        "importer Chemin\n"
+        "importer Texte\n"
+        "soit chemin = Chemin.joindre(\"a\", \"b\")\n"
+        "soit texte = Texte.convertir_entier(42)\n"
+        "soit longueur = Texte.taille(texte)\n";
+
+    const auto joindre = inspect_source(source, source.find("joindre"));
+    const auto convertir = inspect_source(source, source.find("convertir_entier"));
+    const auto taille = inspect_source(source, source.rfind("taille"));
+
+    ASSERT_TRUE(joindre.has_value());
+    ASSERT_TRUE(convertir.has_value());
+    ASSERT_TRUE(taille.has_value());
+    EXPECT_EQ(joindre->signature, "joindre(segments : Texte) -> Texte");
+    EXPECT_EQ(convertir->signature, "convertir_entier(valeur : Entier) -> Texte");
+    EXPECT_EQ(taille->signature, "taille(texte : Texte) -> Entier");
+}
+
+TEST(SourceInspection, DocumentsNestedLumiNetNamespaces)
+{
+    const std::string source =
+        "importer LumiNet comme Réseau\n"
+        "soit adresse = Réseau.Adresse.analyser(\"127.0.0.1\")\n";
+
+    const auto inspection = inspect_source(source, source.find("analyser"));
+    const auto type = inspect_source(source, source.find("Adresse"));
+
+    ASSERT_TRUE(inspection.has_value());
+    ASSERT_TRUE(type.has_value());
+    EXPECT_EQ(inspection->signature,
+              "analyser(texte : Texte) -> Résultat[AdresseRéseau,ErreurAdresse]");
+    EXPECT_FALSE(inspection->documentation.empty());
+    EXPECT_EQ(type->kind, "classe");
+    EXPECT_FALSE(type->documentation.empty());
+}
+
 TEST(SourceInspection, DocumentsUserClassMethodReferences)
 {
     const std::string source =
-        "/// Un point dans le plan.\n"
+        "/** Un point dans le plan. */\n"
         "classe Point {\n"
-        "  /// Fixe l'abscisse du point.\n"
+        "  /** Fixe l'abscisse du point. */\n"
         "  fonction abscisse(valeur: Entier) { retourne valeur }\n"
         "}\n"
         "soit point = Point()\n"

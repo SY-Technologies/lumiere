@@ -143,8 +143,8 @@ namespace lumiere
         StmtPtr parse_statement_core();
 
         /**
-         * @brief Consumes any consecutive `///` documentation comments preceding
-         * the current statement and returns their joined text.
+         * @brief Consumes documentation comments preceding the current statement
+         * and returns their joined text.
          */
         std::string consume_documentation();
 

@@ -1,0 +1,57 @@
+/** Le séparateur de dossier du système courant ('/' sur Unix, '\\\\' sur Windows). */
+soit fixe separateur : Texte = "/"
+
+/** Retourne le chemin complet du dossier de travail courant. */
+fonction dossier_courant() -> Texte
+{
+}
+
+/** Convertit un chemin relatif en chemin absolu. */
+fonction absolu(chemin : Texte) -> Texte
+{
+}
+
+/** Retourne le nom final du fichier ou dossier. */
+fonction nom(chemin : Texte) -> Texte
+{
+}
+
+/** Retourne le nom du fichier sans son extension. */
+fonction nom_sans_extension(chemin : Texte) -> Texte
+{
+}
+
+/** Retourne l'extension (avec le point) d'un fichier. */
+fonction extension(chemin : Texte) -> Texte
+{
+}
+
+/** Retourne le chemin du dossier contenant un chemin. */
+fonction dossier(chemin : Texte) -> Texte
+{
+}
+
+/** Normalise un chemin (résout les points et les dossiers redondants). */
+fonction normaliser(chemin : Texte) -> Texte
+{
+}
+
+/** Découpe un chemin en la liste de ses segments. */
+fonction parties(chemin : Texte) -> Liste[Texte]
+{
+}
+
+/** Retourne vrai si le chemin est absolu. */
+fonction est_absolu(chemin : Texte) -> Logique
+{
+}
+
+/** Retourne vrai si le chemin est relatif. */
+fonction est_relatif(chemin : Texte) -> Logique
+{
+}
+
+/** Assemble un ou plusieurs segments en un chemin adapté au système courant. */
+fonction joindre(segments : Texte) -> Texte
+{
+}

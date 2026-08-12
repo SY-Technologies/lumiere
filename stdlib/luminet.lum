@@ -1,0 +1,246 @@
+/** Valeur de repli lorsque LumiNet n'est pas disponible sur la plateforme. */
+soit fixe indisponible = 0
+
+/** Une adresse réseau, représentée en texte (IPv4, IPv6 ou nom d'hôte). */
+classe Adresse
+{
+    /** Analyse un texte et retourne une adresse réseau. */
+    fonction analyser(texte : Texte) -> Résultat[AdresseRéseau, ErreurAdresse]
+    {
+    }
+
+    /** Retourne l'adresse réseau locale de la machine. */
+    fonction locale() -> Résultat[AdresseRéseau, ErreurAdresse]
+    {
+    }
+
+    /** Retourne vrai si l'adresse est valide. */
+    fonction est_valide(texte : Texte) -> Logique
+    {
+    }
+
+    /** Retourne vrai si l'adresse est une adresse IPv4. */
+    fonction est_ipv4(texte : Texte) -> Logique
+    {
+    }
+
+    /** Retourne vrai si l'adresse est une adresse IPv6. */
+    fonction est_ipv6(texte : Texte) -> Logique
+    {
+    }
+
+    /** Retourne vrai si l'adresse est locale. */
+    fonction est_locale(texte : Texte) -> Logique
+    {
+    }
+}
+
+/** Une adresse réseau résolue, utilisable pour connecter des sockets. */
+classe AdresseRéseau
+{
+}
+
+/** Une connexion TCP sortante. */
+classe ConnexionTCP
+{
+    /** Écrit une valeur texte sur la connexion. */
+    fonction écrire(valeur : Universel) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Écrit des octets bruts sur la connexion. */
+    fonction écrire_octets(valeur : Universel) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Lit tout ce qui est disponible sur la connexion. */
+    fonction lire() -> Résultat[Texte, ErreurIO]
+    {
+    }
+
+    /** Lit une ligne de texte terminée par un saut de ligne. */
+    fonction lire_ligne() -> Résultat[Texte, ErreurIO]
+    {
+    }
+
+    /** Lit des octets bruts depuis la connexion. */
+    fonction lire_octets() -> Résultat[Liste[Entier], ErreurIO]
+    {
+    }
+
+    /** Fixe le délai d'attente maximal des opérations sur la connexion. */
+    fonction définir_délai(délai : Universel) -> Résultat[Rien, ErreurDélai]
+    {
+    }
+}
+
+/** Un serveur TCP en écoute. */
+classe ServeurTCP
+{
+    /** Met le serveur à l'écoute sur l'hôte et le port donnés. */
+    fonction écouter(hôte : Texte, port : Entier) -> Résultat[Rien, ErreurIO]
+    {
+    }
+}
+
+/** Une socket UDP ouverte. */
+classe SocketUDP
+{
+    /** Fixe le délai d'attente maximal de réception. */
+    fonction définir_délai(délai : Universel) -> Résultat[Rien, ErreurDélai]
+    {
+    }
+
+    /** Attend et retourne un paquet UDP entrant. */
+    fonction recevoir() -> Résultat[PaquetUDP, ErreurIO]
+    {
+    }
+
+    /** Attend et retourne les octets d'un paquet UDP entrant. */
+    fonction recevoir_octets() -> Résultat[PaquetUDP, ErreurIO]
+    {
+    }
+
+    /** Envoie un texte à un hôte et un port donnés. */
+    fonction envoyer(texte : Texte, hôte : Texte, port : Entier) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Envoie des octets bruts à un hôte et un port donnés. */
+    fonction envoyer_octets(octets : Universel, hôte : Texte, port : Entier) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Diffuse un texte vers tous les hôtes d'un port donné. */
+    fonction diffuser(texte : Texte, port : Entier) -> Résultat[Rien, ErreurIO]
+    {
+    }
+}
+
+/** La réponse d'un serveur HTTP en cours d'écriture. */
+classe RéponseServeurHTTP
+{
+    /** Envoie une réponse texte avec un code de statut. */
+    fonction envoyer(statut : Entier, contenu : Texte) -> Résultat[Rien, ErreurHTTP]
+    {
+    }
+
+    /** Envoie une réponse JSON avec un code de statut. */
+    fonction envoyer_json(statut : Entier, contenu : Texte) -> Résultat[Rien, ErreurHTTP]
+    {
+    }
+
+    /** Envoie un fichier en réponse, avec un code de statut. */
+    fonction envoyer_fichier(statut : Entier, contenu : Texte) -> Résultat[Rien, ErreurHTTP]
+    {
+    }
+
+    /** Redirige le client vers une autre URL. */
+    fonction rediriger(url : Texte, statut : Entier) -> Résultat[Rien, ErreurHTTP]
+    {
+    }
+}
+
+/** Un serveur HTTP en écoute. */
+classe ServeurHTTP
+{
+    /** Met le serveur à l'écoute sur l'hôte et le port donnés. */
+    fonction écouter(hôte : Texte, port : Entier) -> Résultat[Rien, ErreurHTTP]
+    {
+    }
+}
+
+/** Un client connecté à un canal (WebSocket). */
+classe CanalClient
+{
+    /** Attend la fermeture du canal par le serveur. */
+    fonction attendre() -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Envoie un message texte sur le canal. */
+    fonction envoyer(message : Texte) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Envoie des octets bruts sur le canal. */
+    fonction envoyer_octets(octets : Universel) -> Résultat[Rien, ErreurIO]
+    {
+    }
+
+    /** Ferme le canal proprement. */
+    fonction fermer(code : Entier, raison : Texte) -> Résultat[Rien, ErreurIO]
+    {
+    }
+}
+
+/** Un serveur de canaux (WebSocket) en écoute. */
+classe ServeurCanal
+{
+    /** Met le serveur à l'écoute sur l'hôte et le port donnés. */
+    fonction écouter(hôte : Texte, port : Entier) -> Résultat[Rien, ErreurIO]
+    {
+    }
+}
+
+/** Résolution de noms d'hôtes. */
+classe DNS
+{
+    /** Résout un nom d'hôte en une adresse texte. */
+    fonction résoudre(hôte : Texte) -> Résultat[Texte, ErreurDNS] {}
+
+    /** Résout un nom d'hôte en toutes ses adresses. */
+    fonction résoudre_tous(hôte : Texte) -> Résultat[Liste[Texte], ErreurDNS] {}
+
+    /** Résolution inverse : de l'adresse vers un nom d'hôte. */
+    fonction résoudre_inverse(adresse : Texte) -> Résultat[Texte, ErreurDNS] {}
+}
+
+/** Création de connexions et serveurs TCP. */
+classe TCP
+{
+    /** Ouvre une connexion TCP vers un hôte et un port. */
+    fonction connecter(hôte : Texte, port : Entier, délai : Universel) -> Résultat[ConnexionTCP, ErreurConnexion] {}
+
+    /** Crée un serveur TCP. */
+    fonction Serveur() -> ServeurTCP {}
+}
+
+/** Création de sockets UDP. */
+classe UDP
+{
+    /** Ouvre une socket UDP sur un port facultatif. */
+    fonction ouvrir(port : Entier) -> Résultat[SocketUDP, ErreurIO] {}
+}
+
+/** Client et serveur HTTP. */
+classe HTTP
+{
+    /** Envoie une requête HTTP GET à une URL. */
+    fonction obtenir(url : Texte, entêtes : Universel, corps : Texte, type_contenu : Texte, délai : Universel) -> Résultat[RéponseHTTP, ErreurHTTP] {}
+
+    /** Envoie une requête HTTP POST à une URL. */
+    fonction créer(url : Texte, entêtes : Universel, corps : Texte, type_contenu : Texte, délai : Universel) -> Résultat[RéponseHTTP, ErreurHTTP] {}
+
+    /** Envoie une requête HTTP de mise à jour à une URL. */
+    fonction modifier(url : Texte, entêtes : Universel, corps : Texte, type_contenu : Texte, délai : Universel) -> Résultat[RéponseHTTP, ErreurHTTP] {}
+
+    /** Envoie une requête HTTP DELETE à une URL. */
+    fonction supprimer(url : Texte, entêtes : Universel, corps : Texte, type_contenu : Texte, délai : Universel) -> Résultat[RéponseHTTP, ErreurHTTP] {}
+
+    /** Envoie une requête HTTP arbitraire avec la méthode donnée. */
+    fonction requête(méthode : Texte, url : Texte, entêtes : Universel, corps : Texte, type_contenu : Texte, délai : Universel) -> Résultat[RéponseHTTP, ErreurHTTP] {}
+
+    /** Crée un serveur HTTP. */
+    fonction Serveur() -> ServeurHTTP {}
+}
+
+/** Client et serveur de canaux WebSocket. */
+classe Canal
+{
+    /** Connecte un canal à une URL. */
+    fonction connecter(url : Texte) -> Résultat[CanalClient, ErreurConnexion] {}
+
+    /** Crée un serveur de canaux. */
+    fonction Serveur() -> ServeurCanal {}
+}

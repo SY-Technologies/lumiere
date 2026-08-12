@@ -1,0 +1,138 @@
+/** Assemble une liste de textes en un seul texte, en les séparant par séparateur. */
+fonction joindre(valeurs : Liste[Texte], séparateur : Texte) -> Texte
+{
+}
+
+/** Convertit un entier en sa représentation textuelle décimale. */
+fonction convertir_entier(valeur : Entier) -> Texte
+{
+}
+
+/** Convertit une décimale en sa représentation textuelle. */
+fonction convertir_decimal(valeur : Décimal) -> Texte
+{
+}
+
+/** Convertit un booléen en « vrai » ou « faux ». */
+fonction convertir_logique(valeur : Logique) -> Texte
+{
+}
+
+/** Méthodes disponibles sur toute valeur de type Texte. */
+classe Texte
+{
+    /** Retourne le nombre de caractères du texte. */
+    fonction taille() -> Entier
+    {
+    }
+
+    /** Retourne vrai si le texte ne contient aucun caractère. */
+    fonction est_vide() -> Logique
+    {
+    }
+
+    /** Retourne vrai si le texte contient le sous-texte recherché. */
+    fonction contient(recherche : Texte) -> Logique
+    {
+    }
+
+    /** Retourne la position de la première occurrence de recherche dans le texte. */
+    fonction index_de(recherche : Texte) -> Entier
+    {
+    }
+
+    /** Retourne vrai si le texte commence par la préfixe donnée. */
+    fonction commence_par(prefixe : Texte) -> Logique
+    {
+    }
+
+    /** Retourne vrai si le texte se termine par le suffixe donnée. */
+    fonction finit_par(suffixe : Texte) -> Logique
+    {
+    }
+
+    /** Découpe le texte en segments selon un séparateur. */
+    fonction separer(séparateur : Texte) -> Liste[Texte]
+    {
+    }
+
+    /** Découpe le texte en lignes à chaque saut de ligne. */
+    fonction separer_lignes() -> Liste[Texte]
+    {
+    }
+
+    /** Remplace la première occurrence de recherche par remplacement. */
+    fonction remplacer(recherche : Texte, remplacement : Texte) -> Texte
+    {
+    }
+
+    /** Remplace toutes les occurrences de recherche par remplacement. */
+    fonction remplacer_tout(recherche : Texte, remplacement : Texte) -> Texte
+    {
+    }
+
+    /** Retire les espaces et tabulations aux deux extrémités du texte. */
+    fonction elaguer() -> Texte
+    {
+    }
+
+    /** Retire les espaces et tabulations au début du texte. */
+    fonction elaguer_gauche() -> Texte
+    {
+    }
+
+    /** Retire les espaces et tabulations en fin du texte. */
+    fonction elaguer_droite() -> Texte
+    {
+    }
+
+    /** Convertit tous les caractères en minuscules. */
+    fonction minuscules() -> Texte
+    {
+    }
+
+    /** Convertit tous les caractères en majuscules. */
+    fonction majuscules() -> Texte
+    {
+    }
+
+    /** Inverse l'ordre des caractères du texte. */
+    fonction inverser() -> Texte
+    {
+    }
+
+    /** Repète le texte un nombre donné de fois, bout à bout. */
+    fonction repeter(nombre : Entier) -> Texte
+    {
+    }
+
+    /** Insère un texte à la position donnée (zéro-indexé). */
+    fonction inserer(position : Entier, ajout : Texte) -> Texte
+    {
+    }
+
+    /** Retire longueur caractères à partir de la position donnée. */
+    fonction supprimer(position : Entier, longueur : Entier) -> Texte
+    {
+    }
+
+    /** Extrait une sous-chaîne à partir d'une position et d'une longueur. */
+    fonction sous_texte(début : Entier, longueur : Entier) -> Texte
+    {
+    }
+
+    /** Tente de convertir le texte en Entier, retourne un Résultat. */
+    fonction en_entier() -> Résultat[Entier, ErreurConversion]
+    {
+    }
+
+    /** Tente de convertir le texte en Décimal, retourne un Résultat. */
+    fonction en_decimal() -> Résultat[Décimal, ErreurConversion]
+    {
+    }
+
+    /** Tente de convertir le texte en Logique ('vrai'/'faux'), retourne un Résultat. */
+    fonction en_logique() -> Résultat[Logique, ErreurConversion]
+    {
+    }
+}

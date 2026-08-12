@@ -97,6 +97,12 @@ if(WIN32)
 endif()
 
 # -----------------------------
+# Embedded stdlib documentation
+# -----------------------------
+
+include(cmake/EmbedStdlibDocs.cmake)
+
+# -----------------------------
 # Library target
 # -----------------------------
 
@@ -120,6 +126,7 @@ target_include_directories(lumiere
         ${PROJECT_SOURCE_DIR}/src/parser
         ${PROJECT_SOURCE_DIR}/src/interpreter/tree_walker
         ${PROJECT_SOURCE_DIR}/src/interpreter
+        ${STDLIB_DOC_GEN_DIR}
 )
 
 if(LUMIERE_ENABLE_WARNINGS)
