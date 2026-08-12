@@ -351,19 +351,27 @@ native_module_exports(const std::string_view module_name)
                 named("Entier")));
         for (const char *name : {"separer", "separer_lignes"})
         {
-            std::initializer_list<NativeParameterSpec> parameters =
-                name == std::string_view("separer")
-                    ? std::initializer_list<NativeParameterSpec>{
-                          parameter("texte", "Texte"),
-                          parameter("séparateur", "Texte")}
-                    : std::initializer_list<NativeParameterSpec>{
-                          parameter("texte", "Texte")};
-            export_callable(
-                exports,
-                name,
-                callable(
-                    parameters,
-                    generic("Liste", {named("Texte")})));
+            if (name == std::string_view("separer"))
+            {
+                export_callable(
+                    exports,
+                    name,
+                    callable(
+                        {
+                            parameter("texte", "Texte"),
+                            parameter("séparateur", "Texte"),
+                        },
+                        generic("Liste", {named("Texte")})));
+            }
+            else
+            {
+                export_callable(
+                    exports,
+                    name,
+                    callable(
+                        {parameter("texte", "Texte")},
+                        generic("Liste", {named("Texte")})));
+            }
         }
         for (const char *name :
              {"elaguer", "elaguer_gauche", "elaguer_droite",
