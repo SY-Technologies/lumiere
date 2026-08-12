@@ -23,8 +23,13 @@ struct AnalysisResult
     [[nodiscard]] bool has_errors() const noexcept;
 };
 
+struct AnalysisOptions
+{
+    bool consume_last_expression = false;
+};
+
 /**
- * @brief Lexes and parses one complete Lumiere source buffer.
+ * @brief Lexes, parses, and semantically validates one complete source buffer.
  *
  * Lexical errors prevent parsing. Parser errors are recovered where possible
  * so one call can report multiple independent syntax problems. No executable
@@ -33,8 +38,10 @@ struct AnalysisResult
  * @param source Exact source text to analyze.
  * @param source_path Logical path attached to diagnostics, including for
  *        unsaved editor buffers.
- * @return Parsed statements and backend-independent structured diagnostics.
+ * @return Validated statements and backend-independent structured diagnostics.
  */
-AnalysisResult analyze_source(std::string source, std::string source_path = {});
+AnalysisResult analyze_source(std::string source,
+                              std::string source_path = {},
+                              AnalysisOptions options = {});
 
 } // namespace lumiere

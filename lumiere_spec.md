@@ -16,7 +16,7 @@ Lumiere is a French-keyword programming language with:
 - brace-delimited blocks
 - functions, classes, inheritance, interfaces, and modules
 - list and dictionary literals
-- exceptions and pattern-style branching with `agir selon`
+- pattern-style branching with `agir selon`
 - a built-in standard library for text, files, paths, math, time, randomness, networking, and tests
 
 Minimal example:
@@ -50,11 +50,11 @@ fonction principal() {
 
 ### Keywords
 
-`soit`, `fixe`, `fonction`, `retourne`, `classe`, `interface`, `réalise`, `remplace`, `public`, `privé`, `si`, `sinon`, `pour`, `chaque`, `dans`, `tant que`, `agir selon`, `vrai`, `faux`, `rien`, `ici`, `parent`, `en`, `et`, `ou`, `non`, `arrêter`, `continuer`, `importer`, `comme`, `essayer`, `attraper`, `finalement`, `lancer`
+`soit`, `fixe`, `type`, `fonction`, `retourne`, `classe`, `interface`, `réalise`, `remplace`, `public`, `privé`, `si`, `sinon`, `pour`, `chaque`, `dans`, `tant que`, `agir selon`, `propager`, `ignorer`, `vrai`, `faux`, `rien`, `ici`, `parent`, `en`, `et`, `ou`, `non`, `arrêter`, `continuer`, `importer`, `comme`
 
 ### Built-in entry names
 
-`principal`, `afficher`, `afficher_inline`, `lire`, `lire_entier`, `lire_décimal`, `lire_decimal`, `lire_logique`
+`principal`, `afficher`, `lire`, `lire_entier`, `lire_décimal`, `lire_decimal`, `lire_logique`
 
 Notes:
 
@@ -106,6 +106,14 @@ Notes:
 
 Generic annotations are parsed and enforced recursively at runtime.
 
+### Union annotations
+
+`A | B` accepts a value matching either annotated type. `|` is available only
+in type position. Generic application binds more tightly, so
+`Liste[Entier | Texte]` is a list whose elements may be integers or text.
+Union chains are flattened structurally and may appear at any type-annotation
+site, including inside nested generic arguments.
+
 Examples:
 
 ```lumiere
@@ -123,7 +131,7 @@ Rules:
 - `N` is part of the type annotation and must be an integer literal in type position.
 - the size of a `ListeFixe` never changes after construction
 - elements may be replaced by index
-- out-of-bounds reads and writes throw `ErreurIndice`
+- out-of-bounds reads and writes report an `ErreurIndice` runtime failure
 - `ListeFixe` is iterable in index order, like `Liste`
 
 Current construction surface:
@@ -304,15 +312,130 @@ Implemented pattern kinds:
 - literal patterns
 - `rien`
 - typed binding patterns such as `n: Entier`
+- result patterns: `Succès(v)`, `Échec(e)`, `Échec(e: Type)` and wildcard
+  binders such as `Échec(_)`
 - multiple literal patterns on one branch
 
 Behavior:
 
 - the first matching branch runs
 - typed bindings exist only inside the winning branch
-- there is no exhaustiveness checking yet
+- a match over `Résultat[T,E]` must cover `Succès` and all failures
+- the open `Erreur` interface requires an untyped `Échec(...)` catch-all
+- `agir selon` is an expression when its branches produce expressions
 
-## 9. Functions
+## 9. Typed recoverable failure
+
+Recoverable operations return `Résultat[T,E]`. A result is exactly one of:
+
+```lumiere
+Succès(valeur)
+Échec(erreur)
+```
+
+`T` is the success type. `E` must be `Erreur`, a class realizing the built-in
+marker interface `Erreur`, a subclass of such a class, or a closed union made
+exclusively of those error types. Both parameters are covariant:
+
+```lumiere
+fonction charger() -> Résultat[Configuration, ErreurFichier | ErreurSyntaxe]
+```
+
+The constraint is checked after complete alias expansion and at every nested
+`Résultat` occurrence. Primitives, `Rien`, `Universel`, ordinary classes,
+result types, and unions containing any non-error alternative are invalid as
+`E`.
+
+`Succès` and `Échec` are contextual constructors. They require an expected
+`Résultat[T,E]` supplied by a result return signature, annotated binding or
+assignment, result-typed argument, or typed aggregate element. They cannot be
+returned from a non-result function, passed through `Universel`, or constructed
+as context-free expressions.
+
+A function whose explicit return type resolves to a result must return a
+compatible result on every normal exit. It may not erase a directly returned
+result behind `Universel` or a union. `principal` may return `Rien` or
+`Résultat[Rien,E]`; success exits normally and failure is reported as a
+nonzero process result.
+
+### Explicit propagation
+
+Propagation uses the explicit postfix form `ou propager`:
+
+```lumiere
+fonction charger(chemin: Texte)
+    -> Résultat[Configuration, ErreurFichier | ErreurSyntaxe] {
+  soit texte = Fichier.lire_texte(chemin) ou propager
+
+  retourne analyser_configuration(texte)
+}
+```
+
+The enclosing function must have an explicit result return annotation, and
+the operand error type must be assignable to its declared error type. The
+operand is evaluated once: success yields its payload locally and failure
+returns the unchanged `Échec` from the nearest function. No implicit
+return-type widening exists.
+
+Normative propagation invariants:
+
+- the fully resolved operand is a top-level `Résultat[T,E]`
+- the nearest callable explicitly returns `Résultat[U,F]`
+- every member of `E` is assignable to `F`
+- success exposes the original `T` payload
+- failure preserves the original Result, error-object identity, concrete type,
+  and diagnostic origin while exiting only the nearest callable
+- traps are not converted, caught, or propagated as Results
+- the operand is evaluated exactly once
+- pending Result obligations must already be satisfied on the possible failure
+  exit; code following propagation cannot satisfy them retroactively
+- an exposed nested Result retains its own non-discard obligation
+- aliases, imports, nested functions, methods, and lexical blocks do not weaken
+  these rules
+
+Within `agir selon`, `-> propager` is permitted only on branches composed
+exclusively of `Échec` patterns. `-> ignorer` is permitted only on result
+variant branches.
+
+For a propagating branch containing typed failure patterns, compatibility is
+checked against the union of errors selected by that branch. This permits a
+concrete error to be selected from open `Erreur`, while the remaining open set
+still requires an untyped failure catch-all or `sinon`.
+
+### Results cannot be silently discarded
+
+The return value of a function whose resolved return type is
+`Résultat[T,E]` cannot be discarded. It must be matched, returned, passed,
+stored, bound and subsequently consumed, propagated, or explicitly consumed
+by `ignorer`.
+
+```lumiere
+ignorer Fichier.supprimer(chemin_temporaire)
+```
+
+`ignorer` is statement syntax followed directly by an expression. It is not a
+function call; `ignorer(expression)` is rejected.
+
+Leaving a result binding unused, overwriting it first, or writing a bare
+result-returning call as a source-file statement is a semantic error. The
+interactive REPL displays a final result expression, so that display consumes
+it.
+
+### Type aliases
+
+Aliases are transparent, module-level type declarations:
+
+```lumiere
+public type ErreurChargement = ErreurFichier | ErreurSyntaxe
+type Chargement = Résultat[Configuration, ErreurChargement]
+```
+
+Aliases may be forward-referenced and imported. Cycles, value-position use,
+generic application of an alias name, nested alias declarations, and type-name
+collisions are errors. All result, union, propagation, and non-discard rules
+operate on the fully expanded type.
+
+## 10. Functions
 
 ### Named functions
 
@@ -403,33 +526,7 @@ Current behavior:
 - `remplace` is runtime-validated against the parent class
 - `réalise` checks that required interface methods exist
 
-## 11. Exceptions
-
-Lumiere currently throws ordinary runtime values. In practice, many examples catch `Texte`.
-
-```lumiere
-essayer {
-  afficher(notes[99])
-} attraper (e: Texte) {
-  afficher(e.contient("indice hors limites"))
-} finalement {
-  afficher("fin")
-}
-```
-
-Also supported:
-
-```lumiere
-lancer "erreur"
-```
-
-Behavior:
-
-- there may be multiple `attraper` clauses
-- `finalement` always runs
-- uncaught errors print a traceback with source locations
-
-## 12. Modules and imports
+## 11. Modules and imports
 
 ### Importing full modules
 
@@ -466,19 +563,17 @@ Built-in modules currently registered:
 - `LumiNet`
 - `LumiTest`
 
-## 13. Built-in I/O functions
+## 12. Built-in I/O functions
 
 ### Output
 
 - `afficher(...)`
-- `afficher_inline(...)`
 
 Behavior:
 
 - accepts positional arguments only
 - prints arguments separated by spaces
-- `afficher` adds a newline
-- `afficher_inline` does not
+- adds a newline
 
 ### Input
 
@@ -493,7 +588,7 @@ Behavior:
 - all input builtins reject arguments
 - `lire_logique` accepts only `vrai` or `faux`
 
-## 14. Built-in collection methods
+## 13. Built-in collection methods
 
 ### `Liste`
 
@@ -532,7 +627,7 @@ Notes:
 
 `Ensemble[T]` is a recognized type and is supported in runtime values, but this repository currently documents less surface behavior for it than for lists and dictionaries. Treat it as implemented but less mature.
 
-## 15. `Texte` methods and module
+## 14. `Texte` methods and module
 
 ### Methods on text values
 
@@ -588,7 +683,7 @@ Important current behavior:
 - `separer` rejects an empty separator
 - `remplacer` and `remplacer_tout` currently share the same replace-all behavior
 
-## 16. `Maths`
+## 15. `Maths`
 
 ### Constants
 
@@ -640,7 +735,7 @@ afficher(max(3, 9))
 afficher(puissance(2, 3))
 ```
 
-## 17. `Chemin`
+## 16. `Chemin`
 
 Exports:
 
@@ -659,7 +754,7 @@ Exports:
 
 This module is lexical and path-oriented, not filesystem-state-aware.
 
-## 18. `Fichier`
+## 17. `Fichier`
 
 Exports:
 
@@ -682,7 +777,7 @@ Exports:
 - `Fichier.supprimer_dossier(chemin)`
 - `Fichier.supprimer_arbre(chemin)`
 
-## 19. `Temps`
+## 18. `Temps`
 
 ### Module functions
 
@@ -729,7 +824,7 @@ Formatting tokens currently implemented:
 - `ss`
 - `SSS`
 
-## 20. `Aléatoire`
+## 19. `Aléatoire`
 
 Exports:
 
@@ -747,7 +842,7 @@ Notes:
 - `mélanger` mutates and returns the same list
 - `Aleatoire` is also accepted as a module name alias
 
-## 21. `LumiNet`
+## 20. `LumiNet`
 
 `LumiNet` is the built-in networking umbrella module.
 
@@ -848,7 +943,7 @@ Canal-related object methods include:
 
 This module is substantial but still evolving. For the exact implementation split, see [docs/stdlib-luminet.md](./docs/stdlib-luminet.md).
 
-## 22. `LumiTest`
+## 21. `LumiTest`
 
 `LumiTest` is the built-in testing module used by the `lumiere tester` CLI.
 
@@ -881,7 +976,7 @@ LumiTest.groupe("Maths", fonction() {
 
 See [docs/lumitest-spec.md](./docs/lumitest-spec.md) for the fuller runner model.
 
-## 23. Current limitations and sharp edges
+## 22. Current limitations and sharp edges
 
 - The interpreter is runtime-checked rather than statically compiled.
 - Text indexing and slicing are currently byte-oriented, not full Unicode-scalar aware.
@@ -891,7 +986,7 @@ See [docs/lumitest-spec.md](./docs/lumitest-spec.md) for the fuller runner model
 - `remplacer` and `remplacer_tout` currently behave the same.
 - Some library surfaces accept accented and unaccented variants only in specific places, not uniformly.
 
-## 24. Practical reading order
+## 23. Practical reading order
 
 If you are learning the language from this repository, read next:
 

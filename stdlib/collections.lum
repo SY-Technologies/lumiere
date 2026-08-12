@@ -1,0 +1,111 @@
+/** Méthodes communes à toute séquence ordonnée (Liste et ListeFixe). */
+classe Liste
+{
+    /** Retourne le nombre d'éléments de la séquence. */
+    fonction taille() -> Entier
+    {
+    }
+
+    /** Retourne vrai si la séquence ne contient aucun élément. */
+    fonction vide() -> Logique
+    {
+    }
+
+    /** Retourne vrai si la séquence contient la valeur donnée. */
+    fonction contient(valeur : Universel) -> Logique
+    {
+    }
+
+    /** Assemble la représentation de tous les éléments en un seul texte, séparés par séparateur. */
+    fonction joindre(séparateur : Texte) -> Texte
+    {
+    }
+
+    /** Ajoute un élément à la fin de la liste et retourne la nouvelle longueur. */
+    fonction ajouter(élément : Universel) -> Entier
+    {
+    }
+
+    /** Insère un élément à l'indice donné et retourne cet indice. */
+    fonction inserer(position : Entier, valeur : Universel) -> Entier
+    {
+    }
+
+    /** Retire l'élément à l'indice donné et le retourne. */
+    fonction retirer_a(position : Entier) -> Universel
+    {
+    }
+
+    /** Convertit la liste en une ListeFixe de taille exacte (échoue si la taille diffère). */
+    fonction en_liste_fixe(longueur : Entier) -> ListeFixe
+    {
+    }
+}
+
+/** Séquence ordonnée de taille fixe, cohérent avec son type statique. */
+classe ListeFixe
+{
+    /** Retourne le nombre d'éléments de la séquence. */
+    fonction taille() -> Entier
+    {
+    }
+
+    /** Retourne vrai si la séquence ne contient aucun élément. */
+    fonction vide() -> Logique
+    {
+    }
+
+    /** Retourne vrai si la séquence contient la valeur donnée. */
+    fonction contient(valeur : Universel) -> Logique
+    {
+    }
+
+    /** Assemble la représentation de tous les éléments en un seul texte, séparés par séparateur. */
+    fonction joindre(séparateur : Texte) -> Texte
+    {
+    }
+
+    /** Convertit la séquence en une Liste dynamique redimensionnable. */
+    fonction en_liste() -> Liste
+    {
+    }
+}
+
+/** Table d'association ordonnée reliant des clés à des valeurs. */
+classe Dictionnaire
+{
+    /** Retourne le nombre de paires clé-valeur du dictionnaire. */
+    fonction taille() -> Entier
+    {
+    }
+
+    /** Retourne vrai si le dictionnaire ne contient aucune paire. */
+    fonction vide() -> Logique
+    {
+    }
+
+    /** Retourne vrai si le dictionnaire contient la clé donnée. */
+    fonction contient(clé : Universel) -> Logique
+    {
+    }
+
+    /** Retourne la liste des clés du dictionnaire. */
+    fonction clés() -> Liste
+    {
+    }
+
+    /** Retourne la liste des valeurs du dictionnaire. */
+    fonction valeurs() -> Liste
+    {
+    }
+
+    /** Retourne la liste des paires clé-valeur, chaque paire étant une liste fixe de deux éléments. */
+    fonction paires() -> Liste
+    {
+    }
+
+    /** Retire et retourne la valeur associée à la clé ; échoue si la clé est absente. */
+    fonction retirer(clé : Universel) -> Universel
+    {
+    }
+}

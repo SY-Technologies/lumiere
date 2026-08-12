@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lumiere/lexer/token.hpp"
+#include "lumiere/parser/type_expr.hpp"
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,7 +28,8 @@ namespace lumiere
     struct Parameter
     {
         std::string name;
-        Token type_token; // the type name token such as "Entier", "Texte",etc
+        Token name_token;
+        TypeExpr type;
         ExprPtr default_value;
     };
 
@@ -48,6 +50,7 @@ namespace lumiere
     struct ListExpr;
     struct MemberAccessExpr;
     struct IndexAccessExpr;
+    struct PropagationExpr;
 
     // Statements
     struct BlockStmt;
@@ -55,6 +58,7 @@ namespace lumiere
     struct FunctionDeclStmt;
     struct ClassDeclStmt;
     struct InterfaceDeclStmt;
+    struct TypeAliasDeclStmt;
     struct ImportStmt;
     struct IfStmt;
     struct ForStmt;
@@ -62,9 +66,8 @@ namespace lumiere
     struct ReturnStmt;
     struct BreakStmt;
     struct ContinueStmt;
-    struct ThrowStmt;
-    struct TryStmt;
     struct ExprStmt;
+    struct IgnorerStmt;
     struct AgirSelonStmt;
 
     // Visitors 
@@ -84,6 +87,8 @@ namespace lumiere
         virtual void visit(ListExpr &) = 0;
         virtual void visit(MemberAccessExpr &) = 0;
         virtual void visit(IndexAccessExpr &) = 0;
+        virtual void visit(PropagationExpr &) = 0;
+        virtual void visit(AgirSelonStmt &) = 0;
     };
 
     struct StmtVisitor
@@ -94,6 +99,7 @@ namespace lumiere
         virtual void visit(FunctionDeclStmt &) = 0;
         virtual void visit(ClassDeclStmt &) = 0;
         virtual void visit(InterfaceDeclStmt &) = 0;
+        virtual void visit(TypeAliasDeclStmt &) = 0;
         virtual void visit(ImportStmt &) = 0;
         virtual void visit(IfStmt &) = 0;
         virtual void visit(ForStmt &) = 0;
@@ -101,9 +107,8 @@ namespace lumiere
         virtual void visit(ReturnStmt &) = 0;
         virtual void visit(BreakStmt &) = 0;
         virtual void visit(ContinueStmt &) = 0;
-        virtual void visit(ThrowStmt &) = 0;
-        virtual void visit(TryStmt &) = 0;
         virtual void visit(ExprStmt &) = 0;
+        virtual void visit(IgnorerStmt &) = 0;
         virtual void visit(AgirSelonStmt &) = 0;
     };
 
@@ -186,9 +191,9 @@ namespace lumiere
     struct CastExpr : Expr
     {
         ExprPtr operand;
-        Token target_type; // the type name token e.g. "Entier"
+        TypeExpr target_type;
 
-        CastExpr(ExprPtr operand, Token target_type)
+        CastExpr(ExprPtr operand, TypeExpr target_type)
             : operand(std::move(operand)), target_type(std::move(target_type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
@@ -198,10 +203,10 @@ namespace lumiere
     {
         ExprPtr operand;
         Token keyword;
-        Token type_token;
+        TypeExpr type;
 
-        TypeCheckExpr(ExprPtr operand, Token keyword, Token type_token)
-            : operand(std::move(operand)), keyword(std::move(keyword)), type_token(std::move(type_token)) {}
+        TypeCheckExpr(ExprPtr operand, Token keyword, TypeExpr type)
+            : operand(std::move(operand)), keyword(std::move(keyword)), type(std::move(type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
     };
@@ -210,10 +215,10 @@ namespace lumiere
     {
         Token keyword;
         std::vector<Parameter> params;
-        Token return_type;
+        TypeExpr return_type;
         StmtPtr body;
 
-        FunctionExpr(Token keyword, std::vector<Parameter> params, Token return_type, StmtPtr body)
+        FunctionExpr(Token keyword, std::vector<Parameter> params, TypeExpr return_type, StmtPtr body)
             : keyword(std::move(keyword)),
               params(std::move(params)),
               return_type(std::move(return_type)),
@@ -268,6 +273,17 @@ namespace lumiere
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
     };
+    struct PropagationExpr : Expr
+    {
+        Token keyword; // the 'propager' keyword
+        ExprPtr operand;
+
+        PropagationExpr(Token keyword, ExprPtr operand)
+            : keyword(std::move(keyword)), operand(std::move(operand)) {}
+
+        void accept(ExprVisitor &v) override { v.visit(*this); }
+    };
+
     // Statement nodes 
 
     struct ExprStmt : Stmt
@@ -276,6 +292,17 @@ namespace lumiere
 
         explicit ExprStmt(ExprPtr expr)
             : expr(std::move(expr)) {}
+
+        void accept(StmtVisitor &v) override { v.visit(*this); }
+    };
+
+    struct IgnorerStmt : Stmt
+    {
+        Token keyword;
+        ExprPtr expr;
+
+        IgnorerStmt(Token keyword, ExprPtr expr)
+            : keyword(std::move(keyword)), expr(std::move(expr)) {}
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
     };
@@ -293,14 +320,15 @@ namespace lumiere
     struct VarDeclStmt : Stmt
     {
         Token name;
-        Token type_token; // empty lexeme if no annotation
+        TypeExpr type;
         bool is_fixe;
         bool is_prive;
         bool is_public;
         ExprPtr initializer; // nullptr if no initializer
+        std::string documentation;
 
-        VarDeclStmt(Token name, Token type_token, bool is_fixe, bool is_prive, bool is_public, ExprPtr initializer)
-            : name(std::move(name)), type_token(std::move(type_token)), is_fixe(is_fixe), is_prive(is_prive), is_public(is_public), initializer(std::move(initializer)) {}
+        VarDeclStmt(Token name, TypeExpr type, bool is_fixe, bool is_prive, bool is_public, ExprPtr initializer)
+            : name(std::move(name)), type(std::move(type)), is_fixe(is_fixe), is_prive(is_prive), is_public(is_public), initializer(std::move(initializer)) {}
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
     };
@@ -309,14 +337,15 @@ namespace lumiere
     {
         Token name;
         std::vector<Parameter> params;
-        Token return_type;
+        TypeExpr return_type;
         StmtPtr body;
         bool is_prive;
         bool is_public;
         bool is_remplace;
+        std::string documentation;
 
         FunctionDeclStmt(Token name, std::vector<Parameter> params,
-                         Token return_type, StmtPtr body,
+                         TypeExpr return_type, StmtPtr body,
                          bool is_prive, bool is_public, bool is_remplace)
             : name(std::move(name)), params(std::move(params)), return_type(std::move(return_type)), body(std::move(body)), is_prive(is_prive), is_public(is_public), is_remplace(is_remplace) {}
 
@@ -326,13 +355,14 @@ namespace lumiere
     struct ClassDeclStmt : Stmt
     {
         Token name;
-        Token parent;                  // empty lexeme if no parent
+        TypeExpr parent;
         bool is_public;
-        std::vector<Token> interfaces; // réalise A, B, C
+        std::vector<TypeExpr> interfaces;
         std::vector<StmtPtr> members;  // VarDeclStmt and FunctionDeclStmt
+        std::string documentation;
 
-        ClassDeclStmt(Token name, Token parent, bool is_public,
-                      std::vector<Token> interfaces, std::vector<StmtPtr> members)
+        ClassDeclStmt(Token name, TypeExpr parent, bool is_public,
+                      std::vector<TypeExpr> interfaces, std::vector<StmtPtr> members)
             : name(std::move(name)), parent(std::move(parent)), is_public(is_public), interfaces(std::move(interfaces)), members(std::move(members)) {}
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
@@ -343,9 +373,25 @@ namespace lumiere
         Token name;
         bool is_public;
         std::vector<StmtPtr> methods; // FunctionDeclStmt with no body
+        std::string documentation;
 
         InterfaceDeclStmt(Token name, bool is_public, std::vector<StmtPtr> methods)
             : name(std::move(name)), is_public(is_public), methods(std::move(methods)) {}
+
+        void accept(StmtVisitor &v) override { v.visit(*this); }
+    };
+
+    struct TypeAliasDeclStmt : Stmt
+    {
+        Token name;
+        TypeExpr target;
+        bool is_public;
+        std::string documentation;
+
+        TypeAliasDeclStmt(Token name, TypeExpr target, bool is_public)
+            : name(std::move(name)),
+              target(std::move(target)),
+              is_public(is_public) {}
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
     };
@@ -437,32 +483,13 @@ namespace lumiere
         void accept(StmtVisitor &v) override { v.visit(*this); }
     };
 
-    struct ThrowStmt : Stmt
-    {
-        Token keyword;
-        ExprPtr value;
-
-        ThrowStmt(Token keyword, ExprPtr value)
-            : keyword(std::move(keyword)), value(std::move(value)) {}
-
-        void accept(StmtVisitor &v) override { v.visit(*this); }
-    };
-
-    struct CatchClause
-    {
-        Token variable;   // the caught error variable e.g. "e"
-        Token type_token; // the error type e.g. "ErreurSolde"
-        StmtPtr body;     // always a BlockStmt
-
-        CatchClause(Token variable, Token type_token, StmtPtr body)
-            : variable(std::move(variable)), type_token(std::move(type_token)), body(std::move(body)) {}
-    };
-
     enum class PatternKind
     {
         LITERAL,
         TYPE_BINDING,
         RIEN,
+        RESULT_SUCCESS,
+        RESULT_FAILURE,
     };
 
     struct Pattern
@@ -470,37 +497,59 @@ namespace lumiere
         PatternKind kind;
         ExprPtr literal;
         Token name;
-        Token type_token;
+        TypeExpr type;
 
         explicit Pattern(ExprPtr literal)
             : kind(PatternKind::LITERAL),
               literal(std::move(literal)),
               name(TokenType::RIEN, "", 0, 0),
-              type_token(TokenType::RIEN, "", 0, 0) {}
+              type(),
+              constructor(TokenType::RIEN, "", 0, 0) {}
 
-        Pattern(Token name, Token type_token)
+        Pattern(Token name, TypeExpr type)
             : kind(PatternKind::TYPE_BINDING),
               literal(nullptr),
               name(std::move(name)),
-              type_token(std::move(type_token)) {}
+              type(std::move(type)),
+              constructor(TokenType::RIEN, "", 0, 0) {}
 
         explicit Pattern(Token rien_token)
             : kind(PatternKind::RIEN),
               literal(nullptr),
               name(std::move(rien_token)),
-              type_token(TokenType::RIEN, "", 0, 0) {}
+              type(),
+              constructor(TokenType::RIEN, "", 0, 0) {}
+
+        Pattern(PatternKind kind, Token constructor, Token binding, TypeExpr type)
+            : kind(kind),
+              literal(nullptr),
+              name(std::move(binding)),
+              type(std::move(type)),
+              constructor(std::move(constructor)) {}
+
+        Token constructor;
+    };
+
+    enum class BranchTerminator
+    {
+        NONE,
+        PROPAGER,
+        IGNORER,
     };
 
     struct AgirSelonBranch
     {
         std::vector<Pattern> patterns;
         StmtPtr body;
+        BranchTerminator terminator;
+        Token terminator_token;
 
         AgirSelonBranch(std::vector<Pattern> patterns, StmtPtr body)
-            : patterns(std::move(patterns)), body(std::move(body)) {}
+            : patterns(std::move(patterns)), body(std::move(body)),
+              terminator(BranchTerminator::NONE), terminator_token(TokenType::RIEN, "", 0, 0) {}
     };
 
-    struct AgirSelonStmt : Stmt
+    struct AgirSelonStmt : Stmt, Expr
     {
         Token keyword;
         ExprPtr expression;
@@ -516,18 +565,7 @@ namespace lumiere
               else_branch(std::move(else_branch)) {}
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
-    };
-
-    struct TryStmt : Stmt
-    {
-        StmtPtr body; // always a BlockStmt
-        std::vector<CatchClause> catch_clauses;
-        StmtPtr finally_body; // nullptr if no finalement
-
-        TryStmt(StmtPtr body, std::vector<CatchClause> catch_clauses, StmtPtr finally_body)
-            : body(std::move(body)), catch_clauses(std::move(catch_clauses)), finally_body(std::move(finally_body)) {}
-
-        void accept(StmtVisitor &v) override { v.visit(*this); }
+        void accept(ExprVisitor &v) override { v.visit(*this); }
     };
 
 } // namespace lumiere

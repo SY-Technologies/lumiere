@@ -19,10 +19,65 @@ namespace lumiere
 namespace
 {
 
+using TypeAliasTable = std::unordered_map<std::string, const TypeExpr *>;
+
+std::string runtime_type_name(const TypeExpr &type,
+                              const TypeAliasTable &aliases,
+                              std::unordered_set<std::string> resolving = {})
+{
+    if (type.empty() || type.kind == TypeExprKind::INTEGER_ARGUMENT)
+    {
+        return type.to_string();
+    }
+    if (type.kind == TypeExprKind::NAMED)
+    {
+        const auto alias = aliases.find(type.name);
+        if (alias == aliases.end())
+        {
+            return type.name;
+        }
+        if (!resolving.insert(type.name).second)
+        {
+            throw VmCompileError("VM: cycle d'alias de type impliquant '" +
+                                 type.name + "'");
+        }
+        return runtime_type_name(*alias->second, aliases, std::move(resolving));
+    }
+    if (type.kind == TypeExprKind::UNION)
+    {
+        std::string result;
+        for (const TypeExpr &child : type.children)
+        {
+            if (!result.empty())
+            {
+                result += " | ";
+            }
+            result += runtime_type_name(child, aliases, resolving);
+        }
+        return result;
+    }
+
+    std::string result = type.name + '[';
+    for (std::size_t i = 0; i < type.children.size(); ++i)
+    {
+        if (i > 0)
+        {
+            result += ',';
+        }
+        result += runtime_type_name(type.children[i], aliases, resolving);
+    }
+    return result + ']';
+}
+
 // Maps source tokens into LIR source coordinates.
 LirSourceLocation lir_loc(const Token &token)
 {
     return LirSourceLocation{token.line, token.column};
+}
+
+LirSourceLocation lir_loc(const TypeExpr &type)
+{
+    return lir_loc(type.source);
 }
 
 std::string token_label(const Token &token)
@@ -87,24 +142,29 @@ public:
                     LirFunction &function,
                     const FunctionTable &functions,
                     const std::vector<Parameter> &params,
-                    const Token &return_type,
+                    const TypeExpr &return_type,
                     FunctionLowerer *parent = nullptr,
                     const GlobalTypeTable *global_types = nullptr,
                     const std::unordered_set<std::string> *fixed_globals = nullptr,
                     bool module_scope = false,
                     std::size_t parameter_offset = 0,
-                    const ResolvedVmImports *imports = nullptr)
+                    const ResolvedVmImports *imports = nullptr,
+                    const TypeAliasTable *type_aliases = nullptr)
         : m_module(module),
           m_function(function),
           m_functions(functions),
-          m_return_type(return_type.lexeme),
+          m_return_type(type_aliases == nullptr
+                            ? return_type.to_string()
+                            : runtime_type_name(return_type, *type_aliases)),
           m_parent(parent),
           m_global_types(global_types),
           m_fixed_globals(fixed_globals),
           m_module_scope(module_scope),
           m_parameter_offset(parameter_offset),
-          m_imports(imports)
+          m_imports(imports),
+          m_type_aliases(type_aliases)
     {
+        m_function.return_type = m_return_type;
         m_current_block = m_function.append_block().index;
         m_function.entry_block = m_current_block;
 
@@ -115,7 +175,9 @@ public:
         }
         for (std::size_t i = 0; i < params.size(); ++i)
         {
-            m_local_types.emplace(i + m_parameter_offset, params[i].type_token.lexeme);
+            m_local_types.emplace(
+                i + m_parameter_offset,
+                type_name(params[i].type));
         }
     }
 
@@ -384,14 +446,14 @@ public:
     }
     void visit(CastExpr &expr) override
     {
-        const std::size_t type_index = m_module.add_type(expr.target_type.lexeme);
+        const std::size_t type_index = m_module.add_type(type_name(expr.target_type));
         m_last_value = emit_value(LirOpcode::IR_OP_CAST,
                                   {lower_expr(*expr.operand), LirOperand::type(type_index)},
                                   lir_loc(expr.target_type));
     }
     void visit(TypeCheckExpr &expr) override
     {
-        const std::size_t type_index = m_module.add_type(expr.type_token.lexeme);
+        const std::size_t type_index = m_module.add_type(type_name(expr.type));
         m_last_value = emit_value(LirOpcode::IR_OP_TYPE_CHECK,
                                   {lower_expr(*expr.operand), LirOperand::type(type_index)},
                                   lir_loc(expr.keyword));
@@ -438,6 +500,20 @@ public:
                                   lir_loc(expr.bracket));
     }
 
+    void visit(PropagationExpr &expr) override
+    {
+        m_last_value = emit_value(LirOpcode::IR_OP_PROPAGATE,
+                                  {lower_expr(*expr.operand)},
+                                  lir_loc(expr.keyword));
+    }
+
+    void visit(IgnorerStmt &stmt) override
+    {
+        const LirOperand value = lower_expr(*stmt.expr);
+        emit_effect(LirOpcode::IR_OP_IGNORE_RESULT,
+                    {value},
+                    lir_loc(stmt.keyword));
+    }
 
     void visit(CallExpr &expr) override
     {
@@ -636,11 +712,6 @@ public:
         const LirOperand checked = m_return_type.empty()
                                        ? value
                                        : assert_type(value, m_return_type, lir_loc(stmt.keyword));
-        emit_finally_cleanups(0);
-        if (current_block().is_terminated())
-        {
-            return;
-        }
         m_function.set_terminator(
             m_current_block,
             LirTerminator::return_value(checked, lir_loc(stmt.keyword)));
@@ -651,9 +722,9 @@ public:
         if (m_module_scope)
         {
             LirOperand value = stmt.initializer ? lower_expr(*stmt.initializer) : constant_nil(stmt.name);
-            if (!stmt.type_token.lexeme.empty())
+            if (!stmt.type.empty())
             {
-                value = assert_type(value, stmt.type_token.lexeme, lir_loc(stmt.name));
+                value = assert_type(value, type_name(stmt.type), lir_loc(stmt.name));
             }
             emit_effect(LirOpcode::IR_OP_STORE_GLOBAL,
                         {LirOperand::global(m_module.add_global(stmt.name.lexeme)), value},
@@ -672,10 +743,10 @@ public:
         LirOperand initial_value = stmt.initializer
             ? lower_expr(*stmt.initializer)
             : constant_nil(stmt.name);
-        if (!stmt.type_token.lexeme.empty())
+        if (!stmt.type.empty())
         {
-            m_local_types.emplace(local_index, stmt.type_token.lexeme);
-            initial_value = assert_type(initial_value, stmt.type_token.lexeme, lir_loc(stmt.name));
+            m_local_types.emplace(local_index, type_name(stmt.type));
+            initial_value = assert_type(initial_value, type_name(stmt.type), lir_loc(stmt.name));
         }
         if (stmt.is_fixe)
         {
@@ -733,17 +804,17 @@ public:
 
         LirClassDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
-        descriptor.parent = stmt.parent.lexeme;
-        for (const Token &interface : stmt.interfaces)
+        descriptor.parent = type_name(stmt.parent);
+        for (const TypeExpr &interface : stmt.interfaces)
         {
-            descriptor.interfaces.push_back(interface.lexeme);
+            descriptor.interfaces.push_back(type_name(interface));
         }
         for (auto &member : stmt.members)
         {
             if (auto *field = dynamic_cast<VarDeclStmt *>(member.get()))
             {
                 descriptor.fields.push_back({field->name.lexeme,
-                                             field->type_token.lexeme,
+                                             type_name(field->type),
                                              field->is_prive,
                                              field->is_fixe});
             }
@@ -794,10 +865,10 @@ public:
             }
             LirInterfaceMethodDescriptor signature;
             signature.name = method->name.lexeme;
-            signature.return_type = method->return_type.lexeme;
+            signature.return_type = type_name(method->return_type);
             for (const Parameter &parameter : method->params)
             {
-                signature.parameter_types.push_back(parameter.type_token.lexeme);
+                signature.parameter_types.push_back(type_name(parameter.type));
             }
             descriptor.methods.push_back(std::move(signature));
         }
@@ -813,6 +884,10 @@ public:
         emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                     {LirOperand::local(local), value},
                     lir_loc(stmt.name));
+    }
+    void visit(TypeAliasDeclStmt &) override
+    {
+        // Type aliases are erased before lowering.
     }
     void visit(ImportStmt &stmt) override
     {
@@ -971,7 +1046,7 @@ public:
         begin_scope();
         m_function.locals.push_back({item_local, stmt.variable.lexeme});
         declare_binding(stmt.variable.lexeme, item_local);
-        m_loop_stack.push_back({increment_block, exit_block, m_finally_stack.size()});
+        m_loop_stack.push_back({increment_block, exit_block});
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
         leave_scope();
@@ -1017,7 +1092,7 @@ public:
                                                         lir_loc(Token{TokenType::TANT_QUE, "tant que", 0, 0})));
 
         m_current_block = body_block;
-        m_loop_stack.push_back({condition_block, exit_block, m_finally_stack.size()});
+        m_loop_stack.push_back({condition_block, exit_block});
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
         if (!current_block().is_terminated())
@@ -1034,11 +1109,6 @@ public:
             throw VmCompileError("VM: 'arreter' hors d'une boucle");
         }
 
-        emit_finally_cleanups(m_loop_stack.back().finally_depth);
-        if (current_block().is_terminated())
-        {
-            return;
-        }
         m_function.set_terminator(m_current_block,
                                   LirTerminator::jump(m_loop_stack.back().break_block, lir_loc(stmt.keyword)));
     }
@@ -1049,112 +1119,19 @@ public:
             throw VmCompileError("VM: 'continuer' hors d'une boucle");
         }
 
-        emit_finally_cleanups(m_loop_stack.back().finally_depth);
-        if (current_block().is_terminated())
-        {
-            return;
-        }
         m_function.set_terminator(m_current_block,
                                   LirTerminator::jump(m_loop_stack.back().continue_block, lir_loc(stmt.keyword)));
-    }
-    void visit(ThrowStmt &stmt) override
-    {
-        const LirOperand value = lower_expr(*stmt.value);
-        std::size_t cleanup_depth = m_finally_stack.size();
-        while (cleanup_depth > 0 && !m_finally_stack[cleanup_depth - 1].handler_active)
-        {
-            --cleanup_depth;
-        }
-        emit_finally_cleanups(cleanup_depth);
-        if (current_block().is_terminated())
-        {
-            return;
-        }
-        emit_effect(LirOpcode::IR_OP_THROW, {value}, lir_loc(stmt.keyword));
-        m_function.set_terminator(m_current_block, LirTerminator::return_nil(lir_loc(stmt.keyword)));
-    }
-
-    void visit(TryStmt &stmt) override
-    {
-        const LirSourceLocation source {};
-        const std::size_t handler_block = m_function.append_block().index;
-        const std::size_t merge_block = m_function.append_block().index;
-        const std::size_t thrown_local = allocate_hidden_local("$exception");
-
-        emit_effect(LirOpcode::IR_OP_TRY_BEGIN, {LirOperand::block(handler_block)}, source);
-        m_finally_stack.push_back({stmt.finally_body.get(), true});
-        stmt.body->accept(*this);
-        m_finally_stack.pop_back();
-        if (!current_block().is_terminated())
-        {
-            emit_effect(LirOpcode::IR_OP_TRY_END, {}, source);
-            lower_finally(stmt.finally_body.get());
-            if (!current_block().is_terminated())
-            {
-                m_function.set_terminator(m_current_block, LirTerminator::jump(merge_block));
-            }
-        }
-
-        m_current_block = handler_block;
-        const LirOperand thrown = emit_value(LirOpcode::IR_OP_EXCEPTION_VALUE, {}, source);
-        emit_effect(LirOpcode::IR_OP_STORE_LOCAL, {LirOperand::local(thrown_local), thrown}, source);
-        m_finally_stack.push_back({stmt.finally_body.get(), false});
-
-        for (CatchClause &clause : stmt.catch_clauses)
-        {
-            const std::size_t catch_block = m_function.append_block().index;
-            const std::size_t next_clause = m_function.append_block().index;
-            const LirOperand candidate = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
-                                                    {LirOperand::local(thrown_local)},
-                                                    lir_loc(clause.variable));
-            const std::size_t type_index = m_module.add_type(clause.type_token.lexeme);
-            const LirOperand matches = emit_value(LirOpcode::IR_OP_TYPE_CHECK,
-                                                  {candidate, LirOperand::type(type_index)},
-                                                  lir_loc(clause.type_token));
-            m_function.set_terminator(m_current_block,
-                                      LirTerminator::branch(matches, catch_block, next_clause));
-
-            m_current_block = catch_block;
-            begin_scope();
-            const std::size_t catch_local = m_next_local_index++;
-            m_function.locals.push_back({catch_local, clause.variable.lexeme});
-            declare_binding(clause.variable.lexeme, catch_local);
-            const LirOperand caught = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
-                                                 {LirOperand::local(thrown_local)},
-                                                 lir_loc(clause.variable));
-            emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
-                        {LirOperand::local(catch_local), caught},
-                        lir_loc(clause.variable));
-            clause.body->accept(*this);
-            leave_scope();
-            if (!current_block().is_terminated())
-            {
-                lower_finally(stmt.finally_body.get());
-                if (!current_block().is_terminated())
-                {
-                    m_function.set_terminator(m_current_block, LirTerminator::jump(merge_block));
-                }
-            }
-            m_current_block = next_clause;
-        }
-
-        const LirOperand unmatched = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
-                                                {LirOperand::local(thrown_local)}, source);
-        lower_finally(stmt.finally_body.get());
-        if (!current_block().is_terminated())
-        {
-            emit_effect(LirOpcode::IR_OP_THROW, {unmatched}, source);
-            m_function.set_terminator(m_current_block, LirTerminator::return_nil(source));
-        }
-        m_finally_stack.pop_back();
-        m_current_block = merge_block;
     }
     void visit(AgirSelonStmt &stmt) override
     {
         const std::size_t matched_local = allocate_hidden_local("$match");
+        const std::size_t result_local = allocate_hidden_local("$match_result");
         const LirOperand matched_value = lower_expr(*stmt.expression);
         emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                     {LirOperand::local(matched_local), matched_value},
+                    lir_loc(stmt.keyword));
+        emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
+                    {LirOperand::local(result_local), constant_nil(stmt.keyword)},
                     lir_loc(stmt.keyword));
 
         const std::size_t exit_block = m_function.append_block().index;
@@ -1179,16 +1156,42 @@ public:
                     break;
                 case PatternKind::TYPE_BINDING:
                 {
-                    const std::size_t type_index = m_module.add_type(pattern.type_token.lexeme);
+                    const std::size_t type_index = m_module.add_type(type_name(pattern.type));
                     condition = emit_value(LirOpcode::IR_OP_TYPE_CHECK,
                                            {candidate, LirOperand::type(type_index)},
-                                           lir_loc(pattern.type_token));
+                                           lir_loc(pattern.type));
                     break;
                 }
                 case PatternKind::RIEN:
                     condition = emit_value(LirOpcode::IR_OP_EQUAL,
                                            {candidate, constant_nil(pattern.name)},
                                            lir_loc(pattern.name));
+                    break;
+                case PatternKind::RESULT_SUCCESS:
+                    condition = emit_value(LirOpcode::IR_OP_RESULT_IS_SUCCESS,
+                                           {candidate},
+                                           lir_loc(pattern.constructor));
+                    break;
+                case PatternKind::RESULT_FAILURE:
+                    if (!pattern.type.empty())
+                    {
+                        const std::size_t type_index =
+                            m_module.add_type(type_name(pattern.type));
+                        condition = emit_value(
+                            LirOpcode::IR_OP_RESULT_FAILURE_TYPE,
+                            {candidate, LirOperand::type(type_index)},
+                            lir_loc(pattern.constructor));
+                    }
+                    else
+                    {
+                        const LirOperand success = emit_value(
+                            LirOpcode::IR_OP_RESULT_IS_SUCCESS,
+                            {candidate},
+                            lir_loc(pattern.constructor));
+                        condition = emit_value(LirOpcode::IR_OP_NOT,
+                                               {success},
+                                               lir_loc(pattern.constructor));
+                    }
                     break;
                 }
 
@@ -1200,20 +1203,74 @@ public:
 
                 m_current_block = body_block;
                 begin_scope();
-                if (pattern.kind == PatternKind::TYPE_BINDING)
+                if (pattern.kind == PatternKind::TYPE_BINDING ||
+                    ((pattern.kind == PatternKind::RESULT_SUCCESS ||
+                      pattern.kind == PatternKind::RESULT_FAILURE) &&
+                     pattern.name.lexeme != "_"))
                 {
                     const std::size_t binding_local = m_next_local_index++;
                     m_function.locals.push_back({binding_local, pattern.name.lexeme});
                     declare_binding(pattern.name.lexeme, binding_local);
-                    const LirOperand binding_value = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
-                                                               {LirOperand::local(matched_local)},
-                                                               lir_loc(pattern.name));
+                    LirOperand binding_value = emit_value(
+                        LirOpcode::IR_OP_LOAD_LOCAL,
+                        {LirOperand::local(matched_local)},
+                        lir_loc(pattern.name));
+                    if (pattern.kind == PatternKind::RESULT_SUCCESS ||
+                        pattern.kind == PatternKind::RESULT_FAILURE)
+                    {
+                        binding_value = emit_value(
+                            LirOpcode::IR_OP_RESULT_PAYLOAD,
+                            {binding_value},
+                            lir_loc(pattern.name));
+                    }
                     emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                                 {LirOperand::local(binding_local), binding_value},
                                 lir_loc(pattern.name));
                 }
-                branch.body->accept(*this);
-                leave_scope();
+                if (branch.terminator == BranchTerminator::PROPAGER)
+                {
+                    leave_scope();
+                    LirOperand matched = emit_value(
+                        LirOpcode::IR_OP_LOAD_LOCAL,
+                        {LirOperand::local(matched_local)},
+                        lir_loc(stmt.keyword));
+                    if (!m_return_type.empty())
+                    {
+                        matched = assert_type(
+                            matched,
+                            m_return_type,
+                            lir_loc(branch.terminator_token));
+                    }
+                    m_function.set_terminator(m_current_block,
+                                              LirTerminator::return_value(
+                                                  matched,
+                                                  lir_loc(branch.terminator_token)));
+                }
+                else if (branch.terminator == BranchTerminator::IGNORER)
+                {
+                    leave_scope();
+                    const LirOperand matched = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
+                                                          {LirOperand::local(matched_local)},
+                                                          lir_loc(stmt.keyword));
+                    emit_effect(LirOpcode::IR_OP_IGNORE_RESULT, {matched}, lir_loc(stmt.keyword));
+                    m_function.set_terminator(m_current_block,
+                                              LirTerminator::jump(exit_block, lir_loc(stmt.keyword)));
+                }
+                else
+                {
+                    if (auto *expression = dynamic_cast<ExprStmt *>(branch.body.get()))
+                    {
+                        const LirOperand value = lower_expr(*expression->expr);
+                        emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
+                                    {LirOperand::local(result_local), value},
+                                    lir_loc(stmt.keyword));
+                    }
+                    else
+                    {
+                        branch.body->accept(*this);
+                    }
+                    leave_scope();
+                }
                 if (!current_block().is_terminated())
                 {
                     m_function.set_terminator(m_current_block,
@@ -1226,7 +1283,17 @@ public:
 
         if (stmt.else_branch)
         {
-            stmt.else_branch->accept(*this);
+            if (auto *expression = dynamic_cast<ExprStmt *>(stmt.else_branch.get()))
+            {
+                const LirOperand value = lower_expr(*expression->expr);
+                emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
+                            {LirOperand::local(result_local), value},
+                            lir_loc(stmt.keyword));
+            }
+            else
+            {
+                stmt.else_branch->accept(*this);
+            }
             if (!current_block().is_terminated())
             {
                 m_function.set_terminator(m_current_block,
@@ -1240,6 +1307,9 @@ public:
         }
 
         m_current_block = exit_block;
+        m_last_value = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
+                                  {LirOperand::local(result_local)},
+                                  lir_loc(stmt.keyword));
     }
 
 private:
@@ -1247,13 +1317,6 @@ private:
     {
         std::size_t continue_block = 0;
         std::size_t break_block = 0;
-        std::size_t finally_depth = 0;
-    };
-
-    struct FinallyContext
-    {
-        Stmt *body = nullptr;
-        bool handler_active = false;
     };
 
     struct BindingSource
@@ -1273,6 +1336,7 @@ private:
     bool m_module_scope = false;
     std::size_t m_parameter_offset = 0;
     const ResolvedVmImports *m_imports = nullptr;
+    const TypeAliasTable *m_type_aliases = nullptr;
     LirOperand m_last_value = LirOperand::temp(0);
     std::size_t m_next_temp = 0;
     std::size_t m_current_block = 0;
@@ -1283,7 +1347,6 @@ private:
     std::unordered_set<std::size_t> m_fixed_locals;
     std::unordered_map<std::string, BindingSource> m_captures_by_name;
     std::vector<LoopContext> m_loop_stack;
-    std::vector<FinallyContext> m_finally_stack;
     std::vector<std::vector<std::string>> m_scope_stack;
 
     [[nodiscard]] LirBlock &current_block()
@@ -1309,13 +1372,15 @@ private:
                                               ClassDeclStmt &stmt)
     {
         std::vector<LirOperand> operands{LirOperand::klass(descriptor_index)};
-        if (!stmt.parent.lexeme.empty())
+        if (!stmt.parent.empty())
         {
-            operands.push_back(load_named_value(stmt.parent));
+            operands.push_back(load_named_value(stmt.parent.as_token()));
         }
-        for (const Token &interface : stmt.interfaces)
+        for (const TypeExpr &interface : stmt.interfaces)
         {
-            operands.push_back(load_named_value(interface));
+            Token resolved = interface.as_token();
+            resolved.lexeme = type_name(interface);
+            operands.push_back(load_named_value(resolved));
         }
         return emit_value(LirOpcode::IR_OP_CLASS, std::move(operands), lir_loc(stmt.name));
     }
@@ -1353,58 +1418,25 @@ private:
                                 m_fixed_globals,
                                 false,
                                 1,
-                                m_imports);
+                                m_imports,
+                                m_type_aliases);
         lowerer.lower(*method.body, method.params);
 
         LirMethodDescriptor descriptor;
         descriptor.name = method.name.lexeme;
         descriptor.function_index = function_index;
-        descriptor.return_type = method.return_type.lexeme;
+        descriptor.return_type = type_name(method.return_type);
         descriptor.is_private = method.is_prive;
         descriptor.is_override = method.is_remplace;
         for (const Parameter &parameter : method.params)
         {
-            descriptor.parameter_types.push_back(parameter.type_token.lexeme);
+            descriptor.parameter_types.push_back(type_name(parameter.type));
         }
         for (const LirCapture &capture : function.captures)
         {
             descriptor.capture_sources.push_back(capture.source);
         }
         return descriptor;
-    }
-
-    void lower_finally(Stmt *body)
-    {
-        if (!body)
-        {
-            return;
-        }
-        const std::vector<FinallyContext> saved = m_finally_stack;
-        if (!m_finally_stack.empty())
-        {
-            m_finally_stack.pop_back();
-        }
-        body->accept(*this);
-        m_finally_stack = saved;
-    }
-
-    void emit_finally_cleanups(const std::size_t depth)
-    {
-        const std::vector<FinallyContext> saved = m_finally_stack;
-        while (m_finally_stack.size() > depth && !current_block().is_terminated())
-        {
-            const FinallyContext context = m_finally_stack.back();
-            m_finally_stack.pop_back();
-            if (context.handler_active)
-            {
-                emit_effect(LirOpcode::IR_OP_TRY_END, {}, {});
-            }
-            if (context.body)
-            {
-                context.body->accept(*this);
-            }
-        }
-        m_finally_stack = saved;
     }
 
     // Temps are kept explicit in LIR so intermediate values remain visible
@@ -1445,20 +1477,20 @@ private:
             const std::size_t ready_block = m_function.append_block().index;
             const LirOperand provided = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
                                                    {LirOperand::local(flag_index++)},
-                                                   lir_loc(param.type_token));
+                                                   lir_loc(param.type));
             m_function.set_terminator(m_current_block,
                                       LirTerminator::branch(provided,
                                                             ready_block,
                                                             default_block,
-                                                            lir_loc(param.type_token)));
+                                                            lir_loc(param.type)));
 
             m_current_block = default_block;
             const LirOperand default_value = lower_expr(*param.default_value);
             emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                         {LirOperand::local(param_index + m_parameter_offset), default_value},
-                        lir_loc(param.type_token));
+                        lir_loc(param.type));
             m_function.set_terminator(m_current_block,
-                                      LirTerminator::jump(ready_block, lir_loc(param.type_token)));
+                                      LirTerminator::jump(ready_block, lir_loc(param.type)));
             m_current_block = ready_block;
         }
     }
@@ -1469,11 +1501,11 @@ private:
         {
             const LirOperand value = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
                                                 {LirOperand::local(i + m_parameter_offset)},
-                                                lir_loc(params[i].type_token));
+                                                lir_loc(params[i].type));
             const LirOperand checked = assert_type(value,
-                                                   params[i].type_token.lexeme,
-                                                   lir_loc(params[i].type_token));
-            emit_effect(LirOpcode::IR_OP_DISCARD, {checked}, lir_loc(params[i].type_token));
+                                                   type_name(params[i].type),
+                                                   lir_loc(params[i].type));
+            emit_effect(LirOpcode::IR_OP_DISCARD, {checked}, lir_loc(params[i].type));
         }
     }
 
@@ -1589,7 +1621,7 @@ private:
 
     [[nodiscard]] LirOperand lower_closure(const std::string &name,
                                            const std::vector<Parameter> &params,
-                                           const Token &return_type,
+                                           const TypeExpr &return_type,
                                            Stmt &body,
                                            const LirSourceLocation source)
     {
@@ -1622,7 +1654,8 @@ private:
                                 m_fixed_globals,
                                 false,
                                 0,
-                                m_imports);
+                                m_imports,
+                                m_type_aliases);
         lowerer.lower(body, params);
 
         std::vector<LirOperand> operands{LirOperand::function(function_index)};
@@ -1735,6 +1768,13 @@ private:
         expr.accept(*this);
         return m_last_value;
     }
+
+    [[nodiscard]] std::string type_name(const TypeExpr &type) const
+    {
+        return m_type_aliases == nullptr
+                   ? type.to_string()
+                   : runtime_type_name(type, *m_type_aliases);
+    }
 };
 
 } // namespace
@@ -1745,6 +1785,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
     module.name = program.source_path.empty() ? "__module__" : program.source_path;
     FunctionLowerer::FunctionTable functions;
     FunctionLowerer::GlobalTypeTable global_types;
+    TypeAliasTable type_aliases;
     std::unordered_set<std::string> fixed_globals;
     struct FunctionWork
     {
@@ -1757,6 +1798,19 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
 
     for (auto &statement : program.statements)
     {
+        if (auto *alias =
+                dynamic_cast<TypeAliasDeclStmt *>(statement.get()))
+        {
+            type_aliases.emplace(alias->name.lexeme, &alias->target);
+        }
+    }
+
+    for (auto &statement : program.statements)
+    {
+        if (dynamic_cast<TypeAliasDeclStmt *>(statement.get()) != nullptr)
+        {
+            continue;
+        }
         if (dynamic_cast<ImportStmt *>(statement.get()) != nullptr)
         {
             continue;
@@ -1799,10 +1853,12 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                 }
                 LirInterfaceMethodDescriptor signature;
                 signature.name = method->name.lexeme;
-                signature.return_type = method->return_type.lexeme;
+                signature.return_type =
+                    runtime_type_name(method->return_type, type_aliases);
                 for (const Parameter &parameter : method->params)
                 {
-                    signature.parameter_types.push_back(parameter.type_token.lexeme);
+                    signature.parameter_types.push_back(
+                        runtime_type_name(parameter.type, type_aliases));
                 }
                 descriptor.methods.push_back(std::move(signature));
             }
@@ -1817,17 +1873,19 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             LirClassDescriptor descriptor;
             descriptor.name = klass->name.lexeme;
-            descriptor.parent = klass->parent.lexeme;
-            for (const Token &interface : klass->interfaces)
+            descriptor.parent = runtime_type_name(klass->parent, type_aliases);
+            for (const TypeExpr &interface : klass->interfaces)
             {
-                descriptor.interfaces.push_back(interface.lexeme);
+                descriptor.interfaces.push_back(
+                    runtime_type_name(interface, type_aliases));
             }
             for (auto &member : klass->members)
             {
                 if (auto *field = dynamic_cast<VarDeclStmt *>(member.get()))
                 {
                     descriptor.fields.push_back({field->name.lexeme,
-                                                 field->type_token.lexeme,
+                                                 runtime_type_name(field->type,
+                                                                   type_aliases),
                                                  field->is_prive,
                                                  field->is_fixe});
                 }
@@ -1837,12 +1895,14 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                     LirMethodDescriptor method_descriptor;
                     method_descriptor.name = method->name.lexeme;
                     method_descriptor.function_index = method_index;
-                    method_descriptor.return_type = method->return_type.lexeme;
+                    method_descriptor.return_type =
+                        runtime_type_name(method->return_type, type_aliases);
                     method_descriptor.is_private = method->is_prive;
                     method_descriptor.is_override = method->is_remplace;
                     for (const Parameter &parameter : method->params)
                     {
-                        method_descriptor.parameter_types.push_back(parameter.type_token.lexeme);
+                        method_descriptor.parameter_types.push_back(
+                            runtime_type_name(parameter.type, type_aliases));
                     }
                     descriptor.methods.push_back(std::move(method_descriptor));
                     functions_to_lower.push_back({method, method_index, true});
@@ -1860,7 +1920,9 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
 
         if (auto *variable = dynamic_cast<VarDeclStmt *>(statement.get()))
         {
-            if (!global_types.emplace(variable->name.lexeme, variable->type_token.lexeme).second)
+            if (!global_types.emplace(
+                    variable->name.lexeme,
+                    runtime_type_name(variable->type, type_aliases)).second)
             {
                 throw VmCompileError("VM: variable globale dupliquee '" + variable->name.lexeme + "'");
             }
@@ -1910,7 +1972,8 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 &fixed_globals,
                                 false,
                                 parameter_offset,
-                                &imports);
+                                &imports,
+                                &type_aliases);
         lowerer.lower(*function->body, function->params);
     }
 
@@ -1923,13 +1986,14 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 initializer,
                                 functions,
                                 {},
-                                Token{TokenType::RIEN, "", 0, 0},
+                                TypeExpr{},
                                 nullptr,
                                 &global_types,
                                 &fixed_globals,
                                 true,
                                 0,
-                                &imports);
+                                &imports,
+                                &type_aliases);
         lowerer.lower_module_statements(initializer_statements);
         module.initializer_functions.push_back(module.functions.size() - 1);
     }

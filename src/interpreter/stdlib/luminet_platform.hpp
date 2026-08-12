@@ -57,6 +57,7 @@ SocketSize platform_socket_recvfrom(SocketHandle handle,
                                     socklen_t *addrlen);
 bool platform_socket_set_timeout(SocketHandle handle, int64_t timeout_ms);
 void platform_socket_enable_reuse_address(SocketHandle handle);
+void platform_socket_enable_nosigpipe(SocketHandle handle);
 bool platform_socket_enable_broadcast(SocketHandle handle);
 void platform_socket_shutdown(SocketHandle handle);
 

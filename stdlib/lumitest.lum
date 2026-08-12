@@ -1,0 +1,59 @@
+/** Déclare un test avec une description, dont le corps doit réussir sans lancer. */
+fonction test(description : Texte, corps : Universel) -> Rien
+{
+}
+
+/** Regroupe plusieurs tests sous un nom commun pour l'affichage. */
+fonction groupe(nom : Texte, corps : Universel) -> Rien
+{
+}
+
+/** Exécute le corps une fois avant tous les tests du groupe. */
+fonction avant_tout(corps : Universel) -> Rien
+{
+}
+
+/** Exécute le corps avant chaque test du groupe. */
+fonction avant_chaque(corps : Universel) -> Rien
+{
+}
+
+/** Exécute le corps après chaque test du groupe. */
+fonction après_chaque(corps : Universel) -> Rien
+{
+}
+
+/** Exécute le corps après tous les tests du groupe. */
+fonction après_tout(corps : Universel) -> Rien
+{
+}
+
+/** Fait échouer le test si la condition est fausse. */
+fonction vérifier(condition : Logique) -> Rien
+{
+}
+
+/** Échoue le test si attendu et obtenu diffèrent. */
+fonction vérifier_égal(attendu : Universel, obtenu : Universel) -> Rien
+{
+}
+
+/** Échoue le test si a et b sont égaux. */
+fonction vérifier_différent(a : Universel, b : Universel) -> Rien
+{
+}
+
+/** Échoue le test si le corps suivant ne lance pas une erreur. */
+fonction vérifier_lance() -> Rien
+{
+}
+
+/** Échoue le test si la collection ne contient pas l'élément. */
+fonction vérifier_contient(collection : Universel, élément : Universel) -> Rien
+{
+}
+
+/** Échoue le test si deux décimales ne sont pas approchées à une petite tolérance. */
+fonction vérifier_approx(attendu : Décimal, obtenu : Décimal) -> Rien
+{
+}

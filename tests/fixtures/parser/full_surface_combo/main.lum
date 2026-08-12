@@ -14,16 +14,10 @@ classe Chien : Animal réalise Presentable {
   privé secret: Texte
 
   remplace fonction presenter() {
-    essayer {
-      agir selon ici.nom {
-        "Rex" -> afficher("chien-roi")
-        nom: Texte -> afficher(nom.majuscules())
-        sinon -> afficher("inconnu")
-      }
-    } attraper (e: Texte) {
-      afficher(e)
-    } finalement {
-      afficher("fin")
+    agir selon ici.nom {
+      "Rex" -> afficher("chien-roi")
+      nom: Texte -> afficher(nom.majuscules())
+      sinon -> afficher("inconnu")
     }
   }
 }

@@ -47,10 +47,13 @@ namespace lumiere
                                                                     const std::string &second_label,
                                                                     const RuntimeSite &call_site);
 
-    void stdlib_throw_filesystem_failure(IRuntime &runtime,
-                                         const RuntimeSite &call_site,
-                                         const std::string &signature,
-                                         const std::string &message);
+    Value stdlib_error_value(
+        std::string type_name,
+        std::string operation,
+        std::string cause,
+        std::string path = {});
+    Value stdlib_success(Value payload);
+    Value stdlib_failure(Value error, const RuntimeSite &origin);
 
     void stdlib_bind_public_value(Module &module, const std::string &name, const Value &value);
     void stdlib_bind_public_function(Module &module,

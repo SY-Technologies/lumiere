@@ -46,7 +46,7 @@ void validate_block_target(const LirOperand &operand)
 {
     if (operand.kind != LirOperandKind::IR_OPERAND_BLOCK)
     {
-        throw std::logic_error("LIR: block terminators must target blocks");
+        throw std::logic_error("LIR: les terminateurs de bloc doivent cibler des blocs");
     }
 }
 
@@ -169,7 +169,7 @@ LirInstruction &LirFunction::append_instruction(const std::size_t block_index,
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: cannot append instruction after terminator");
+        throw std::logic_error("LIR: impossible d'ajouter une instruction apres un terminateur");
     }
 
     target_block.instructions.push_back(std::move(instruction));
@@ -181,7 +181,7 @@ void LirFunction::set_terminator(const std::size_t block_index, LirTerminator te
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: block already has a terminator");
+        throw std::logic_error("LIR: le bloc possède déjà un terminateur");
     }
 
     if (terminator_value.kind == LirTerminatorKind::IR_TERM_JUMP)
@@ -408,14 +408,6 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_STORE_CAPTURE";
     case LirOpcode::IR_OP_CLOSURE:
         return "IR_OP_CLOSURE";
-    case LirOpcode::IR_OP_TRY_BEGIN:
-        return "IR_OP_TRY_BEGIN";
-    case LirOpcode::IR_OP_TRY_END:
-        return "IR_OP_TRY_END";
-    case LirOpcode::IR_OP_EXCEPTION_VALUE:
-        return "IR_OP_EXCEPTION_VALUE";
-    case LirOpcode::IR_OP_THROW:
-        return "IR_OP_THROW";
     case LirOpcode::IR_OP_LIST:
         return "IR_OP_LIST";
     case LirOpcode::IR_OP_DICTIONARY:
@@ -434,11 +426,21 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_ASSERT_TYPE";
     case LirOpcode::IR_OP_MATCH_ERROR:
         return "IR_OP_MATCH_ERROR";
+    case LirOpcode::IR_OP_RESULT_IS_SUCCESS:
+        return "IR_OP_RESULT_IS_SUCCESS";
+    case LirOpcode::IR_OP_RESULT_FAILURE_TYPE:
+        return "IR_OP_RESULT_FAILURE_TYPE";
+    case LirOpcode::IR_OP_RESULT_PAYLOAD:
+        return "IR_OP_RESULT_PAYLOAD";
     case LirOpcode::IR_OP_DISCARD:
         return "IR_OP_DISCARD";
+    case LirOpcode::IR_OP_PROPAGATE:
+        return "IR_OP_PROPAGATE";
+    case LirOpcode::IR_OP_IGNORE_RESULT:
+        return "IR_OP_IGNORE_RESULT";
     }
 
-    throw std::logic_error("LIR: unknown opcode");
+    throw std::logic_error("LIR: opcode inconnu");
 }
 
 std::string to_string(const LirInstruction &instruction)
@@ -450,10 +452,8 @@ std::string to_string(const LirInstruction &instruction)
         instruction.opcode == LirOpcode::IR_OP_INIT_GLOBAL ||
         instruction.opcode == LirOpcode::IR_OP_SET_MEMBER ||
         instruction.opcode == LirOpcode::IR_OP_MATCH_ERROR ||
-        instruction.opcode == LirOpcode::IR_OP_TRY_BEGIN ||
-        instruction.opcode == LirOpcode::IR_OP_TRY_END ||
-        instruction.opcode == LirOpcode::IR_OP_THROW ||
-        instruction.opcode == LirOpcode::IR_OP_DISCARD)
+        instruction.opcode == LirOpcode::IR_OP_DISCARD ||
+        instruction.opcode == LirOpcode::IR_OP_IGNORE_RESULT)
     {
         out << to_string(instruction.opcode);
         if (!instruction.operands.empty())

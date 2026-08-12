@@ -26,6 +26,17 @@ void register_luminet_module(Module &module)
     stdlib_bind_public_value(module, "UDP", root->fields["UDP"]);
     stdlib_bind_public_value(module, "DNS", root->fields["DNS"]);
     stdlib_bind_public_value(module, "Adresse", root->fields["Adresse"]);
+    for (const char *name :
+         {"ErreurAdresse", "ErreurDNS", "ErreurConnexion",
+          "ErreurDélai", "ErreurIO", "ErreurProtocole", "ErreurHTTP"})
+    {
+        auto error_class = std::make_shared<LumiereClass>();
+        error_class->name = "LumiNet." + std::string(name);
+        stdlib_bind_public_value(
+            module,
+            name,
+            Value::classe(std::move(error_class)));
+    }
 #else
     stdlib_bind_public_function(
         module,

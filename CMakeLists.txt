@@ -22,6 +22,9 @@ option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABL
 set(LUMIERE_LIBRARY_SOURCES
     src/analysis/analysis.cpp
     src/analysis/inspection.cpp
+    src/analysis/native_signatures.cpp
+    src/analysis/semantic_analysis.cpp
+    src/analysis/semantic_type.cpp
     src/diagnostics/diagnostic.cpp
     src/lexer/lexer.cpp
     src/lexer/token.cpp
@@ -94,6 +97,12 @@ if(WIN32)
 endif()
 
 # -----------------------------
+# Embedded stdlib documentation
+# -----------------------------
+
+include(cmake/EmbedStdlibDocs.cmake)
+
+# -----------------------------
 # Library target
 # -----------------------------
 
@@ -117,6 +126,7 @@ target_include_directories(lumiere
         ${PROJECT_SOURCE_DIR}/src/parser
         ${PROJECT_SOURCE_DIR}/src/interpreter/tree_walker
         ${PROJECT_SOURCE_DIR}/src/interpreter
+        ${STDLIB_DOC_GEN_DIR}
 )
 
 if(LUMIERE_ENABLE_WARNINGS)
@@ -213,6 +223,7 @@ if(BUILD_TESTING)
         tests/test_interpreter_fixtures.cpp
         tests/test_cli_integration.cpp
         tests/test_vm_lir.cpp
+        tests/test_no_legacy_exceptions.cpp
         tests/test_windows_header_compatibility.cpp
     )
 
@@ -259,7 +270,13 @@ if(BUILD_TESTING)
         target_compile_definitions(lumiere_unit_tests
             PRIVATE
                 LUMIERE_CLI_PATH="$<TARGET_FILE:lumiere_cli>"
+                LUMIERE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
                 LUMIERE_VERSION="${PROJECT_VERSION}"
+        )
+
+        target_include_directories(lumiere_unit_tests
+            PRIVATE
+                ${PROJECT_SOURCE_DIR}/src/interpreter/stdlib
         )
 
         target_link_libraries(lumiere_unit_tests

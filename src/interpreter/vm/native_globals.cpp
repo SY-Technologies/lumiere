@@ -1,5 +1,6 @@
 #include "native_globals.hpp"
 
+#include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "vm_error.hpp"
 
 #include <cctype>
@@ -11,6 +12,18 @@ namespace lumiere
 {
 namespace
 {
+
+Value input_failure(
+    const std::string &operation,
+    std::string cause)
+{
+    return Value::resultat(
+        false,
+        stdlib_error_value(
+            "ErreurEntrée",
+            operation,
+            std::move(cause)));
+}
 
 Value afficher(const std::vector<Value> &args)
 {
@@ -26,19 +39,6 @@ Value afficher(const std::vector<Value> &args)
     return Value::rien();
 }
 
-Value afficher_inline(const std::vector<Value> &args)
-{
-    for (std::size_t i = 0; i < args.size(); ++i)
-    {
-        if (i > 0)
-        {
-            std::cout << ' ';
-        }
-        std::cout << args[i].to_string();
-    }
-    return Value::rien();
-}
-
 void require_no_args(const std::vector<Value> &args, const std::string &name)
 {
     if (!args.empty())
@@ -51,15 +51,25 @@ Value lire(const std::vector<Value> &args)
 {
     require_no_args(args, "lire");
     std::string line;
-    std::getline(std::cin, line);
-    return Value::texte(std::move(line));
+    if (!std::getline(std::cin, line))
+    {
+        return input_failure("lire", "fin de l'entrée");
+    }
+    return Value::resultat(
+        true,
+        Value::texte(std::move(line)));
 }
 
 Value lire_entier(const std::vector<Value> &args)
 {
     require_no_args(args, "lire_entier");
     std::string line;
-    std::getline(std::cin, line);
+    if (!std::getline(std::cin, line))
+    {
+        return input_failure(
+            "lire_entier",
+            "fin de l'entrée");
+    }
     try
     {
         std::size_t parsed = 0;
@@ -70,13 +80,17 @@ Value lire_entier(const std::vector<Value> &args)
         }
         if (parsed != line.size())
         {
-            throw std::invalid_argument("trailing input");
+            throw std::invalid_argument("caractères restants");
         }
-        return Value::entier(value);
+        return Value::resultat(
+            true,
+            Value::entier(value));
     }
     catch (...)
     {
-        throw VmRuntimeError("VM: lire_entier requiert une entree numerique valide");
+        return input_failure(
+            "lire_entier",
+            "entier invalide: " + line);
     }
 }
 
@@ -84,7 +98,12 @@ Value lire_decimal(const std::vector<Value> &args)
 {
     require_no_args(args, "lire_decimal");
     std::string line;
-    std::getline(std::cin, line);
+    if (!std::getline(std::cin, line))
+    {
+        return input_failure(
+            "lire_décimal",
+            "fin de l'entrée");
+    }
     try
     {
         std::size_t parsed = 0;
@@ -95,13 +114,17 @@ Value lire_decimal(const std::vector<Value> &args)
         }
         if (parsed != line.size())
         {
-            throw std::invalid_argument("trailing input");
+            throw std::invalid_argument("caractères restants");
         }
-        return Value::decimal(value);
+        return Value::resultat(
+            true,
+            Value::decimal(value));
     }
     catch (...)
     {
-        throw VmRuntimeError("VM: lire_decimal requiert une entree numerique valide");
+        return input_failure(
+            "lire_décimal",
+            "décimal invalide: " + line);
     }
 }
 
@@ -109,16 +132,27 @@ Value lire_logique(const std::vector<Value> &args)
 {
     require_no_args(args, "lire_logique");
     std::string line;
-    std::getline(std::cin, line);
+    if (!std::getline(std::cin, line))
+    {
+        return input_failure(
+            "lire_logique",
+            "fin de l'entrée");
+    }
     if (line == "vrai")
     {
-        return Value::logique(true);
+        return Value::resultat(
+            true,
+            Value::logique(true));
     }
     if (line == "faux")
     {
-        return Value::logique(false);
+        return Value::resultat(
+            true,
+            Value::logique(false));
     }
-    throw VmRuntimeError("VM: lire_logique requiert 'vrai' ou 'faux'");
+    return input_failure(
+        "lire_logique",
+        "logique invalide: " + line);
 }
 
 Value type_de(const std::vector<Value> &args)
@@ -142,19 +176,38 @@ Value type_de(const std::vector<Value> &args)
     return Value::texte(args[0].type_name());
 }
 
+Value succes(const std::vector<Value> &args)
+{
+    if (args.size() != 1)
+    {
+        throw VmRuntimeError("VM: Succès requiert exactement 1 argument");
+    }
+    return Value::resultat(true, args.front());
+}
+
+Value echec(const std::vector<Value> &args)
+{
+    if (args.size() != 1)
+    {
+        throw VmRuntimeError("VM: Échec requiert exactement 1 argument");
+    }
+    return Value::resultat(false, args.front());
+}
+
 } // namespace
 
 std::unordered_map<std::string, NativeFunction> native_globals()
 {
     return {
         {"afficher", &afficher},
-        {"afficher_inline", &afficher_inline},
         {"lire", &lire},
         {"lire_entier", &lire_entier},
         {"lire_décimal", &lire_decimal},
         {"lire_decimal", &lire_decimal},
         {"lire_logique", &lire_logique},
         {"type_de", &type_de},
+        {"Succès", &succes},
+        {"Échec", &echec},
     };
 }
 

@@ -16,6 +16,12 @@ namespace lumiere
         module->name = module_name;
         auto state = std::make_shared<TreeWalkerModuleState>();
         state->environment = std::make_shared<Environment>();
+        auto error_interface =
+            std::make_shared<LumiereInterface>();
+        error_interface->name = "Erreur";
+        state->environment->define_fixe(
+            "Erreur",
+            Value::interface(std::move(error_interface)));
         module->state = state;
 
         std::shared_ptr<LumiTestModuleState> lumitest_state;
@@ -92,6 +98,12 @@ namespace lumiere
         module->name = module_name;
         auto state = std::make_shared<TreeWalkerModuleState>();
         state->environment = std::make_shared<Environment>();
+        auto error_interface =
+            std::make_shared<LumiereInterface>();
+        error_interface->name = "Erreur";
+        state->environment->define_fixe(
+            "Erreur",
+            Value::interface(std::move(error_interface)));
         module->state = state;
 
         Environment *previous_env = m_env;
@@ -99,6 +111,8 @@ namespace lumiere
         const Value previous_self = m_self;
         const std::string previous_source_path = m_current_source_path;
         const std::string previous_source_text = m_current_source_text;
+        const auto previous_type_aliases = m_type_aliases;
+        m_type_aliases.clear();
 
         // Run module top-level code in its own environment so its declarations
         // do not leak directly into the importer's current scope.
@@ -149,6 +163,17 @@ namespace lumiere
                         module->public_members.insert(interface_decl->name.lexeme);
                     }
                 }
+                else if (auto *alias_decl =
+                             dynamic_cast<TypeAliasDeclStmt *>(statement.get()))
+                {
+                    module->type_aliases.insert_or_assign(
+                        alias_decl->name.lexeme, alias_decl->target);
+                    if (alias_decl->is_public)
+                    {
+                        module->public_type_aliases.insert(
+                            alias_decl->name.lexeme);
+                    }
+                }
             }
         }
         catch (...)
@@ -158,6 +183,7 @@ namespace lumiere
             m_self = previous_self;
             m_current_source_path = previous_source_path;
             m_current_source_text = previous_source_text;
+            m_type_aliases = previous_type_aliases;
             throw;
         }
 
@@ -166,6 +192,7 @@ namespace lumiere
         m_self = previous_self;
         m_current_source_path = previous_source_path;
         m_current_source_text = previous_source_text;
+        m_type_aliases = previous_type_aliases;
         return module;
     }
 

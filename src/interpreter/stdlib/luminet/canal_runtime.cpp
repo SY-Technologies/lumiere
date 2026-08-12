@@ -25,6 +25,9 @@ void run_canal_loop(IRuntime &runtime,
         }
     }
 
+    std::vector<unsigned char> fragment_buffer;
+    uint8_t fragment_opcode = 0;
+
     while (!state->closed)
     {
         std::optional<WebSocketFrame> frame;
@@ -55,6 +58,7 @@ void run_canal_loop(IRuntime &runtime,
 
         if (frame->opcode == 0x8)
         {
+            send_websocket_frame(runtime, state->fd, 0x8, frame->payload, state->client_side, "Canal.attendre", site);
             state->closed = true;
             break;
         }
@@ -68,9 +72,35 @@ void run_canal_loop(IRuntime &runtime,
             continue;
         }
 
-        if (frame->opcode == 0x1)
+        if (frame->opcode == 0x0)
         {
-            const std::string message(frame->payload.begin(), frame->payload.end());
+            fragment_buffer.insert(fragment_buffer.end(), frame->payload.begin(), frame->payload.end());
+        }
+        else
+        {
+            if (!fragment_buffer.empty())
+            {
+                fragment_buffer.clear();
+                fragment_opcode = 0;
+            }
+            fragment_opcode = frame->opcode;
+            fragment_buffer.insert(fragment_buffer.end(), frame->payload.begin(), frame->payload.end());
+        }
+
+        if (!frame->fin)
+        {
+            continue;
+        }
+
+        if (fragment_buffer.empty())
+        {
+            fragment_opcode = 0;
+            continue;
+        }
+
+        if (fragment_opcode == 0x1)
+        {
+            const std::string message(fragment_buffer.begin(), fragment_buffer.end());
             if (state->on_message.is_fonction())
             {
                 std::vector<RuntimeArgument> args = {RuntimeArgument{"", Value::texte(message)}};
@@ -81,6 +111,41 @@ void run_canal_loop(IRuntime &runtime,
                 std::vector<RuntimeArgument> args = {RuntimeArgument{"", client_value}, RuntimeArgument{"", Value::texte(message)}};
                 runtime.call(server_message_callback, NativeArgs{nullptr, &args, site});
             }
+            fragment_buffer.clear();
+        }
+        else if (fragment_opcode == 0x2)
+        {
+            if (state->on_message.is_fonction())
+            {
+                auto byte_list = std::make_shared<ListeData>();
+                byte_list->elements.reserve(fragment_buffer.size());
+                for (auto byte : fragment_buffer)
+                {
+                    byte_list->elements.push_back(Value::entier(static_cast<int64_t>(byte)));
+                }
+                Value octets = Value::liste(std::move(byte_list));
+                runtime.annotate_value(octets, "Liste[Entier]", site);
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", octets}};
+                runtime.call(state->on_message, NativeArgs{nullptr, &args, site});
+            }
+            if (server_dispatch_mode && server_message_callback.is_fonction())
+            {
+                auto byte_list = std::make_shared<ListeData>();
+                byte_list->elements.reserve(fragment_buffer.size());
+                for (auto byte : fragment_buffer)
+                {
+                    byte_list->elements.push_back(Value::entier(static_cast<int64_t>(byte)));
+                }
+                Value octets = Value::liste(std::move(byte_list));
+                runtime.annotate_value(octets, "Liste[Entier]", site);
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", client_value}, RuntimeArgument{"", octets}};
+                runtime.call(server_message_callback, NativeArgs{nullptr, &args, site});
+            }
+            fragment_buffer.clear();
+        }
+        else if (fragment_opcode != 0)
+        {
+            fragment_buffer.clear();
         }
     }
 
@@ -142,23 +207,28 @@ Value make_canal_client_value(IRuntime &runtime,
         });
     bind_object_method(object, make_native_function, "envoyer",
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "envoyer_canal", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 1, "CanalClient.envoyer", native_args.site);
             const std::string message = stdlib_expect_text(inner_runtime, args[0].value, "CanalClient.envoyer", native_args.site);
             std::vector<unsigned char> payload(message.begin(), message.end());
             send_websocket_frame(inner_runtime, state->fd, 0x1, payload, state->client_side, "CanalClient.envoyer", native_args.site);
             return Value::rien();
+            });
         });
     bind_object_method(object, make_native_function, "envoyer_octets",
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "envoyer_octets_canal", [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 1, "CanalClient.envoyer_octets", native_args.site);
             std::vector<unsigned char> payload = expect_byte_vector(inner_runtime, args[0].value, "CanalClient.envoyer_octets", native_args.site);
             send_websocket_frame(inner_runtime, state->fd, 0x2, payload, state->client_side, "CanalClient.envoyer_octets", native_args.site);
             return Value::rien();
+            });
         });
     bind_object_method(object, make_native_function, "fermer",
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "fermer_canal", [&]() -> Value {
             stdlib_expect_positional_range(inner_runtime, *native_args.arguments, 0, 2, "CanalClient.fermer", native_args.site);
             send_websocket_frame(inner_runtime, state->fd, 0x8, {}, state->client_side, "CanalClient.fermer", native_args.site);
             state->closed = true;
@@ -167,6 +237,7 @@ Value make_canal_client_value(IRuntime &runtime,
                 close_socket_fd(state->fd);
             }
             return Value::rien();
+            });
         });
     bind_object_method(object, make_native_function, "est_connecté",
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
@@ -175,9 +246,11 @@ Value make_canal_client_value(IRuntime &runtime,
         });
     bind_object_method(object, make_native_function, "attendre",
         [state, object_value = Value::objet(object)](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+            return network_result(native_args, "LumiNet.ErreurIO", "attendre_canal", [&]() -> Value {
             stdlib_expect_positional(inner_runtime, *native_args.arguments, 0, "CanalClient.attendre", native_args.site);
             run_canal_loop(inner_runtime, state, false, Value::rien(), Value::rien(), Value::rien(), object_value, native_args.site);
             return Value::rien();
+            });
         });
 
     Value result = Value::objet(std::move(object));
@@ -233,6 +306,11 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
     object->fields["arreter"] = Value::fonction(make_native_function(stop_handler));
     bind_object_method(object, make_native_function, "écouter",
         [state, make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurIO",
+                "écouter_canal",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 2, "ServeurCanal.écouter", native_args.site);
             const std::string host = stdlib_expect_text(runtime, args[0].value, "ServeurCanal.écouter", native_args.site);
@@ -263,6 +341,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                 {
                     continue;
                 }
+                platform_socket_enable_nosigpipe(listen_fd);
                 platform_socket_enable_reuse_address(listen_fd);
                 if (::bind(listen_fd, entry->ai_addr, entry->ai_addrlen) == 0 && ::listen(listen_fd, 16) == 0)
                 {
@@ -332,6 +411,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
 
                     auto client_state = std::make_shared<CanalClientState>();
                     client_state->fd = active_client_fd;
+                    active_client_fd = kInvalidSocketHandle;
                     client_state->client_side = false;
                     client_state->address = address_to_text(reinterpret_cast<sockaddr *>(&client_addr));
                     Value client = make_canal_client_value(runtime, client_state, make_native_function, native_args.site);
@@ -345,7 +425,6 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                     {
                         close_socket_fd(client_state->fd);
                     }
-                    active_client_fd = kInvalidSocketHandle;
                 }
                 catch (...)
                 {
@@ -359,6 +438,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                 close_socket_fd(state->fd);
             }
             return Value::rien();
+                });
         });
 
     return Value::objet(std::move(object));

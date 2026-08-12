@@ -80,10 +80,6 @@ In the end I just came back to `vrai` and `faux` and committed. They are clean, 
 | `continuer`  | Continue to next iteration             | `continue`              |
 | `importer`   | Import a module                        | `import / use`          |
 | `comme`      | Import alias                           | `as`                    |
-| `essayer`    | Try block                              | `try`                   |
-| `attraper`   | Catch block                            | `catch`                 |
-| `finalement` | Finally block                          | `finally`               |
-| `lancer`     | Throw an error                         | `throw`                 |
 
 # Lumière - Devlog #3: Designing the Syntax (Wednesday, June 10th)
 -------------

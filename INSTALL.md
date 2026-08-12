@@ -87,6 +87,79 @@ directory to your user `PATH` if `lumiere` is not found in a new terminal.
 lumiere --version
 ```
 
+## Upgrade Lumiere
+
+Use the same installation method that installed the current executable. Every
+upgrade replaces the existing Lumiere binary; source files and projects are not
+modified.
+
+### Installer Script
+
+Run the installer again without `--version` to install the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh | sh
+```
+
+Install a specific release when reproducibility matters:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.sh |
+  sh -s -- --version vVERSION
+```
+
+On Windows, rerun the PowerShell installer:
+
+```powershell
+irm https://raw.githubusercontent.com/SY-Technologies/lumiere/main/scripts/install.ps1 | iex
+```
+
+### Debian Package
+
+Download the newer `.deb` release asset and install the local file over the
+existing package:
+
+```bash
+sudo apt install ./lumiere-vVERSION-linux-x86_64.deb
+```
+
+### Windows MSI
+
+Download and run the newer MSI. Windows Installer upgrades the existing Lumiere
+installation. Open a new terminal after installation so it sees the updated
+executable.
+
+### Source Installation
+
+Fetch the release tags, select the desired release, rebuild, test, and install:
+
+```bash
+git fetch --tags
+git checkout vVERSION
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+sudo cmake --install build
+```
+
+Use `--parallel 1` on Raspberry Pi and other memory-constrained systems.
+
+### Verify The Upgrade
+
+Confirm the active executable and its version:
+
+```bash
+command -v lumiere
+lumiere --version
+```
+
+If the old version still appears, the machine may contain multiple installations.
+List every executable found on `PATH` and remove or reorder the obsolete entry:
+
+```bash
+which -a lumiere
+```
+
 ## Build From Source
 
 Building from source is the supported fallback for platforms without release

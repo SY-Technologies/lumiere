@@ -1,0 +1,89 @@
+/** Lit le contenu textuel complet d'un fichier. */
+fonction lire_texte(chemin : Texte) -> Résultat[Texte, ErreurFichier]
+{
+}
+
+/** Lit les lignes d'un fichier sous forme de liste de textes. */
+fonction lire_lignes(chemin : Texte) -> Résultat[Liste[Texte], ErreurFichier]
+{
+}
+
+/** Retourne la taille en octets d'un fichier. */
+fonction taille(chemin : Texte) -> Résultat[Entier, ErreurFichier]
+{
+}
+
+/** Retourne l'instant de dernière modification d'un fichier. */
+fonction modifie_le(chemin : Texte) -> Résultat[Texte, ErreurFichier]
+{
+}
+
+/** Écrit le contenu textuel dans un fichier (écrase l'existant). */
+fonction ecrire_texte(chemin : Texte, contenu : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Ajoute le contenu textuel à la fin d'un fichier existant. */
+fonction ajouter_texte(chemin : Texte, contenu : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Écrit une liste de lignes dans un fichier, une ligne par élément. */
+fonction ecrire_lignes(chemin : Texte, lignes : Liste[Texte]) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Retourne vrai si le chemin existe dans le système de fichiers. */
+fonction existe(chemin : Texte) -> Résultat[Logique, ErreurFichier]
+{
+}
+
+/** Retourne vrai si le chemin désigne un fichier régulier. */
+fonction est_fichier(chemin : Texte) -> Résultat[Logique, ErreurFichier]
+{
+}
+
+/** Retourne vrai si le chemin désigne un dossier. */
+fonction est_dossier(chemin : Texte) -> Résultat[Logique, ErreurFichier]
+{
+}
+
+/** Liste les entrées d'un dossier. */
+fonction lister(chemin : Texte) -> Résultat[Liste[Texte], ErreurFichier]
+{
+}
+
+/** Liste récursivement toutes les entrées sous un dossier. */
+fonction lister_recursif(chemin : Texte) -> Résultat[Liste[Texte], ErreurFichier]
+{
+}
+
+/** Crée les dossiers d'un chemin (de manière récursive si nécessaire). */
+fonction creer_dossiers(chemin : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Supprime un fichier. */
+fonction supprimer(chemin : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Supprime un dossier vide. */
+fonction supprimer_dossier(chemin : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Supprime un dossier et tout son contenu, de manière récursive. */
+fonction supprimer_arbre(chemin : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Copie un fichier d'une source vers une destination. */
+fonction copier(source : Texte, destination : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}
+
+/** Déplace un fichier d'une source vers une destination. */
+fonction deplacer(source : Texte, destination : Texte) -> Résultat[Rien, ErreurFichier]
+{
+}

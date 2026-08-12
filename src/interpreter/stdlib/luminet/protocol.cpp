@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -123,7 +124,9 @@ void send_all(IRuntime &runtime,
         }
         if (written == 0)
         {
-            runtime.raise_runtime_error(site, context + " a échoué: connexion fermée pendant l'envoi");
+            throw NetworkFailure(
+                context +
+                " a échoué: connexion fermée pendant l'envoi");
         }
         sent += static_cast<std::size_t>(written);
     }
@@ -208,8 +211,23 @@ bool header_contains_token(const std::vector<std::pair<std::string, std::string>
     const std::string lower_token = to_lower_ascii(token);
     const std::string value = to_lower_ascii(header_value_or_empty(headers, name));
     std::size_t start = 0;
+    bool in_quotes = false;
     while (start <= value.size())
     {
+        if (in_quotes)
+        {
+            const std::size_t quote = value.find('"', start);
+            if (quote != std::string::npos)
+            {
+                start = quote + 1;
+                in_quotes = false;
+            }
+            else
+            {
+                break;
+            }
+            continue;
+        }
         const std::size_t comma = value.find(',', start);
         const std::string piece = trim_ascii_copy(
             value.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
@@ -221,15 +239,22 @@ bool header_contains_token(const std::vector<std::pair<std::string, std::string>
         {
             break;
         }
+        const std::size_t next_quote = value.find('"', comma + 1);
+        if (next_quote != std::string::npos && next_quote < value.find(',', comma + 1))
+        {
+            in_quotes = true;
+            start = next_quote + 1;
+            continue;
+        }
         start = comma + 1;
     }
     return false;
 }
 
-int64_t parse_http_status_line(IRuntime &runtime,
+int64_t parse_http_status_line(IRuntime &,
                                const std::string &response_head,
                                const std::string &context,
-                               const RuntimeSite &site)
+                               const RuntimeSite &)
 {
     std::istringstream head_stream(response_head);
     std::string status_line;
@@ -245,7 +270,8 @@ int64_t parse_http_status_line(IRuntime &runtime,
     status_stream >> version >> status;
     if (version.rfind("HTTP/", 0) != 0 || status <= 0)
     {
-        runtime.raise_runtime_error(site, context + " a reçu une réponse HTTP invalide");
+        throw NetworkFailure(
+            context + " a reçu une réponse HTTP invalide");
     }
     return status;
 }
@@ -351,15 +377,16 @@ bool match_route_pattern(const std::string &pattern,
     return true;
 }
 
-HttpRequestData parse_http_request(IRuntime &runtime,
+HttpRequestData parse_http_request(IRuntime &,
                                    const std::string &raw,
                                    const std::string &context,
-                                   const RuntimeSite &site)
+                                   const RuntimeSite &)
 {
     const std::size_t header_end = raw.find("\r\n\r\n");
     if (header_end == std::string::npos)
     {
-        runtime.raise_runtime_error(site, context + " requiert une requête HTTP valide");
+        throw NetworkFailure(
+            context + " a reçu une requête HTTP invalide");
     }
 
     HttpRequestData request;
@@ -377,7 +404,8 @@ HttpRequestData parse_http_request(IRuntime &runtime,
     line_stream >> request.method >> target >> version;
     if (request.method.empty() || target.empty())
     {
-        runtime.raise_runtime_error(site, context + " requiert une requête HTTP valide");
+        throw NetworkFailure(
+            context + " a reçu une requête HTTP invalide");
     }
     request.french_method = french_http_method(request.method);
     const std::size_t qmark = target.find('?');
@@ -431,14 +459,16 @@ std::string recv_http_message(IRuntime &runtime,
         {
             if (required_size != std::string::npos && data.size() < required_size)
             {
-                runtime.raise_runtime_error(site, context + " a reçu un message HTTP tronqué");
+                throw NetworkFailure(
+                    context + " a reçu un message HTTP tronqué");
             }
             break;
         }
         data.append(buffer, buffer + received);
         if (header_end == std::string::npos && data.size() > kMaxHttpHeaderBytes)
         {
-            runtime.raise_runtime_error(site, context + " a reçu des en-têtes HTTP trop volumineux");
+            throw NetworkFailure(
+                context + " a reçu des en-têtes HTTP trop volumineux");
         }
 
         if (header_end == std::string::npos)
@@ -450,6 +480,7 @@ std::string recv_http_message(IRuntime &runtime,
                 const std::string lower = to_lower_ascii(headers);
                 const std::string key = "content-length:";
                 const std::size_t pos = lower.find(key);
+                bool has_content_length = false;
                 std::size_t content_length = 0;
                 if (pos != std::string::npos)
                 {
@@ -462,14 +493,39 @@ std::string recv_http_message(IRuntime &runtime,
                     }
                     catch (const std::exception &)
                     {
-                        runtime.raise_runtime_error(site, context + " a reçu un en-tête Content-Length invalide");
+                        throw NetworkFailure(
+                            context +
+                            " a reçu un en-tête Content-Length invalide");
                     }
+                    has_content_length = true;
                 }
-                if (content_length > kMaxHttpBodyBytes)
+                if (has_content_length)
                 {
-                    runtime.raise_runtime_error(site, context + " a reçu un corps HTTP trop volumineux");
+                    if (content_length > kMaxHttpBodyBytes)
+                    {
+                        throw NetworkFailure(
+                            context + " a reçu un corps HTTP trop volumineux");
+                    }
+                    required_size = header_end + 4 + content_length;
                 }
-                required_size = header_end + 4 + content_length;
+                else
+                {
+                    const std::string transfer_key = "transfer-encoding:";
+                    const std::size_t te_pos = lower.find(transfer_key);
+                    if (te_pos != std::string::npos)
+                    {
+                        const std::size_t te_end = headers.find("\r\n", te_pos);
+                        const std::string te_value = to_lower_ascii(trim_ascii_copy(headers.substr(
+                            te_pos + transfer_key.size(),
+                            te_end == std::string::npos ? std::string::npos : te_end - te_pos - transfer_key.size())));
+                        if (te_value == "chunked")
+                        {
+                            throw NetworkFailure(
+                                context + " ne prend pas en charge le transfert par tronçons (chunked)");
+                        }
+                    }
+                    required_size = header_end + 4;
+                }
             }
         }
 
@@ -532,7 +588,15 @@ bool send_websocket_frame(IRuntime &runtime,
         runtime.raise_runtime_error(site, context + " ne prend pas encore en charge des messages aussi grands");
     }
 
-    std::array<unsigned char, 4> masking_key{0x11, 0x22, 0x33, 0x44};
+    std::array<unsigned char, 4> masking_key{};
+    {
+        static thread_local std::random_device rd;
+        static thread_local std::mt19937 gen(rd());
+        for (auto &byte : masking_key)
+        {
+            byte = static_cast<unsigned char>(gen() & 0xff);
+        }
+    }
     std::vector<unsigned char> body = payload;
     if (mask)
     {
@@ -558,7 +622,8 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     {
         if (!recv_exact_bytes(fd, pending_bytes, header, sizeof(header)))
         {
-            runtime.raise_runtime_error(site, context + " a reçu une trame websocket incomplète");
+            throw NetworkFailure(
+                context + " a reçu une trame websocket incomplète");
         }
     }
     else
@@ -574,7 +639,8 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         }
         if (!recv_exact_bytes(fd, pending_bytes, header, sizeof(header)))
         {
-            runtime.raise_runtime_error(site, context + " a reçu une trame websocket incomplète");
+            throw NetworkFailure(
+                context + " a reçu une trame websocket incomplète");
         }
     }
 
@@ -591,7 +657,9 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     }
     else if (payload_length == 127)
     {
-        runtime.raise_runtime_error(site, context + " ne prend pas encore en charge des trames websocket 64 bits");
+        throw NetworkFailure(
+            context +
+            " ne prend pas en charge les trames websocket 64 bits");
     }
 
     std::array<unsigned char, 4> masking_key{};
@@ -613,7 +681,9 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         }
     }
 
-    return WebSocketFrame{static_cast<uint8_t>(header[0] & 0x0f), std::move(payload)};
+    return WebSocketFrame{static_cast<uint8_t>(header[0] & 0x0f),
+                          (header[0] & 0x80) != 0,
+                          std::move(payload)};
 }
 
 } // namespace lumiere

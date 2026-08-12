@@ -46,6 +46,32 @@ TEST(LexerComments, IgnoresUnterminatedBlockCommentUntilEndOfFile)
     EXPECT_EQ(tokens[0].type, TokenType::FIN_FICHIER);
 }
 
+TEST(LexerComments, RecognisesJavadocStyleDocumentation)
+{
+    const std::vector<Token> tokens = lex(
+        "/**\n"
+        " * Calcule une valeur.\n"
+        " * Retourne le résultat.\n"
+        " */\n"
+        "fonction calculer() {}\n");
+
+    ASSERT_FALSE(tokens.empty());
+    EXPECT_EQ(tokens[0].type, TokenType::DOCUMENTATION);
+    EXPECT_EQ(tokens[0].lexeme,
+              "Calcule une valeur.\nRetourne le résultat.");
+    EXPECT_EQ(tokens[1].type, TokenType::FONCTION);
+}
+
+TEST(LexerComments, TreatsTripleSlashAsAnOrdinaryLineComment)
+{
+    const std::vector<Token> tokens = lex(
+        "/// Ancienne documentation.\n"
+        "fonction calculer() {}\n");
+
+    ASSERT_FALSE(tokens.empty());
+    EXPECT_EQ(tokens[0].type, TokenType::FONCTION);
+}
+
 TEST(LexerKeywords, RecognisesAgirSelonAsSingleToken)
 {
     const std::vector<Token> tokens = lex("agir selon valeur");
@@ -77,6 +103,62 @@ TEST(LexerKeywords, RecognisesParentKeyword)
     EXPECT_EQ(tokens[1].type, TokenType::POINT);
     EXPECT_EQ(tokens[2].type, TokenType::IDENT);
     EXPECT_EQ(tokens[3].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerKeywords, RecognisesTypeAliasKeyword)
+{
+    Lexer lexer("type Lecture = Résultat[Texte, Erreur]\n");
+    const auto tokens = lexer.tokenise();
+
+    ASSERT_TRUE(lexer.diagnostics().empty());
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::TYPE);
+    EXPECT_EQ(tokens[1].type, TokenType::IDENT);
+    EXPECT_EQ(tokens[1].lexeme, "Lecture");
+}
+
+TEST(LexerKeywords, RecognisesResultControlKeywords)
+{
+    const std::vector<Token> tokens =
+        lex("opération() ou propager\nignorer autre()");
+
+    ASSERT_GE(tokens.size(), 9u);
+    EXPECT_EQ(tokens[3].type, TokenType::OU);
+    EXPECT_EQ(tokens[4].type, TokenType::PROPAGER);
+    EXPECT_EQ(tokens[5].type, TokenType::IGNORER);
+}
+
+TEST(LexerIdentifiers, FormerExceptionKeywordsAreOrdinaryIdentifiers)
+{
+    const std::vector<Token> tokens = lex("essayer attraper finalement lancer");
+
+    ASSERT_EQ(tokens.size(), 5u);
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        EXPECT_EQ(tokens[i].type, TokenType::IDENT) << "token index " << i;
+    }
+    EXPECT_EQ(tokens[0].lexeme, "essayer");
+    EXPECT_EQ(tokens[1].lexeme, "attraper");
+    EXPECT_EQ(tokens[2].lexeme, "finalement");
+    EXPECT_EQ(tokens[3].lexeme, "lancer");
+    EXPECT_EQ(tokens[4].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerIdentifiers, FormerExceptionKeywordsRemainWholeInsideLongerIdentifiers)
+{
+    const std::vector<Token> tokens = lex(
+        "essayerEncore attraper_erreur finalement2 relancer lancer");
+
+    ASSERT_EQ(tokens.size(), 6u);
+    for (std::size_t i = 0; i < 5; ++i)
+    {
+        EXPECT_EQ(tokens[i].type, TokenType::IDENT) << "token index " << i;
+    }
+    EXPECT_EQ(tokens[0].lexeme, "essayerEncore");
+    EXPECT_EQ(tokens[1].lexeme, "attraper_erreur");
+    EXPECT_EQ(tokens[2].lexeme, "finalement2");
+    EXPECT_EQ(tokens[3].lexeme, "relancer");
+    EXPECT_EQ(tokens[4].lexeme, "lancer");
 }
 
 TEST(LexerKeywords, RecognisesSelectiveImportPunctuation)

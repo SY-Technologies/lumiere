@@ -1,0 +1,171 @@
+/** La constante mathématique π (environ 3,14159). */
+soit fixe pi : Décimal = 3.14159
+
+/** La constante d'Euler, base des logarithmes naturels (environ 2,71828). */
+soit fixe e : Décimal = 2.71828
+
+/** Représente l'infini positif en arithmétique décimale. */
+soit fixe infini : Décimal = 1.0
+
+/** La valeur spéciale NaN (not a number), résultat d'un calcul indéterminé. */
+soit fixe non_nombre : Décimal = 1.0
+
+/** Retourne la valeur absolue (distance à zéro) d'un nombre. */
+fonction absolu(valeur : Décimal) -> Entier | Décimal
+{
+}
+
+/** Alias sans accent de absolu : valeur absolue d'un nombre. */
+fonction abs(valeur : Décimal) -> Entier | Décimal
+{
+}
+
+/** Retourne l'élément minimal de deux valeurs. */
+fonction min(gauche : Décimal, droite : Décimal) -> Entier | Décimal
+{
+}
+
+/** Retourne l'élément maximal de deux valeurs. */
+fonction max(gauche : Décimal, droite : Décimal) -> Entier | Décimal
+{
+}
+
+/** Arrondit une décimale à l'entier le plus proche. */
+fonction arrondir(valeur : Décimal) -> Entier
+{
+}
+
+/** Alias sans accent de arrondir. */
+fonction arrondi(valeur : Décimal) -> Entier
+{
+}
+
+/** Retourne le plus grand entier inférieur ou égal à la valeur. */
+fonction plancher(valeur : Décimal) -> Entier
+{
+}
+
+/** Retourne le plus petit entier supérieur ou égal à la valeur. */
+fonction plafond(valeur : Décimal) -> Entier
+{
+}
+
+/** Coupe la partie décimale sans arrondir. */
+fonction tronquer(valeur : Décimal) -> Entier
+{
+}
+
+/** Retourne la racine carrée de la valeur. */
+fonction racine(valeur : Décimal) -> Décimal
+{
+}
+
+/** Retourne la racine n-ième de la valeur. */
+fonction racine_n(base : Décimal, n : Décimal) -> Décimal
+{
+}
+
+/** Élève une base à un exposant. */
+fonction puissance(base : Décimal, exposant : Décimal) -> Décimal
+{
+}
+
+/** Logarithme naturel (base e) de la valeur. */
+fonction log(valeur : Décimal) -> Décimal
+{
+}
+
+/** Logarithme en base 10 de la valeur. */
+fonction log10(valeur : Décimal) -> Décimal
+{
+}
+
+/** Logarithme en base 2 de la valeur. */
+fonction log2(valeur : Décimal) -> Décimal
+{
+}
+
+/** Sinus d'un angle exprimé en radians. */
+fonction sin(valeur : Décimal) -> Décimal
+{
+}
+
+/** Alias sans accent de sin. */
+fonction sinus(valeur : Décimal) -> Décimal
+{
+}
+
+/** Cosinus d'un angle exprimé en radians. */
+fonction cos(valeur : Décimal) -> Décimal
+{
+}
+
+/** Alias sans accent de cos. */
+fonction cosinus(valeur : Décimal) -> Décimal
+{
+}
+
+/** Tangente d'un angle exprimé en radians. */
+fonction tan(valeur : Décimal) -> Décimal
+{
+}
+
+/** Alias sans accent de tan. */
+fonction tangente(valeur : Décimal) -> Décimal
+{
+}
+
+/** Arc tangente d'une valeur. */
+fonction arctan(valeur : Décimal) -> Décimal
+{
+}
+
+/** Cosinus inverse (arccosinus) d'une valeur. */
+fonction acos(valeur : Décimal) -> Décimal
+{
+}
+
+/** Sinus inverse (arcsinus) d'une valeur. */
+fonction asin(valeur : Décimal) -> Décimal
+{
+}
+
+/** Tangente inverse (arctangente) d'une valeur. */
+fonction atan(valeur : Décimal) -> Décimal
+{
+}
+
+/** Arc tangente de y/x en tenant compte du quadrant. */
+fonction atan2(y : Décimal, x : Décimal) -> Décimal
+{
+}
+
+/** Convertit des degrés en radians. */
+fonction degres_vers_radians(valeur : Décimal) -> Décimal
+{
+}
+
+/** Convertit des radians en degrés. */
+fonction radians_vers_degres(valeur : Décimal) -> Décimal
+{
+}
+
+/** Retourne vrai si la valeur est NaN. */
+fonction est_non_nombre(valeur : Décimal) -> Logique
+{
+}
+
+/** Retourne vrai si la valeur est infinie. */
+fonction est_infini(valeur : Décimal) -> Logique
+{
+}
+
+/** Retourne vrai si l'entier est pair. */
+fonction est_pair(valeur : Entier) -> Logique
+{
+}
+
+/** Retourne vrai si l'entier est impair. */
+fonction est_impair(valeur : Entier) -> Logique
+{
+}

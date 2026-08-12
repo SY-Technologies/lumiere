@@ -38,6 +38,16 @@ namespace lumiere
          * @return An ERREUR token at the current source position.
          */
         Token error_token(const std::string& msg) const;
+
+        /**
+         * @brief Scans a Javadoc-style documentation block and returns a
+         * DOCUMENTATION token with its markers stripped.
+         *
+         * Prerequisites: the Lexer stopped at a documentation comment after
+         * skip_whitespace_and_comments(); mark_start() points at the first `/`.
+         * @return A DOCUMENTATION token.
+         */
+        Token scan_documentation();
                 /**
          * @brief Skips whitespace and comments, advancing m_current.
          *
@@ -52,6 +62,12 @@ namespace lumiere
         
     private:
         Scanner& m_scanner;
+
+        /**
+         * @brief Returns true at a Javadoc-style documentation block without
+         * consuming anything.
+         */
+        bool at_documentation_comment();
         /**
          * @brief Scans a double-quoted text literal.
          *

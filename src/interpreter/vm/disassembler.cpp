@@ -120,7 +120,6 @@ void disassemble_instruction(std::ostringstream &out, const ModuleBytecode &modu
         out << ']';
         break;
     }
-    case Opcode::TRY_BEGIN:
     case Opcode::JUMP:
         out << ' ' << read_u16(chunk, offset);
         break;
@@ -196,11 +195,13 @@ void disassemble_instruction(std::ostringstream &out, const ModuleBytecode &modu
     case Opcode::CAST:
     case Opcode::TYPE_CHECK:
     case Opcode::ASSERT_TYPE:
+    case Opcode::RESULT_FAILURE_TYPE:
         print_index(out, read_byte(chunk, offset), module.types);
         break;
     case Opcode::CAST_LONG:
     case Opcode::TYPE_CHECK_LONG:
     case Opcode::ASSERT_TYPE_LONG:
+    case Opcode::RESULT_FAILURE_TYPE_LONG:
         print_index(out, read_u24(chunk, offset), module.types);
         break;
     default:
@@ -243,9 +244,6 @@ std::string_view opcode_name(const Opcode opcode)
         LUMIERE_OPCODE_NAME(GET_CAPTURE);
         LUMIERE_OPCODE_NAME(SET_CAPTURE);
         LUMIERE_OPCODE_NAME(CLOSURE);
-        LUMIERE_OPCODE_NAME(TRY_BEGIN);
-        LUMIERE_OPCODE_NAME(TRY_END);
-        LUMIERE_OPCODE_NAME(THROW);
         LUMIERE_OPCODE_NAME(JUMP);
         LUMIERE_OPCODE_NAME(JUMP_IF_FALSE);
         LUMIERE_OPCODE_NAME(NEGATE);
@@ -289,7 +287,13 @@ std::string_view opcode_name(const Opcode opcode)
         LUMIERE_OPCODE_NAME(ASSERT_TYPE);
         LUMIERE_OPCODE_NAME(ASSERT_TYPE_LONG);
         LUMIERE_OPCODE_NAME(MATCH_ERROR);
+        LUMIERE_OPCODE_NAME(RESULT_IS_SUCCESS);
+        LUMIERE_OPCODE_NAME(RESULT_FAILURE_TYPE);
+        LUMIERE_OPCODE_NAME(RESULT_FAILURE_TYPE_LONG);
+        LUMIERE_OPCODE_NAME(RESULT_PAYLOAD);
         LUMIERE_OPCODE_NAME(POP);
+        LUMIERE_OPCODE_NAME(PROPAGATE);
+        LUMIERE_OPCODE_NAME(IGNORE_RESULT);
         LUMIERE_OPCODE_NAME(RETURN);
     }
 #undef LUMIERE_OPCODE_NAME

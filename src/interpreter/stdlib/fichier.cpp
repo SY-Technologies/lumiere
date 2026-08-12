@@ -36,11 +36,46 @@ std::string format_file_time_utc(const std::filesystem::file_time_type &time)
     return out.str();
 }
 
+Value file_failure(
+    const std::string &operation,
+    const std::filesystem::path &path,
+    std::string cause,
+    const RuntimeSite &origin)
+{
+    return stdlib_failure(
+        stdlib_error_value(
+            "Fichier.ErreurFichier",
+            operation,
+            std::move(cause),
+            path.string()),
+        origin);
+}
+
+std::filesystem::path sanitize_path(IRuntime &runtime,
+                                    const std::filesystem::path &path,
+                                    const std::string &signature,
+                                    const RuntimeSite &call_site)
+{
+    const std::string path_str = path.generic_string();
+    if (path_str.find("..") != std::string::npos)
+    {
+        runtime.raise_runtime_error(call_site, signature + " rejette les chemins contenant '..'");
+    }
+    return path;
+}
+
 } // namespace
 
 void register_fichier_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
+    auto error_class = std::make_shared<LumiereClass>();
+    error_class->name = "Fichier.ErreurFichier";
+    stdlib_bind_public_value(
+        module,
+        "ErreurFichier",
+        Value::classe(std::move(error_class)));
+
     stdlib_bind_public_function(
         module,
         make_native_function,
@@ -49,7 +84,16 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.existe", call_site);
-            return Value::logique(std::filesystem::exists(path));
+            sanitize_path(runtime, path, "Fichier.existe", call_site);
+            std::error_code error;
+            const bool exists = std::filesystem::exists(path, error);
+            return error
+                       ? file_failure(
+                             "existe",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::logique(exists));
         });
 
     stdlib_bind_public_function(
@@ -60,15 +104,28 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.lire_texte", call_site);
+            sanitize_path(runtime, path, "Fichier.lire_texte", call_site);
             std::ifstream file(path);
             if (!file.is_open())
             {
-                runtime.raise_runtime_error(call_site, "Fichier.lire_texte a echoue: impossible d'ouvrir le fichier demande");
+                return file_failure(
+                    "lire_texte",
+                    path,
+                    "impossible d'ouvrir le fichier",
+                    call_site);
             }
 
             std::ostringstream buffer;
             buffer << file.rdbuf();
-            return Value::texte(buffer.str());
+            if (file.bad())
+            {
+                return file_failure(
+                    "lire_texte",
+                    path,
+                    "échec pendant la lecture",
+                    call_site);
+            }
+            return stdlib_success(Value::texte(buffer.str()));
         });
 
     stdlib_bind_public_function(
@@ -78,7 +135,24 @@ void register_fichier_module(Module &module)
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
-            return Value::logique(std::filesystem::is_regular_file(stdlib_expect_path_arg(runtime, args, "Fichier.est_fichier", call_site)));
+            const auto path = stdlib_expect_path_arg(
+                runtime, args, "Fichier.est_fichier", call_site);
+            sanitize_path(runtime, path, "Fichier.est_fichier", call_site);
+            std::error_code error;
+            const bool is_file =
+                std::filesystem::is_regular_file(path, error);
+            if (error ==
+                std::errc::no_such_file_or_directory)
+            {
+                error.clear();
+            }
+            return error
+                       ? file_failure(
+                             "est_fichier",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::logique(is_file));
         });
 
     stdlib_bind_public_function(
@@ -88,7 +162,24 @@ void register_fichier_module(Module &module)
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
-            return Value::logique(std::filesystem::is_directory(stdlib_expect_path_arg(runtime, args, "Fichier.est_dossier", call_site)));
+            const auto path = stdlib_expect_path_arg(
+                runtime, args, "Fichier.est_dossier", call_site);
+            sanitize_path(runtime, path, "Fichier.est_dossier", call_site);
+            std::error_code error;
+            const bool is_directory =
+                std::filesystem::is_directory(path, error);
+            if (error ==
+                std::errc::no_such_file_or_directory)
+            {
+                error.clear();
+            }
+            return error
+                       ? file_failure(
+                             "est_dossier",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::logique(is_directory));
         });
 
     stdlib_bind_public_function(
@@ -99,15 +190,18 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.taille", call_site);
-            try
-            {
-                return Value::entier(static_cast<int64_t>(std::filesystem::file_size(path)));
-            }
-            catch (const std::filesystem::filesystem_error &error)
-            {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.taille", error.what());
-            }
-            return Value::rien();
+            sanitize_path(runtime, path, "Fichier.taille", call_site);
+            std::error_code error;
+            const std::uintmax_t size =
+                std::filesystem::file_size(path, error);
+            return error
+                       ? file_failure(
+                             "taille",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::entier(
+                             static_cast<int64_t>(size)));
         });
 
     stdlib_bind_public_function(
@@ -118,15 +212,18 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.modifie_le", call_site);
-            try
-            {
-                return Value::texte(format_file_time_utc(std::filesystem::last_write_time(path)));
-            }
-            catch (const std::filesystem::filesystem_error &error)
-            {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.modifie_le", error.what());
-            }
-            return Value::rien();
+            sanitize_path(runtime, path, "Fichier.modifie_le", call_site);
+            std::error_code error;
+            const auto modified =
+                std::filesystem::last_write_time(path, error);
+            return error
+                       ? file_failure(
+                             "modifie_le",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::texte(
+                             format_file_time_utc(modified)));
         });
 
     stdlib_bind_public_function(
@@ -137,10 +234,15 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.lire_lignes", call_site);
+            sanitize_path(runtime, path, "Fichier.lire_lignes", call_site);
             std::ifstream file(path);
             if (!file.is_open())
             {
-                runtime.raise_runtime_error(call_site, "Fichier.lire_lignes a echoue: impossible d'ouvrir le fichier demande");
+                return file_failure(
+                    "lire_lignes",
+                    path,
+                    "impossible d'ouvrir le fichier",
+                    call_site);
             }
 
             auto lines = std::make_shared<ListeData>();
@@ -153,7 +255,20 @@ void register_fichier_module(Module &module)
                 }
                 lines->elements.push_back(Value::texte(line));
             }
-            return Value::liste(std::move(lines));
+            if (file.bad())
+            {
+                return file_failure(
+                    "lire_lignes",
+                    path,
+                    "échec pendant la lecture",
+                    call_site);
+            }
+            Value result = Value::liste(std::move(lines));
+            runtime.annotate_value(
+                result,
+                "Liste[Texte]",
+                call_site);
+            return stdlib_success(std::move(result));
         });
 
     stdlib_bind_public_function(
@@ -164,13 +279,26 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto [path_text, content] = stdlib_expect_two_text_args(runtime, args, "Fichier.ecrire_texte", "chemin", "contenu", call_site);
+            sanitize_path(runtime, std::filesystem::path(path_text), "Fichier.ecrire_texte", call_site);
             std::ofstream file(path_text, std::ios::binary | std::ios::trunc);
             if (!file.is_open())
             {
-                runtime.raise_runtime_error(call_site, "Fichier.ecrire_texte a echoue: impossible d'ouvrir le fichier cible");
+                return file_failure(
+                    "ecrire_texte",
+                    path_text,
+                    "impossible d'ouvrir le fichier",
+                    call_site);
             }
             file << content;
-            return Value::rien();
+            if (!file)
+            {
+                return file_failure(
+                    "ecrire_texte",
+                    path_text,
+                    "échec pendant l'écriture",
+                    call_site);
+            }
+            return stdlib_success(Value::rien());
         });
 
     stdlib_bind_public_function(
@@ -181,13 +309,26 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto [path_text, content] = stdlib_expect_two_text_args(runtime, args, "Fichier.ajouter_texte", "chemin", "contenu", call_site);
+            sanitize_path(runtime, std::filesystem::path(path_text), "Fichier.ajouter_texte", call_site);
             std::ofstream file(path_text, std::ios::binary | std::ios::app);
             if (!file.is_open())
             {
-                runtime.raise_runtime_error(call_site, "Fichier.ajouter_texte a echoue: impossible d'ouvrir le fichier cible");
+                return file_failure(
+                    "ajouter_texte",
+                    path_text,
+                    "impossible d'ouvrir le fichier",
+                    call_site);
             }
             file << content;
-            return Value::rien();
+            if (!file)
+            {
+                return file_failure(
+                    "ajouter_texte",
+                    path_text,
+                    "échec pendant l'écriture",
+                    call_site);
+            }
+            return stdlib_success(Value::rien());
         });
 
     stdlib_bind_public_function(
@@ -201,35 +342,53 @@ void register_fichier_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Fichier.ecrire_lignes attend exactement deux arguments positionnels");
             }
+            const std::string path_text = args[0].value.is_texte() ? args[0].value.as_texte() : "";
             if (!args[0].value.is_texte())
             {
                 runtime.raise_runtime_error(call_site, "Fichier.ecrire_lignes attend un chemin de type Texte");
             }
+            sanitize_path(runtime, std::filesystem::path(path_text), "Fichier.ecrire_lignes", call_site);
             if (!args[1].value.is_liste())
             {
                 runtime.raise_runtime_error(call_site, "Fichier.ecrire_lignes attend une liste de lignes");
             }
 
             const auto list = args[1].value.as_liste();
-            std::ofstream file(args[0].value.as_texte(), std::ios::binary | std::ios::trunc);
-            if (!file.is_open())
-            {
-                runtime.raise_runtime_error(call_site, "Fichier.ecrire_lignes a echoue: impossible d'ouvrir le fichier cible");
-            }
-
             for (std::size_t i = 0; i < list->elements.size(); ++i)
             {
                 if (!list->elements[i].is_texte())
                 {
                     runtime.raise_runtime_error(call_site, "Fichier.ecrire_lignes attend une liste contenant uniquement des valeurs de type Texte");
                 }
+            }
+
+            std::ofstream file(path_text, std::ios::binary | std::ios::trunc);
+            if (!file.is_open())
+            {
+                return file_failure(
+                    "ecrire_lignes",
+                    path_text,
+                    "impossible d'ouvrir le fichier",
+                    call_site);
+            }
+
+            for (std::size_t i = 0; i < list->elements.size(); ++i)
+            {
                 if (i > 0)
                 {
                     file << "\n";
                 }
                 file << list->elements[i].as_texte();
             }
-            return Value::rien();
+            if (!file)
+            {
+                return file_failure(
+                    "ecrire_lignes",
+                    args[0].value.as_texte(),
+                    "échec pendant l'écriture",
+                    call_site);
+            }
+            return stdlib_success(Value::rien());
         });
 
     stdlib_bind_public_function(
@@ -240,16 +399,16 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.creer_dossiers", call_site);
-            try
-            {
-                std::filesystem::create_directories(path);
-                return Value::rien();
-            }
-            catch (const std::filesystem::filesystem_error &error)
-            {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.creer_dossiers", error.what());
-            }
-            return Value::rien();
+            sanitize_path(runtime, path, "Fichier.creer_dossiers", call_site);
+            std::error_code error;
+            std::filesystem::create_directories(path, error);
+            return error
+                       ? file_failure(
+                             "creer_dossiers",
+                             path,
+                             error.message(),
+                             call_site)
+                       : stdlib_success(Value::rien());
         });
 
     stdlib_bind_public_function(
@@ -260,6 +419,7 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.lister", call_site);
+            sanitize_path(runtime, path, "Fichier.lister", call_site);
             try
             {
                 std::vector<std::string> entries;
@@ -276,13 +436,16 @@ void register_fichier_module(Module &module)
                 }
                 Value result = Value::liste(std::move(values));
                 runtime.annotate_value(result, "Liste[Texte]", call_site);
-                return result;
+                return stdlib_success(std::move(result));
             }
             catch (const std::filesystem::filesystem_error &error)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.lister", error.what());
+                return file_failure(
+                    "lister",
+                    path,
+                    error.what(),
+                    call_site);
             }
-            return Value::rien();
         });
 
     stdlib_bind_public_function(
@@ -293,6 +456,7 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.lister_recursif", call_site);
+            sanitize_path(runtime, path, "Fichier.lister_recursif", call_site);
             try
             {
                 std::vector<std::string> entries;
@@ -309,13 +473,16 @@ void register_fichier_module(Module &module)
                 }
                 Value result = Value::liste(std::move(values));
                 runtime.annotate_value(result, "Liste[Texte]", call_site);
-                return result;
+                return stdlib_success(std::move(result));
             }
             catch (const std::filesystem::filesystem_error &error)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.lister_recursif", error.what());
+                return file_failure(
+                    "lister_recursif",
+                    path,
+                    error.what(),
+                    call_site);
             }
-            return Value::rien();
         });
 
     stdlib_bind_public_function(
@@ -326,19 +493,28 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto [source, destination] = stdlib_expect_two_text_args(runtime, args, "Fichier.copier", "source", "destination", call_site);
+            sanitize_path(runtime, std::filesystem::path(source), "Fichier.copier", call_site);
+            sanitize_path(runtime, std::filesystem::path(destination), "Fichier.copier", call_site);
             try
             {
+                if (std::filesystem::path(source) == std::filesystem::path(destination))
+                {
+                    runtime.raise_runtime_error(call_site, "Fichier.copier: la source et la destination sont identiques");
+                }
                 std::filesystem::copy_file(
                     std::filesystem::path(source),
                     std::filesystem::path(destination),
                     std::filesystem::copy_options::overwrite_existing);
-                return Value::rien();
+                return stdlib_success(Value::rien());
             }
             catch (const std::filesystem::filesystem_error &error)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.copier", error.what());
+                return file_failure(
+                    "copier",
+                    source,
+                    error.what(),
+                    call_site);
             }
-            return Value::rien();
         });
 
     stdlib_bind_public_function(
@@ -349,16 +525,21 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto [source, destination] = stdlib_expect_two_text_args(runtime, args, "Fichier.deplacer", "source", "destination", call_site);
+            sanitize_path(runtime, std::filesystem::path(source), "Fichier.deplacer", call_site);
+            sanitize_path(runtime, std::filesystem::path(destination), "Fichier.deplacer", call_site);
             try
             {
                 std::filesystem::rename(std::filesystem::path(source), std::filesystem::path(destination));
-                return Value::rien();
+                return stdlib_success(Value::rien());
             }
             catch (const std::filesystem::filesystem_error &error)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.deplacer", error.what());
+                return file_failure(
+                    "deplacer",
+                    source,
+                    error.what(),
+                    call_site);
             }
-            return Value::rien();
         });
 
     stdlib_bind_public_function(
@@ -369,20 +550,27 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.supprimer", call_site);
-            try
+            sanitize_path(runtime, path, "Fichier.supprimer", call_site);
+            std::error_code error;
+            const bool removed =
+                std::filesystem::remove(path, error);
+            if (error)
             {
-                const bool removed = std::filesystem::remove(path);
-                if (!removed)
-                {
-                    runtime.raise_runtime_error(call_site, "Fichier.supprimer a echoue: chemin introuvable ou non supprimable");
-                }
-                return Value::rien();
+                return file_failure(
+                    "supprimer",
+                    path,
+                    error.message(),
+                    call_site);
             }
-            catch (const std::filesystem::filesystem_error &error)
+            if (!removed)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.supprimer", error.what());
+                return file_failure(
+                    "supprimer",
+                    path,
+                    "chemin introuvable",
+                    call_site);
             }
-            return Value::rien();
+            return stdlib_success(Value::rien());
         });
 
     stdlib_bind_public_function(
@@ -393,24 +581,43 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.supprimer_dossier", call_site);
-            try
+            sanitize_path(runtime, path, "Fichier.supprimer_dossier", call_site);
+            std::error_code error;
+            const bool is_directory =
+                std::filesystem::is_directory(path, error);
+            if (error)
             {
-                if (!std::filesystem::is_directory(path))
-                {
-                    runtime.raise_runtime_error(call_site, "Fichier.supprimer_dossier a echoue: le chemin cible n'est pas un dossier");
-                }
-                const bool removed = std::filesystem::remove(path);
-                if (!removed)
-                {
-                    runtime.raise_runtime_error(call_site, "Fichier.supprimer_dossier a echoue: dossier introuvable ou non vide");
-                }
-                return Value::rien();
+                return file_failure(
+                    "supprimer_dossier",
+                    path,
+                    error.message(),
+                    call_site);
             }
-            catch (const std::filesystem::filesystem_error &error)
+            if (!is_directory)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.supprimer_dossier", error.what());
+                return file_failure(
+                    "supprimer_dossier",
+                    path,
+                    "le chemin n'est pas un dossier",
+                    call_site);
             }
-            return Value::rien();
+            const bool removed =
+                std::filesystem::remove(path, error);
+            if (error)
+            {
+                return file_failure(
+                    "supprimer_dossier",
+                    path,
+                    error.message(),
+                    call_site);
+            }
+            return removed
+                       ? stdlib_success(Value::rien())
+                       : file_failure(
+                             "supprimer_dossier",
+                             path,
+                             "dossier introuvable ou non vide",
+                             call_site);
         });
 
     stdlib_bind_public_function(
@@ -421,24 +628,43 @@ void register_fichier_module(Module &module)
             const auto &args = *native_args.arguments;
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Fichier.supprimer_arbre", call_site);
-            try
+            sanitize_path(runtime, path, "Fichier.supprimer_arbre", call_site);
+            std::error_code error;
+            const bool exists =
+                std::filesystem::exists(path, error);
+            if (error)
             {
-                if (!std::filesystem::exists(path))
-                {
-                    runtime.raise_runtime_error(call_site, "Fichier.supprimer_arbre a echoue: chemin introuvable");
-                }
-                const auto removed = std::filesystem::remove_all(path);
-                if (removed == 0)
-                {
-                    runtime.raise_runtime_error(call_site, "Fichier.supprimer_arbre a echoue: suppression recursive impossible");
-                }
-                return Value::rien();
+                return file_failure(
+                    "supprimer_arbre",
+                    path,
+                    error.message(),
+                    call_site);
             }
-            catch (const std::filesystem::filesystem_error &error)
+            if (!exists)
             {
-                stdlib_throw_filesystem_failure(runtime, call_site, "Fichier.supprimer_arbre", error.what());
+                return file_failure(
+                    "supprimer_arbre",
+                    path,
+                    "chemin introuvable",
+                    call_site);
             }
-            return Value::rien();
+            const auto removed =
+                std::filesystem::remove_all(path, error);
+            if (error)
+            {
+                return file_failure(
+                    "supprimer_arbre",
+                    path,
+                    error.message(),
+                    call_site);
+            }
+            return removed > 0
+                       ? stdlib_success(Value::rien())
+                       : file_failure(
+                             "supprimer_arbre",
+                             path,
+                             "suppression récursive impossible",
+                             call_site);
         });
 }
 

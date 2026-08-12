@@ -18,6 +18,7 @@ namespace lumiere
             case TokenType::RETOURNE:
             case TokenType::CLASSE:
             case TokenType::INTERFACE:
+            case TokenType::TYPE:
             case TokenType::REALISE:
             case TokenType::REMPLACE:
             case TokenType::PUBLIC:
@@ -31,10 +32,6 @@ namespace lumiere
             case TokenType::AGIR_SELON:
             case TokenType::ARRETER:
             case TokenType::CONTINUER:
-            case TokenType::ESSAYER:
-            case TokenType::ATTRAPER:
-            case TokenType::FINALEMENT:
-            case TokenType::LANCER:
             case TokenType::ICI:
             case TokenType::PARENT:
             case TokenType::EN:
@@ -192,8 +189,6 @@ namespace lumiere
             case TokenType::TANT_QUE:
             case TokenType::AGIR_SELON:
             case TokenType::RETOURNE:
-            case TokenType::LANCER:
-            case TokenType::ESSAYER:
             case TokenType::PUBLIC:
             case TokenType::PRIVE:
             case TokenType::REMPLACE:
@@ -210,6 +205,57 @@ namespace lumiere
 
     StmtPtr Parser::parse_statement()
     {
+        const std::string documentation = consume_documentation();
+        StmtPtr statement = parse_statement_core();
+        attach_documentation(statement.get(), documentation);
+        return statement;
+    }
+
+    std::string Parser::consume_documentation()
+    {
+        std::string text;
+        while (check(TokenType::DOCUMENTATION))
+        {
+            const Token token = advance();
+            if (!text.empty())
+            {
+                text.push_back('\n');
+            }
+            text += token.lexeme;
+        }
+        return text;
+    }
+
+    void Parser::attach_documentation(Stmt *statement, std::string documentation)
+    {
+        if (statement == nullptr || documentation.empty())
+        {
+            return;
+        }
+        if (auto *variable = dynamic_cast<VarDeclStmt *>(statement))
+        {
+            variable->documentation = std::move(documentation);
+        }
+        else if (auto *function = dynamic_cast<FunctionDeclStmt *>(statement))
+        {
+            function->documentation = std::move(documentation);
+        }
+        else if (auto *klass = dynamic_cast<ClassDeclStmt *>(statement))
+        {
+            klass->documentation = std::move(documentation);
+        }
+        else if (auto *interface = dynamic_cast<InterfaceDeclStmt *>(statement))
+        {
+            interface->documentation = std::move(documentation);
+        }
+        else if (auto *alias = dynamic_cast<TypeAliasDeclStmt *>(statement))
+        {
+            alias->documentation = std::move(documentation);
+        }
+    }
+
+    StmtPtr Parser::parse_statement_core()
+    {
         if (check(TokenType::SOIT))
         {
             return parse_var_decl();
@@ -221,6 +267,10 @@ namespace lumiere
         if (check(TokenType::INTERFACE))
         {
             return parse_interface_decl();
+        }
+        if (check(TokenType::TYPE))
+        {
+            return parse_type_alias();
         }
         if (check(TokenType::IMPORTER))
         {
@@ -240,7 +290,7 @@ namespace lumiere
         };
         if (check(TokenType::AGIR_SELON))
         {
-            return parse_agir_selon();
+            return std::make_unique<ExprStmt>(parse_agir_selon());
         };
         if (check(TokenType::RETOURNE))
         {
@@ -254,13 +304,17 @@ namespace lumiere
         {
             return parse_continue();
         };
-        if (check(TokenType::LANCER))
+        if (check(TokenType::IGNORER))
         {
-            return parse_throw();
-        };
-        if (check(TokenType::ESSAYER))
-        {
-            return parse_try();
+            Token keyword = advance();
+            if (check(TokenType::PAREN_OUV))
+            {
+                error(
+                    peek(),
+                    "'ignorer' est suivi directement de l'expression, sans parenthèses d'appel");
+            }
+            ExprPtr expr = parse_expression();
+            return std::make_unique<IgnorerStmt>(std::move(keyword), std::move(expr));
         };
         if (check(TokenType::ACCOLADE_OUV))
         {
@@ -298,17 +352,26 @@ namespace lumiere
                 }
                 return parse_interface_decl(true);
             }
+            if (check(TokenType::TYPE))
+            {
+                if (is_prive)
+                {
+                    error(peek(), "un alias de type de niveau fichier ne peut pas être marqué 'privé'");
+                }
+                return parse_type_alias(true);
+            }
 
             // field declaration with visibility modifier
-            if (check(TokenType::IDENT) && m_tokens[m_current + 1].type == TokenType::DEUX_POINTS)
+            if (check(TokenType::IDENT) &&
+                m_tokens[m_current + 1].type == TokenType::DEUX_POINTS)
             {
                 const Token &name = advance();
                 advance(); // consume :
-                const Token type_token = parse_type_annotation("attendu un type de champ");
-                return std::make_unique<VarDeclStmt>(name, type_token, false, is_prive, !is_prive, nullptr);
+                TypeExpr type = parse_type_annotation("attendu un type de champ");
+                return std::make_unique<VarDeclStmt>(name, std::move(type), false, is_prive, !is_prive, nullptr);
             }
 
-            error(peek(), "attendu 'soit', 'fonction', 'classe', 'interface' ou champ après modificateur de visibilité");
+            error(peek(), "attendu 'soit', 'fonction', 'classe', 'interface', 'type' ou champ après modificateur de visibilité");
         }
 
         if (check(TokenType::REMPLACE))
@@ -336,8 +399,8 @@ namespace lumiere
         {
             const Token &name = advance(); // consume name
             advance();                     // consume :
-            const Token type_token = parse_type_annotation("attendu un type de champ");
-            return std::make_unique<VarDeclStmt>(name, type_token, false, false, true, nullptr);
+            TypeExpr type = parse_type_annotation("attendu un type de champ");
+            return std::make_unique<VarDeclStmt>(name, std::move(type), false, false, true, nullptr);
         }
 
         // anything else is an expression statement
@@ -431,13 +494,6 @@ namespace lumiere
         return std::make_unique<ReturnStmt>(keyword, std::move(value));
     }
 
-    StmtPtr Parser::parse_throw()
-    {
-        const Token &keyword = advance(); // consume lancer
-        ExprPtr value = parse_expression();
-        return std::make_unique<ThrowStmt>(keyword, std::move(value));
-    }
-
     StmtPtr Parser::parse_block()
     {
         expect(TokenType::ACCOLADE_OUV, "attendu '{' pour ouvrir le bloc");
@@ -465,11 +521,11 @@ namespace lumiere
         const Token &name = expect(TokenType::IDENT, "attendu un nom de variable après 'soit'");
 
         // optional type annotation — : Type
-        Token type_token(TokenType::RIEN, "", name.line, name.column); // empty sentinel
+        TypeExpr type;
         if (check(TokenType::DEUX_POINTS))
         {
             advance(); // consume :
-            type_token = parse_type_annotation("attendu un type après ':'");
+            type = parse_type_annotation("attendu un type après ':'");
         }
 
         // optional initializer — = expr
@@ -480,7 +536,7 @@ namespace lumiere
             initializer = parse_expression();
         }
 
-        return std::make_unique<VarDeclStmt>(name, type_token, is_fixe, false, is_public, std::move(initializer));
+        return std::make_unique<VarDeclStmt>(name, std::move(type), is_fixe, false, is_public, std::move(initializer));
     }
 
     StmtPtr Parser::parse_if()
@@ -568,51 +624,7 @@ namespace lumiere
             std::move(iterable),
             std::move(body));
     }
-    StmtPtr Parser::parse_try()
-    {
-        advance(); // consume essayer
-
-        StmtPtr body = parse_block();
-
-        // at least one attraper clause is required
-        if (!check(TokenType::ATTRAPER))
-        {
-            error(peek(), "attendu au moins un bloc 'attraper' après 'essayer'");
-        }
-
-        std::vector<CatchClause> catch_clauses;
-        while (check(TokenType::ATTRAPER))
-        {
-            advance(); // consume attraper
-
-            expect(TokenType::PAREN_OUV, "attendu '(' après 'attraper'");
-
-            const Token &variable = expect(TokenType::IDENT, "attendu un nom de variable");
-            expect(TokenType::DEUX_POINTS, "attendu ':' après le nom de variable");
-            const Token type_token = parse_type_annotation("attendu un type d'erreur");
-
-            expect(TokenType::PAREN_FERM, "attendu ')' après le type d'erreur");
-
-            StmtPtr clause_body = parse_block();
-
-            catch_clauses.push_back(CatchClause(variable, type_token, std::move(clause_body)));
-        }
-
-        // optional finalement
-        StmtPtr finally_body = nullptr;
-        if (check(TokenType::FINALEMENT))
-        {
-            advance(); // consume finalement
-            finally_body = parse_block();
-        }
-
-        return std::make_unique<TryStmt>(
-            std::move(body),
-            std::move(catch_clauses),
-            std::move(finally_body));
-    }
-
-    StmtPtr Parser::parse_agir_selon()
+    std::unique_ptr<AgirSelonStmt> Parser::parse_agir_selon()
     {
         const Token &keyword = advance(); // consume agir selon
         ExprPtr matched_expr = parse_expression();
@@ -643,7 +655,32 @@ namespace lumiere
             std::vector<Pattern> patterns;
             do
             {
-                if (check(TokenType::RIEN))
+                if (check(TokenType::IDENT) &&
+                    (peek().lexeme == "Succès" || peek().lexeme == "Échec") &&
+                    m_tokens[m_current + 1].type == TokenType::PAREN_OUV)
+                {
+                    const Token constructor = advance();
+                    advance(); // consume (
+                    const Token binding = expect(
+                        TokenType::IDENT,
+                        "attendu un nom ou '_' dans le motif de résultat");
+                    TypeExpr narrowed_type;
+                    if (match({TokenType::DEUX_POINTS}))
+                    {
+                        narrowed_type =
+                            parse_type_annotation("attendu un type d'erreur");
+                    }
+                    expect(TokenType::PAREN_FERM,
+                           "attendu ')' après le motif de résultat");
+                    patterns.emplace_back(
+                        constructor.lexeme == "Succès"
+                            ? PatternKind::RESULT_SUCCESS
+                            : PatternKind::RESULT_FAILURE,
+                        constructor,
+                        binding,
+                        std::move(narrowed_type));
+                }
+                else if (check(TokenType::RIEN))
                 {
                     patterns.emplace_back(advance());
                 }
@@ -651,8 +688,8 @@ namespace lumiere
                 {
                     const Token &name = advance();
                     advance(); // consume :
-                    const Token type_token = parse_type_annotation("attendu un type de motif");
-                    patterns.emplace_back(name, type_token);
+                    TypeExpr type = parse_type_annotation("attendu un type de motif");
+                    patterns.emplace_back(name, std::move(type));
                 }
                 else
                 {
@@ -662,17 +699,31 @@ namespace lumiere
 
             expect(TokenType::FLECHE, "attendu '->' après le motif");
 
-            StmtPtr body;
-            if (check(TokenType::ACCOLADE_OUV))
+            AgirSelonBranch branch(std::move(patterns), nullptr);
+            if (check(TokenType::PROPAGER))
             {
-                body = parse_block();
+                branch.terminator = BranchTerminator::PROPAGER;
+                branch.terminator_token = advance();
+            }
+            else if (check(TokenType::IGNORER))
+            {
+                branch.terminator = BranchTerminator::IGNORER;
+                branch.terminator_token = advance();
+            }
+            else if (check(TokenType::ACCOLADE_OUV))
+            {
+                branch.body = parse_block();
+            }
+            else if (check(TokenType::RETOURNE))
+            {
+                branch.body = parse_return();
             }
             else
             {
-                body = std::make_unique<ExprStmt>(parse_expression());
+                branch.body = std::make_unique<ExprStmt>(parse_expression());
             }
 
-            branches.push_back(AgirSelonBranch(std::move(patterns), std::move(body)));
+            branches.push_back(std::move(branch));
         }
 
         expect(TokenType::ACCOLADE_FERM, "attendu '}' après 'agir selon'");
@@ -695,7 +746,7 @@ namespace lumiere
         expect(TokenType::PAREN_FERM, "attendu ')' après les paramètres");
 
         // optional return type — -> Type
-        Token return_type(TokenType::RIEN, "", name.line, name.column); // empty = Rien
+        TypeExpr return_type;
         if (check(TokenType::FLECHE))
         {
             advance(); // consume ->
@@ -727,7 +778,7 @@ namespace lumiere
         std::vector<Parameter> params = parse_parameters();
         expect(TokenType::PAREN_FERM, "attendu ')' après les paramètres");
 
-        Token return_type(TokenType::RIEN, "", keyword.line, keyword.column);
+        TypeExpr return_type;
         if (check(TokenType::FLECHE))
         {
             advance();
@@ -760,7 +811,7 @@ namespace lumiere
         {
             const Token &name = expect(TokenType::IDENT, "attendu un nom de paramètre");
             expect(TokenType::DEUX_POINTS, "attendu ':' après le nom du paramètre");
-            const Token type_token = parse_type_annotation("attendu un type de paramètre");
+            TypeExpr type = parse_type_annotation("attendu un type de paramètre");
 
             // optional default value
             ExprPtr default_value = nullptr;
@@ -770,58 +821,99 @@ namespace lumiere
                 default_value = parse_expression();
             }
 
-            params.push_back(Parameter{name.lexeme, type_token, std::move(default_value)});
+            params.push_back(Parameter{name.lexeme, name, std::move(type), std::move(default_value)});
         } while (match({TokenType::VIRGULE}));
 
         return params;
     }
 
-    Token Parser::parse_type_annotation(const std::string &message)
+    TypeExpr Parser::parse_type_annotation(const std::string &message)
     {
-        const Token &first = expect(TokenType::IDENT, message);
-        std::string lexeme = first.lexeme;
+        return parse_union_type(message);
+    }
 
-        if (!check(TokenType::CROCHET_OUV))
+    TypeExpr Parser::parse_union_type(const std::string &message)
+    {
+        TypeExpr first = parse_generic_type(message);
+        if (!check(TokenType::PIPE))
         {
-            return Token(TokenType::IDENT, lexeme, first.line, first.column);
+            return first;
         }
 
-        int bracket_depth = 0;
-        while (!is_at_end())
+        std::vector<TypeExpr> alternatives;
+        alternatives.push_back(std::move(first));
+        while (match({TokenType::PIPE}))
         {
-            if (check(TokenType::CROCHET_OUV))
+            alternatives.push_back(parse_generic_type("attendu un type après '|'"));
+        }
+
+        Token source = alternatives.front().source;
+        source.end_offset = alternatives.back().source.end_offset;
+        source.lexeme.clear();
+        return TypeExpr::union_of(std::move(source), std::move(alternatives));
+    }
+
+    TypeExpr Parser::parse_generic_type(const std::string &message)
+    {
+        Token first = expect(TokenType::IDENT, message);
+        std::string name = first.lexeme;
+        Token source = first;
+
+        while (match({TokenType::POINT}))
+        {
+            const Token &part = expect(TokenType::IDENT, "attendu un nom de type après '.'");
+            name += '.' + part.lexeme;
+            source.end_offset = part.end_offset;
+        }
+
+        if (!match({TokenType::CROCHET_OUV}))
+        {
+            source.lexeme = name;
+            return TypeExpr::named(std::move(source));
+        }
+
+        if (check(TokenType::CROCHET_FERM))
+        {
+            error(peek(), "un type générique requiert au moins un argument");
+        }
+
+        std::vector<TypeExpr> arguments;
+        do
+        {
+            if (check(TokenType::ENTIER_LIT))
             {
-                ++bracket_depth;
-                lexeme += advance().lexeme;
-                continue;
+                Token integer_token = advance();
+                try
+                {
+                    arguments.push_back(TypeExpr::integer_argument(
+                        integer_token,
+                        static_cast<std::uint64_t>(std::stoull(integer_token.lexeme))));
+                }
+                catch (const std::exception &)
+                {
+                    error(integer_token, "argument entier de type hors limites");
+                }
+            }
+            else
+            {
+                arguments.push_back(parse_union_type("attendu un argument de type"));
             }
 
             if (check(TokenType::CROCHET_FERM))
             {
-                lexeme += advance().lexeme;
-                --bracket_depth;
-                if (bracket_depth == 0)
-                {
-                    break;
-                }
-                continue;
+                break;
             }
-
-            if (check(TokenType::IDENT) || check(TokenType::ENTIER_LIT) || check(TokenType::VIRGULE) || check(TokenType::POINT))
+            expect(TokenType::VIRGULE, "attendu ',' ou ']' après l'argument de type");
+            if (check(TokenType::CROCHET_FERM))
             {
-                lexeme += advance().lexeme;
-                continue;
+                error(peek(), "argument de type attendu après ','");
             }
+        } while (true);
 
-            error(peek(), "type générique mal formé");
-        }
-
-        if (bracket_depth != 0)
-        {
-            error(previous(), "attendu ']' pour fermer le type générique");
-        }
-
-        return Token(TokenType::IDENT, lexeme, first.line, first.column);
+        const Token &closing = expect(TokenType::CROCHET_FERM, "attendu ']' pour fermer le type générique");
+        source.end_offset = closing.end_offset;
+        source.lexeme.clear();
+        return TypeExpr::generic(std::move(source), std::move(name), std::move(arguments));
     }
 
     std::vector<Argument> Parser::parse_arguments()
@@ -838,7 +930,8 @@ namespace lumiere
             Argument arg;
 
             // check for named argument — name: value
-            if (check(TokenType::IDENT) && m_tokens[m_current + 1].type == TokenType::DEUX_POINTS)
+            if (can_appear_as_member_name(peek().type) &&
+                m_tokens[m_current + 1].type == TokenType::DEUX_POINTS)
             {
                 arg.name = peek().lexeme;
                 advance(); // consume name
@@ -859,22 +952,22 @@ namespace lumiere
         const Token &name = expect(TokenType::IDENT, "attendu un nom de classe");
 
         // optional parent class — : Parent
-        Token parent(TokenType::RIEN, "", name.line, name.column); // empty sentinel
+        TypeExpr parent;
         if (check(TokenType::DEUX_POINTS))
         {
             advance(); // consume :
-            parent = expect(TokenType::IDENT, "attendu un nom de classe parente après ':'");
+            parent = parse_generic_type("attendu un nom de classe parente après ':'");
         }
 
         // optional interfaces — réalise A, B, C
-        std::vector<Token> interfaces;
+        std::vector<TypeExpr> interfaces;
         if (check(TokenType::REALISE))
         {
             advance(); // consume réalise
             do
             {
                 interfaces.push_back(
-                    expect(TokenType::IDENT, "attendu un nom d'interface après 'réalise'"));
+                    parse_generic_type("attendu un nom d'interface après 'réalise'"));
             } while (match({TokenType::VIRGULE}));
         }
 
@@ -922,6 +1015,15 @@ namespace lumiere
         return std::make_unique<InterfaceDeclStmt>(name, is_public, std::move(methods));
     }
 
+    StmtPtr Parser::parse_type_alias(bool is_public)
+    {
+        advance(); // consume type
+        const Token &name = expect(TokenType::IDENT, "attendu un nom d'alias de type");
+        expect(TokenType::EGAL, "attendu '=' après le nom de l'alias");
+        TypeExpr target = parse_type_annotation("attendu le type ciblé par l'alias");
+        return std::make_unique<TypeAliasDeclStmt>(name, std::move(target), is_public);
+    }
+
     ExprPtr Parser::parse_expression()
     {
         return parse_assignment();
@@ -962,6 +1064,14 @@ namespace lumiere
         while (match({TokenType::OU}))
         {
             Token op = previous();
+            if (check(TokenType::PROPAGER))
+            {
+                Token keyword = advance();
+                left = std::make_unique<PropagationExpr>(
+                    std::move(keyword),
+                    std::move(left));
+                break;
+            }
             ExprPtr right = parse_and();
             left = std::make_unique<BinaryExpr>(
                 std::move(left),
@@ -1040,8 +1150,8 @@ namespace lumiere
             if (match({TokenType::EST}))
             {
                 Token keyword = previous();
-                Token type_token = parse_type_annotation("attendu un type après 'est'");
-                left = std::make_unique<TypeCheckExpr>(std::move(left), std::move(keyword), std::move(type_token));
+                TypeExpr type = parse_type_annotation("attendu un type après 'est'");
+                left = std::make_unique<TypeCheckExpr>(std::move(left), std::move(keyword), std::move(type));
                 continue;
             }
 
@@ -1102,9 +1212,8 @@ namespace lumiere
 
         while (match({TokenType::EN}))
         {
-            Token op = previous();
-            const Token &target_type = expect(TokenType::IDENT, "attendu un type après 'en'");
-            expr = std::make_unique<CastExpr>(std::move(expr), target_type);
+            TypeExpr target_type = parse_type_annotation("attendu un type après 'en'");
+            expr = std::make_unique<CastExpr>(std::move(expr), std::move(target_type));
         }
 
         return expr;
@@ -1184,6 +1293,11 @@ namespace lumiere
         if (check(TokenType::FONCTION))
         {
             return parse_function_expr();
+        }
+
+        if (check(TokenType::AGIR_SELON))
+        {
+            return parse_agir_selon();
         }
 
         // ── Ici

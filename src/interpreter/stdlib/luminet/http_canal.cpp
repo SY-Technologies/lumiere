@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 
@@ -15,10 +16,15 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
                                                           const NativeArgs &native_args,
                                                           const std::string &method,
                                                           const std::string &signature) -> Value {
+        return network_result(
+            native_args,
+            "LumiNet.ErreurHTTP",
+            signature,
+            [&]() -> Value {
         const auto &args = *native_args.arguments;
-        if (args.empty() || args.size() > 4)
+        if (args.empty() || args.size() > 5)
         {
-            runtime.raise_runtime_error(native_args.site, signature + " requiert entre 1 et 4 argument(s)");
+            runtime.raise_runtime_error(native_args.site, signature + " requiert entre 1 et 5 argument(s)");
         }
 
         const std::string url = stdlib_expect_text(runtime, args[0].value, signature, native_args.site);
@@ -29,7 +35,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
         for (std::size_t i = 1; i < args.size(); ++i)
         {
             const auto &arg = args[i];
-            if (arg.name == "entêtes" || arg.name == "entetes")
+            if (arg.name == "entêtes")
             {
                 headers = expect_header_entries(runtime, arg.value, signature, native_args.site);
             }
@@ -41,7 +47,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             {
                 headers.push_back({"Content-Type", stdlib_expect_text(runtime, arg.value, signature, native_args.site)});
             }
-            else if (arg.name == "délai" || arg.name == "delai")
+            else if (arg.name == "délai")
             {
                 timeout_ms = expect_duration_millis(runtime, arg.value, signature, native_args.site);
             }
@@ -54,7 +60,9 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
         const ParsedHttpUrl parsed = parse_http_url(runtime, url, signature, native_args.site);
         if (parsed.scheme != "http")
         {
-            runtime.raise_runtime_error(native_args.site, signature + " ne prend actuellement en charge que http");
+            throw NetworkFailure(
+                signature +
+                " ne prend actuellement en charge que http");
         }
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
@@ -77,10 +85,9 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             {
                 continue;
             }
-            if (timeout_ms.has_value())
-            {
-                apply_timeout(runtime, fd, *timeout_ms, signature, native_args.site);
-            }
+            platform_socket_enable_nosigpipe(fd);
+            constexpr int64_t kDefaultTimeoutMs = 30000;
+            apply_timeout(runtime, fd, timeout_ms.value_or(kDefaultTimeoutMs), signature, native_args.site);
             if (::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0)
             {
                 break;
@@ -104,6 +111,11 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
                 {
                     has_length = true;
                 }
+                if (header.first.find('\r') != std::string::npos || header.first.find('\n') != std::string::npos ||
+                    header.second.find('\r') != std::string::npos || header.second.find('\n') != std::string::npos)
+                {
+                    throw NetworkFailure(signature + " requiert des en-têtes HTTP sur une seule ligne");
+                }
                 request << header.first << ": " << header.second << "\r\n";
             }
             if (!body.empty() && !has_length)
@@ -125,7 +137,9 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             const std::size_t header_end = raw_response.find("\r\n\r\n");
             if (header_end == std::string::npos)
             {
-                runtime.raise_runtime_error(native_args.site, signature + " a reçu une réponse HTTP invalide");
+                throw NetworkFailure(
+                    signature +
+                    " a reçu une réponse HTTP invalide");
             }
             const std::string response_head = raw_response.substr(0, header_end);
             const int64_t status = parse_http_status_line(runtime, response_head, signature, native_args.site);
@@ -138,6 +152,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             close_socket_fd(fd);
             throw;
         }
+            });
     };
 
     bind_object_method(http, make_native_function, "requête",
@@ -181,12 +196,22 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
     auto canal = make_hidden_typed_object("LumiNet.Canal");
     bind_object_method(canal, make_native_function, "connecter",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            return network_result(
+                native_args,
+                "LumiNet.ErreurConnexion",
+                "connecter_canal",
+                [&]() -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "LumiNet.Canal.connecter", native_args.site);
             const ParsedHttpUrl parsed = parse_http_url(runtime,
                                                        stdlib_expect_text(runtime, args[0].value, "LumiNet.Canal.connecter", native_args.site),
                                                        "LumiNet.Canal.connecter",
                                                        native_args.site);
+            if (parsed.scheme != "ws")
+            {
+                throw NetworkFailure(
+                    "LumiNet.Canal.connecter ne prend en charge que ws");
+            }
 
             addrinfo hints{};
             hints.ai_family = AF_UNSPEC;
@@ -208,6 +233,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 {
                     continue;
                 }
+                platform_socket_enable_nosigpipe(fd);
                 if (::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0)
                 {
                     break;
@@ -220,7 +246,13 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
             }
             try
             {
-                const std::string client_key = "dGhlIHNhbXBsZSBub25jZQ==";
+                unsigned char key_bytes[16];
+                std::random_device rd;
+                for (int i = 0; i < 16; ++i)
+                {
+                    key_bytes[i] = static_cast<unsigned char>(rd());
+                }
+                const std::string client_key = base64_encode(key_bytes, 16);
                 const std::string request =
                     "GET " + parsed.target + " HTTP/1.1\r\n"
                     "Host: " + parsed.host + "\r\n"
@@ -237,7 +269,8 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 const std::size_t header_end = response.find("\r\n\r\n");
                 if (header_end == std::string::npos)
                 {
-                    runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: réponse websocket invalide");
+                    throw NetworkFailure(
+                        "LumiNet.Canal.connecter a échoué: réponse websocket invalide");
                 }
                 const std::string response_head = response.substr(0, header_end);
                 const int64_t status = parse_http_status_line(runtime, response_head, "LumiNet.Canal.connecter", native_args.site);
@@ -247,7 +280,8 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 const bool has_upgrade = header_contains_token(response_headers, "Connection", "Upgrade");
                 if (status != 101 || upgrade != "websocket" || !has_upgrade || accept != websocket_accept_key(client_key))
                 {
-                    runtime.raise_runtime_error(native_args.site, "LumiNet.Canal.connecter a échoué: poignée de main websocket refusée");
+                    throw NetworkFailure(
+                        "LumiNet.Canal.connecter a échoué: poignée de main websocket refusée");
                 }
                 auto state = std::make_shared<CanalClientState>();
                 state->fd = fd;
@@ -261,6 +295,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                 close_socket_fd(fd);
                 throw;
             }
+                });
         });
     bind_object_method(canal, make_native_function, "Serveur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {

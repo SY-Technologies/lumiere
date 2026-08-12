@@ -133,12 +133,49 @@ std::pair<std::string, std::string> stdlib_expect_two_text_args(IRuntime &runtim
     return {args[0].value.as_texte(), args[1].value.as_texte()};
 }
 
-void stdlib_throw_filesystem_failure(IRuntime &runtime,
-                                     const RuntimeSite &call_site,
-                                     const std::string &signature,
-                                     const std::string &message)
+Value stdlib_error_value(
+    std::string type_name,
+    std::string operation,
+    std::string cause,
+    std::string path)
 {
-    runtime.raise_runtime_error(call_site, signature + " a echoue: " + message);
+    auto klass = std::make_shared<LumiereClass>();
+    klass->name = std::move(type_name);
+    auto error_interface =
+        std::make_shared<LumiereInterface>();
+    error_interface->name = "Erreur";
+    klass->interfaces.emplace(
+        "Erreur",
+        std::move(error_interface));
+
+    auto object = std::make_shared<LumiereObject>();
+    object->klass = std::move(klass);
+    object->fields.emplace(
+        "opération",
+        Value::texte(std::move(operation)));
+    object->fields.emplace(
+        "cause",
+        Value::texte(std::move(cause)));
+    if (!path.empty())
+    {
+        object->fields.emplace(
+            "chemin",
+            Value::texte(std::move(path)));
+    }
+    return Value::objet(std::move(object));
+}
+
+Value stdlib_success(Value payload)
+{
+    return Value::resultat(true, std::move(payload));
+}
+
+Value stdlib_failure(Value error, const RuntimeSite &origin)
+{
+    return Value::resultat(
+        false,
+        std::move(error),
+        origin);
 }
 
 void stdlib_bind_public_value(Module &module, const std::string &name, const Value &value)

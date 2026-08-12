@@ -6,6 +6,52 @@
 namespace lumiere
 {
 
+Value Value::resultat(
+    const bool success,
+    Value payload,
+    std::optional<RuntimeSite> origin)
+{
+    Value value;
+    value.type = Type::RESULTAT;
+    value.data = std::make_shared<const ResultData>(
+        ResultData{
+            success,
+            std::move(payload),
+            success ? std::nullopt : std::move(origin),
+            {}});
+    return value;
+}
+
+Value Value::with_trace_frame(const TraceFrame &frame) const
+{
+    if (!is_resultat() || as_resultat()->success)
+    {
+        return *this;
+    }
+
+    const auto result = as_resultat();
+    std::vector<TraceFrame> trace = result->trace;
+    if (!trace.empty() &&
+        trace.back().function_name == frame.function_name &&
+        trace.back().source_path == frame.source_path &&
+        trace.back().line == frame.line &&
+        trace.back().column == frame.column)
+    {
+        return *this;
+    }
+    trace.push_back(frame);
+
+    Value value;
+    value.type = Type::RESULTAT;
+    value.data = std::make_shared<const ResultData>(
+        ResultData{
+            result->success,
+            result->payload,
+            result->origin,
+            std::move(trace)});
+    return value;
+}
+
 bool Value::operator==(const Value &other) const
 {
     if (type != other.type)
@@ -16,6 +62,11 @@ bool Value::operator==(const Value &other) const
     if (is_rien())// we know they both have the same RIEN type else we would have returned above
     {
         return true;
+    }
+    if (is_resultat())
+    {
+        return as_resultat()->success == other.as_resultat()->success &&
+               as_resultat()->payload == other.as_resultat()->payload;
     }
 
     return data == other.data;
@@ -84,7 +135,21 @@ std::string Value::to_string() const
         out << "<ensemble>";
         break;
     case Type::OBJET:
-        out << "<objet>";
+        if (as_objet() != nullptr &&
+            as_objet()->klass != nullptr)
+        {
+            out << as_objet()->klass->name;
+            const auto cause =
+                as_objet()->fields.find("cause");
+            if (cause != as_objet()->fields.end())
+            {
+                out << '(' << cause->second.to_string() << ')';
+            }
+        }
+        else
+        {
+            out << "<objet>";
+        }
         break;
     case Type::FONCTION:
         out << "<fonction>";
@@ -94,6 +159,10 @@ std::string Value::to_string() const
         break;
     case Type::INTERFACE:
         out << "<interface>";
+        break;
+    case Type::RESULTAT:
+        out << (as_resultat()->success ? "Succès(" : "Échec(")
+            << as_resultat()->payload.to_string() << ')';
         break;
     case Type::RIEN:
         out << "rien";
@@ -126,13 +195,18 @@ std::string Value::type_name() const
     case Type::ENSEMBLE:
         return "Ensemble";
     case Type::OBJET:
-        return "Objet";
+        return as_objet() != nullptr &&
+                       as_objet()->klass != nullptr
+                   ? as_objet()->klass->name
+                   : "Objet";
     case Type::FONCTION:
         return "Fonction";
     case Type::CLASSE:
         return "Classe";
     case Type::INTERFACE:
         return "Interface";
+    case Type::RESULTAT:
+        return "Résultat";
     case Type::RIEN:
         return "Rien";
     }

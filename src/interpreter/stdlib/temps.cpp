@@ -14,13 +14,12 @@ namespace
 
 using TimePointMs = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>;
 
-// Temps uses lightweight typed objects instead of introducing dedicated C++
-// runtime classes for durations and instants. The "__type" / "__millis"
-// convention is the contract that every helper in this file relies on.
 std::shared_ptr<LumiereObject> make_typed_object(const std::string &type_name, int64_t millis)
 {
     auto object = std::make_shared<LumiereObject>();
-    object->fields["__type"] = Value::texte(type_name);
+    auto klass = std::make_shared<LumiereClass>();
+    klass->name = type_name;
+    object->klass = std::move(klass);
     object->fields["__millis"] = Value::entier(millis);
     return object;
 }
@@ -38,13 +37,7 @@ bool is_typed_object(const Value &value, const std::string &type_name)
         return false;
     }
 
-    const auto type_it = object->fields.find("__type");
-    if (type_it == object->fields.end() || !type_it->second.is_texte())
-    {
-        return false;
-    }
-
-    return type_it->second.as_texte() == type_name;
+    return object->klass != nullptr && object->klass->name == type_name;
 }
 
 int64_t expect_object_millis(IRuntime &runtime,
@@ -352,6 +345,14 @@ Value make_instant_value(int64_t millis, const NativeFunctionFactory &make_nativ
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "Instant.ajouter", native_args.site);
             const int64_t duration_ms = expect_object_millis(runtime, args[0].value, "Durée", "Instant.ajouter", native_args.site);
+            if (duration_ms > 0 && millis > std::numeric_limits<int64_t>::max() - duration_ms)
+            {
+                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le resultat depasse la limite d'un Instant");
+            }
+            if (duration_ms < 0 && millis < std::numeric_limits<int64_t>::min() - duration_ms)
+            {
+                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le resultat depasse la limite d'un Instant");
+            }
             return make_instant_value(millis + duration_ms, make_native_function);
         }));
 
@@ -360,6 +361,14 @@ Value make_instant_value(int64_t millis, const NativeFunctionFactory &make_nativ
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "Instant.soustraire", native_args.site);
             const int64_t duration_ms = expect_object_millis(runtime, args[0].value, "Durée", "Instant.soustraire", native_args.site);
+            if (duration_ms < 0 && millis > std::numeric_limits<int64_t>::max() + duration_ms)
+            {
+                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le resultat depasse la limite d'un Instant");
+            }
+            if (duration_ms > 0 && millis < std::numeric_limits<int64_t>::min() + duration_ms)
+            {
+                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le resultat depasse la limite d'un Instant");
+            }
             return make_instant_value(millis - duration_ms, make_native_function);
         }));
 
@@ -409,6 +418,12 @@ int64_t expect_integer_argument(IRuntime &runtime, const NativeArgs &native_args
 void register_temps_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
+    auto error_class = std::make_shared<LumiereClass>();
+    error_class->name = "Temps.ErreurTemps";
+    stdlib_bind_public_value(
+        module,
+        "ErreurTemps",
+        Value::classe(std::move(error_class)));
     stdlib_bind_public_function(
         module,
         make_native_function,
@@ -455,13 +470,17 @@ void register_temps_module(Module &module)
             {
                 Value instant = make_instant_value(parse_instant_string(text, format), make_native_function);
                 runtime.annotate_value(instant, "Instant", native_args.site);
-                return instant;
+                return stdlib_success(std::move(instant));
             }
             catch (const std::exception &error)
             {
-                runtime.raise_runtime_error(native_args.site, "Temps.analyser a echoue: " + std::string(error.what()));
+                return stdlib_failure(
+                    stdlib_error_value(
+                        "Temps.ErreurTemps",
+                        "analyser",
+                        error.what()),
+                    native_args.site);
             }
-            return Value::rien();
         });
 
     stdlib_bind_public_function(
@@ -473,6 +492,20 @@ void register_temps_module(Module &module)
             stdlib_expect_positional(runtime, args, 2, "Temps.entre", native_args.site);
             const int64_t start_ms = expect_object_millis(runtime, args[0].value, "Instant", "Temps.entre", native_args.site);
             const int64_t end_ms = expect_object_millis(runtime, args[1].value, "Instant", "Temps.entre", native_args.site);
+            if (start_ms > 0)
+            {
+                if (end_ms < std::numeric_limits<int64_t>::min() + start_ms)
+                {
+                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree depasse les limites");
+                }
+            }
+            else if (start_ms < 0)
+            {
+                if (end_ms > std::numeric_limits<int64_t>::max() + start_ms)
+                {
+                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree depasse les limites");
+                }
+            }
             Value duration = make_duration_value(end_ms - start_ms, make_native_function);
             runtime.annotate_value(duration, "Durée", native_args.site);
             return duration;
@@ -490,6 +523,11 @@ void register_temps_module(Module &module)
             {
                 runtime.raise_runtime_error(native_args.site, "Temps.attendre attend une duree positive");
             }
+            constexpr int64_t kMaxSleepMs = 24LL * 60 * 60 * 1000;
+            if (duration_ms > kMaxSleepMs)
+            {
+                runtime.raise_runtime_error(native_args.site, "Temps.attendre: la duree depasse le maximum autorise (24h)");
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
             return Value::rien();
         });
@@ -501,6 +539,14 @@ void register_temps_module(Module &module)
             name,
             [name, factor_ms, make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
                 const int64_t amount = expect_integer_argument(runtime, native_args, "Temps." + name);
+                if (amount > 0 && factor_ms > 0 && amount > std::numeric_limits<int64_t>::max() / factor_ms)
+                {
+                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le resultat depasse la limite d'une Duree");
+                }
+                if (amount < 0 && factor_ms > 0 && amount < std::numeric_limits<int64_t>::min() / factor_ms)
+                {
+                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le resultat depasse la limite d'une Duree");
+                }
                 Value duration = make_duration_value(amount * factor_ms, make_native_function);
                 runtime.annotate_value(duration, "Durée", native_args.site);
                 return duration;

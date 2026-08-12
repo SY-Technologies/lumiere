@@ -22,6 +22,7 @@ The full set of reserved keywords. Everything else is a library identifier.
 |--------------|----------------------------------------|-------------------------|
 | `soit`       | Variable declaration                   | `let / var / auto`      |
 | `fixe`       | Immutability modifier (used with soit) | `const / val`           |
+| `type`       | Module-level transparent type alias    | `type alias`            |
 | `fonction`   | Function or method definition          | `fn / fun / def`        |
 | `retourne`   | Return a value                         | `return`                |
 | `classe`     | Class definition                       | `class`                 |
@@ -36,10 +37,14 @@ The full set of reserved keywords. Everything else is a library identifier.
 | `chaque`     | Each — used with pour                  | `each`                  |
 | `dans`       | In — iteration keyword                 | `in`                    |
 | `tant que`   | While loop                             | `while`                 |
+| `agir selon` | Pattern matching expression            | `match`                 |
+| `propager`   | Propagate a result failure              | `propagate`             |
+| `ignorer`    | Explicitly discard a result             | `discard`               |
 | `vrai`       | Boolean true                           | `true`                  |
 | `faux`       | Boolean false                          | `false`                 |
 | `rien`       | Null / absence of value                | `null / nil / None`     |
 | `ici`        | Current receiver inside a class method | `self / this`           |
+| `parent`     | Parent receiver inside a method        | `super`                 |
 | `en`         | Type cast operator                     | `as / cast`             |
 | `et`         | Logical AND                            | `&& / and`              |
 | `ou`         | Logical OR                             | `\|\| / or`             |
@@ -48,10 +53,6 @@ The full set of reserved keywords. Everything else is a library identifier.
 | `continuer`  | Continue to next iteration             | `continue`              |
 | `importer`   | Import a module                        | `import / use`          |
 | `comme`      | Import alias                           | `as`                    |
-| `essayer`    | Try block — error handling             | `try`                   |
-| `attraper`   | Catch block — error handling           | `catch`                 |
-| `finalement` | Finally block — always executes        | `finally`               |
-| `lancer`     | Throw an error                         | `throw`                 |
 
 > `tant que` is two words but treated as a single token by the lexer.
 > `ici` means “here, on this object.” It is only available inside a bound method call. At top level, inside ordinary functions, or before a method is bound to an object, `ici` is not defined.
@@ -66,3 +67,32 @@ Lumière supports the same comment forms as Java and JavaScript:
 - `/* comment */` for block comments
 
 `--` and `---` are not comments. They are lexed as minus operators.
+
+---
+
+## 4. Result control
+
+Propagation is postfix syntax:
+
+```lumiere
+soit valeur = opération() ou propager
+```
+
+The `ou propager` suffix has no right-hand expression and evaluates only its
+left operand. It terminates that `ou` chain. A repeated suffix and `propager`
+without `ou` are syntax errors.
+
+Explicit discard is statement syntax:
+
+```lumiere
+ignorer opération()
+```
+
+`ignorer(opération())` is not an alternative spelling. In an `agir selon`
+branch, `-> propager` is restricted to `Échec` patterns and `-> ignorer` is
+restricted to result-variant patterns.
+
+The second parameter of `Résultat[T,E]` must resolve to `Erreur`, a class
+realizing `Erreur`, a subclass of an error class, or a union exclusively of
+error types. `Succès(...)` and `Échec(...)` require a surrounding expected
+`Résultat[T,E]`; they are not independently constructible wrapper values.

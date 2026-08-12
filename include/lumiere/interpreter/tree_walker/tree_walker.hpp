@@ -218,6 +218,7 @@ namespace lumiere
         mutable std::unordered_map<const ListeFixeData *, FixedListConstraint> m_fixed_list_constraints;
         mutable std::unordered_map<const DictData *, DictConstraint> m_dict_constraints;
         mutable std::unordered_map<const EnsembleData *, SetConstraint> m_set_constraints;
+        std::unordered_map<std::string, TypeExpr> m_type_aliases;
 
         /**
          * @brief Evaluates an expression and returns its resulting runtime value.
@@ -456,14 +457,6 @@ namespace lumiere
         std::vector<Value> enumerate_iterable(const Value &iterable, const Token &site) const;
 
         /**
-         * @brief Returns true when a catch clause's declared type accepts the thrown value.
-         *
-         * This is a type-match check only; clause ordering and execution are
-         * handled by the caller.
-         */
-        bool matches_catch_clause(const CatchClause &clause, const Value &thrown_value) const;
-
-        /**
          * @brief Returns whether a runtime value can participate in `pour`-style iteration.
          */
         bool is_iterable_value(const Value &value) const;
@@ -500,13 +493,8 @@ namespace lumiere
         /**
          * @brief Runs a branch in a fresh nested scope, with an optional branch-local variable.
          *
-         * This is used for constructs such as pattern/catch branches that may
-         * expose a matched or thrown value by name. The binding, when present,
-         * exists only while this branch body executes.
-         *
-         * Example: an `attraper (e: Texte) { ... }` branch can bind the caught
-         * value as `e` for the duration of that branch without leaking `e`
-         * into the surrounding scope.
+         * Pattern branches use this to expose a matched value by name. The
+         * binding, when present, exists only while this branch body executes.
          */
         void execute_branch_with_optional_binding(Stmt &body,
                                                   const Token *binding_name,
@@ -564,6 +552,7 @@ namespace lumiere
          * names that the interpreter exposes in error messages and checks.
          */
         bool matches_type_name(const Value &value, const Token &type_token) const;
+        bool matches_type_name(const Value &value, const TypeExpr &type) const;
 
         /**
          * @brief Splits a generic type string into its top-level type arguments.
@@ -581,6 +570,7 @@ namespace lumiere
          * must respect.
          */
         void register_value_annotation(const Value &value, const Token &annotation) const;
+        void register_value_annotation(const Value &value, const TypeExpr &annotation) const;
 
         /**
          * @brief Enforces the declared element type before mutating a `Liste`.
@@ -636,6 +626,10 @@ namespace lumiere
          */
         void ensure_value_matches_annotation(const Value &value,
                                              const Token &annotation,
+                                             const Token &site,
+                                             const std::string &context) const;
+        void ensure_value_matches_annotation(const Value &value,
+                                             const TypeExpr &annotation,
                                              const Token &site,
                                              const std::string &context) const;
 
@@ -836,12 +830,23 @@ namespace lumiere
          */
         void visit(IndexAccessExpr &) override;
 
+        /**
+         * @brief Evaluates a propagation expression (expr ou propager),
+         *        unwrapping success or propagating the error.
+         */
+        void visit(PropagationExpr &) override;
+
         // Statement visitors
 
         /**
          * @brief Evaluates an expression statement and discards the resulting value.
          */
         void visit(ExprStmt &) override;
+
+        /**
+         * @brief Evaluates an ignorer statement and discards the result value.
+         */
+        void visit(IgnorerStmt &) override;
 
         /**
          * @brief Executes a block in a fresh nested scope.
@@ -867,6 +872,7 @@ namespace lumiere
          * @brief Declares an interface and binds its runtime interface value.
          */
         void visit(InterfaceDeclStmt &) override;
+        void visit(TypeAliasDeclStmt &) override;
 
         /**
          * @brief Loads a module and binds its imported names in the current scope.
@@ -902,16 +908,6 @@ namespace lumiere
          * @brief Skips to the next loop iteration by throwing a `ContinueSignal`.
          */
         void visit(ContinueStmt &) override;
-
-        /**
-         * @brief Evaluates a throw statement and unwinds with a `ThrownSignal`.
-         */
-        void visit(ThrowStmt &) override;
-
-        /**
-         * @brief Executes a `try` block and routes thrown values through matching catches.
-         */
-        void visit(TryStmt &) override;
 
         /**
          * @brief Executes an `agir selon` statement by testing its cases in order.

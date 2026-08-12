@@ -5,12 +5,12 @@ namespace lumiere
 
     ClassDeclStmt *TreeWalker::resolve_parent_class(const ClassDeclStmt &klass) const
     {
-        if (klass.parent.lexeme.empty() || m_env == nullptr || !m_env->contains(klass.parent.lexeme))
+        if (klass.parent.empty() || m_env == nullptr || !m_env->contains(klass.parent.to_string()))
         {
             return nullptr;
         }
 
-        const Value parent = m_env->get(klass.parent.lexeme);
+        const Value parent = m_env->get(klass.parent.to_string());
         if (!parent.is_classe())
         {
             return nullptr;
@@ -27,7 +27,7 @@ namespace lumiere
             return false;
         }
 
-        if (expected.return_type.lexeme != actual.return_type.lexeme)
+        if (expected.return_type.to_string() != actual.return_type.to_string())
         {
             return false;
         }
@@ -38,7 +38,7 @@ namespace lumiere
             {
                 return false;
             }
-            if (expected.params[i].type_token.lexeme != actual.params[i].type_token.lexeme)
+            if (expected.params[i].type.to_string() != actual.params[i].type.to_string())
             {
                 return false;
             }
@@ -129,23 +129,41 @@ namespace lumiere
             throw_runtime_error(klass.name, "environnement d'execution absent");
         }
 
-        for (const Token &interface_name : klass.interfaces)
+        for (const TypeExpr &interface_name : klass.interfaces)
         {
-            if (!m_env->contains(interface_name.lexeme))
+            std::string name = interface_name.to_string();
+            std::unordered_set<std::string> visited;
+            while (visited.insert(name).second)
             {
-                throw_runtime_error(interface_name, "interface introuvable: " + interface_name.lexeme);
+                const auto alias =
+                    m_type_aliases.find(name);
+                if (alias == m_type_aliases.end() ||
+                    alias->second.kind !=
+                        TypeExprKind::NAMED)
+                {
+                    break;
+                }
+                name = alias->second.name;
+            }
+            if (!m_env->contains(name))
+            {
+                throw_runtime_error(interface_name.source, "interface introuvable: " + name);
             }
 
-            const Value interface_value = m_env->get(interface_name.lexeme);
+            const Value interface_value = m_env->get(name);
             if (!interface_value.is_interface())
             {
-                throw_runtime_error(interface_name, "le symbole n'est pas une interface: " + interface_name.lexeme);
+                throw_runtime_error(interface_name.source, "le symbole n'est pas une interface: " + name);
             }
 
             InterfaceDeclStmt *iface_decl = interface_decl(interface_value.as_interface());
+            if (name == "Erreur")
+            {
+                continue;
+            }
             if (iface_decl == nullptr)
             {
-                throw_runtime_error(interface_name, "interface non compatible avec ce backend: " + interface_name.lexeme);
+                throw_runtime_error(interface_name.source, "interface non compatible avec ce backend: " + name);
             }
 
             for (auto &member : iface_decl->methods)
@@ -161,7 +179,7 @@ namespace lumiere
                     throw_runtime_error(
                         klass.name,
                         "la classe " + klass.name.lexeme + " ne realise pas la methode requise " +
-                            interface_name.lexeme + "." + required_method->name.lexeme);
+                            name + "." + required_method->name.lexeme);
                 }
 
                 FunctionDeclStmt *implemented_method = find_method_decl(class_value, required_method->name.lexeme);
@@ -170,7 +188,7 @@ namespace lumiere
                     throw_runtime_error(
                         implemented_method->name,
                         "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
-                            " ne respecte pas la signature requise par l'interface " + interface_name.lexeme);
+                            " ne respecte pas la signature requise par l'interface " + name);
                 }
 
                 if (implemented_method != nullptr && implemented_method->is_prive)
@@ -178,7 +196,7 @@ namespace lumiere
                     throw_runtime_error(
                         implemented_method->name,
                         "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
-                            " ne peut pas etre privee car elle realise l'interface " + interface_name.lexeme);
+                            " ne peut pas etre privee car elle realise l'interface " + name);
                 }
             }
         }

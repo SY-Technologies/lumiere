@@ -110,6 +110,10 @@ void platform_socket_enable_reuse_address(SocketHandle handle)
     ::setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse), sizeof(reuse));
 }
 
+void platform_socket_enable_nosigpipe(SocketHandle)
+{
+}
+
 bool platform_socket_enable_broadcast(SocketHandle handle)
 {
     const BOOL enabled = TRUE;

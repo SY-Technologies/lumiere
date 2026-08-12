@@ -5,14 +5,44 @@
 #include "luminet_platform.hpp"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
 namespace lumiere
 {
+    class NetworkFailure final : public std::runtime_error
+    {
+    public:
+        explicit NetworkFailure(std::string message)
+            : std::runtime_error(std::move(message)) {}
+    };
+
+    template <typename Operation>
+    Value network_result(const NativeArgs &native_args,
+                         std::string error_type,
+                         std::string operation,
+                         Operation &&execute)
+    {
+        try
+        {
+            return stdlib_success(execute());
+        }
+        catch (const NetworkFailure &error)
+        {
+            return stdlib_failure(
+                stdlib_error_value(
+                    std::move(error_type),
+                    std::move(operation),
+                    error.what()),
+                native_args.site);
+        }
+    }
+
 
     using NativeStatePtr = std::shared_ptr<void>;
 
@@ -27,7 +57,7 @@ namespace lumiere
     struct TcpServerState
     {
         SocketHandle fd = kInvalidSocketHandle;
-        bool stopped = false;
+        std::atomic<bool> stopped{false};
         Value on_connection = Value::rien();
 
         ~TcpServerState();
@@ -52,7 +82,7 @@ namespace lumiere
     struct HttpServerState
     {
         SocketHandle fd = kInvalidSocketHandle;
-        bool stopped = false;
+        std::atomic<bool> stopped{false};
         std::vector<Value> middleware;
         std::vector<HttpRoute> routes;
         std::vector<std::pair<std::string, Value>> canal_routes;
@@ -79,7 +109,7 @@ namespace lumiere
     struct CanalServerState
     {
         SocketHandle fd = kInvalidSocketHandle;
-        bool stopped = false;
+        std::atomic<bool> stopped{false};
         Value on_connection = Value::rien();
         Value on_message = Value::rien();
         Value on_disconnect = Value::rien();
@@ -118,6 +148,7 @@ namespace lumiere
     struct WebSocketFrame
     {
         uint8_t opcode = 0;
+        bool fin = false;
         std::vector<unsigned char> payload;
     };
 
@@ -136,8 +167,7 @@ namespace lumiere
             runtime.raise_runtime_error(site, context + " requiert un " + expected_type + " valide");
         }
 
-        const auto type_it = object->fields.find("__type");
-        if (type_it == object->fields.end() || !type_it->second.is_texte() || type_it->second.as_texte() != expected_type)
+        if (object->klass == nullptr || object->klass->name != expected_type)
         {
             runtime.raise_runtime_error(site, context + " requiert un " + expected_type);
         }
