@@ -167,3 +167,47 @@ difference matches that count almost exactly. The trade was taken deliberately:
 programs that pass text around gain far more than programs that mint short
 strings lose. Recovering it means inline storage for short text, which is the
 same custom string the object-model work would provide.
+
+## One handle instead of fourteen alternatives — 2026-09-18
+
+Same host, compiler and RelWithDebInfo options. The baseline is the commit
+immediately before `Value` stopped being a `std::variant`. Seven measured runs
+per workload after one warm-up, VM backend, baseline first.
+
+| Workload | Before median (min–max), s | After median (min–max), s | Change |
+| --- | --- | --- | --- |
+| 1,000,000 integer-loop iterations | 0.130491 (0.129161–0.180893) | 0.106503 (0.105334–0.108338) | −18.4% |
+| 30,000 Unicode scalars | 0.008452 (0.008344–0.008637) | 0.007006 (0.006812–0.007684) | −17.1% |
+| 100,000 user-function calls | 0.047511 (0.046963–0.075331) | 0.038870 (0.038146–0.053140) | −18.2% |
+| 3,000 identity calls carrying 128 KiB text | 0.003468 (0.003108–0.003708) | 0.002820 (0.002791–0.002983) | −18.7% |
+| 200,000 typed-list appends | 0.065021 (0.063810–0.065556) | 0.059512 (0.058086–0.061691) | −8.5% |
+| 50,000 dictionary writes then reads | 0.064319 (0.063625–0.066434) | 0.059868 (0.056367–0.064085) | −6.9% |
+
+Every workload improved, which the previous two checkpoints did not manage. A
+`std::variant` generates a switch over its fourteen alternatives for every copy,
+move and destruction, and an integer pushed on the stack paid for that dispatch
+despite owning nothing. Replacing it with a tag, a scalar union and one
+type-erased `shared_ptr<void>` makes a copy a tag, eight bytes and at most one
+reference count. `Value` stays 32 bytes; the gain is entirely in what copying
+one costs, not in its size — which is also why the integer loop moved this time
+and did not move when the value merely got smaller.
+
+A three-way model measured before the change put the available saving on value
+traffic at 43% for this representation against 65% for a trivially copyable
+value, and predicted about −16% on the integer loop. The measured −18.4% is
+slightly better than predicted.
+
+Lifetimes are unchanged: every heap value is still owned by a `shared_ptr`, with
+the same ownership and the same destruction order. This is why the change was
+possible without the object-model work that a trivially copyable value needs —
+the earlier note that the visitor cost was blocked on that work was wrong, and
+about two thirds of it was available immediately.
+
+Against the target on the same host, nine runs: C at 0.31 ms, CPython at
+79.61 ms, the VM at 106.18 ms. The gap to CPython is now 1.33x, from 1.65x.
+
+Safety: the accessors used to be `std::get`, which threw on a tag mismatch. They
+now assert instead, and the assertions are live in the Debug and sanitizer
+builds. The whole suite passes under AddressSanitizer and UndefinedBehavior
+Sanitizer with them enabled, so no accessor is reached with the wrong tag on any
+path the 425 tests cover.

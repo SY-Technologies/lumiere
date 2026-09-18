@@ -18,7 +18,7 @@ Value Value::resultat(
 {
     Value value;
     value.type = Type::RESULTAT;
-    value.data = std::make_shared<const ResultData>(
+    value.m_ref = std::make_shared<ResultData>(
         ResultData{
             success,
             std::move(payload),
@@ -48,7 +48,7 @@ Value Value::with_trace_frame(const TraceFrame &frame) const
 
     Value value;
     value.type = Type::RESULTAT;
-    value.data = std::make_shared<const ResultData>(
+    value.m_ref = std::make_shared<ResultData>(
         ResultData{
             result->success,
             result->payload,
@@ -125,16 +125,6 @@ inline bool index_is_crowded(const std::size_t entries, const std::size_t slots)
 constexpr auto dict_key = [](const DictEntry &entry) -> const Value & { return entry.first; };
 constexpr auto set_key = [](const Value &element) -> const Value & { return element; };
 
-template <typename T>
-struct IsSharedPtr : std::false_type
-{
-};
-
-template <typename T>
-struct IsSharedPtr<std::shared_ptr<T>> : std::true_type
-{
-};
-
 } // namespace
 
 std::size_t value_hash(const Value &value)
@@ -194,17 +184,7 @@ std::size_t value_hash(const Value &value)
     }
 
     // Everything left is a handle, compared by identity and so hashed by address.
-    return hash_mix(tag, std::visit([](const auto &held) -> std::size_t {
-                        if constexpr (IsSharedPtr<std::decay_t<decltype(held)>>::value)
-                        {
-                            return std::hash<const void *>{}(static_cast<const void *>(held.get()));
-                        }
-                        else
-                        {
-                            return 0;
-                        }
-                    },
-                                    value.data));
+    return hash_mix(tag, std::hash<const void *>{}(value.ref_identity()));
 }
 
 std::size_t DictData::probe(const Value &key, const std::size_t hash) const
@@ -350,43 +330,54 @@ bool Value::operator==(const Value &other) const
         return false;
     }
 
-    if (is_rien())// we know they both have the same RIEN type else we would have returned above
+    switch (type)
     {
+    case Type::RIEN:
+        // Both carry the same tag, so there is nothing left to compare.
         return true;
-    }
-    if (is_resultat())
-    {
-        return as_resultat()->success == other.as_resultat()->success &&
-               as_resultat()->payload == other.as_resultat()->payload;
-    }
-    if (is_texte())
+    case Type::ENTIER:
+        return as_entier() == other.as_entier();
+    case Type::DECIMAL:
+        // IEEE comparison, so 0.0 equals -0.0 and a non-number equals nothing.
+        return as_decimal() == other.as_decimal();
+    case Type::LOGIQUE:
+        return as_logique() == other.as_logique();
+    case Type::SYMBOLE:
+        return as_symbole() == other.as_symbole();
+    case Type::TEXTE:
     {
         // Sharing a buffer must not turn text equality into pointer equality.
-        const auto &left = as_texte_ref();
-        const auto &right = other.as_texte_ref();
-        return left == right || (left != nullptr && right != nullptr && *left == *right);
+        const void *left = ref_identity();
+        const void *right = other.ref_identity();
+        return left == right || as_texte() == other.as_texte();
     }
-    if (is_liste_fixe())
+    case Type::LISTE_FIXE:
     {
         // A fixed list is a value, not a handle: two of them are equal when their
         // elements are. std::vector reapplies this operator element by element, so
-        // nested fixed lists compare structurally and every other type keeps its own
-        // rule. Both engines used to carry this case separately, which left the
-        // payload comparison above matching allocations instead of contents.
-        const auto &left = as_liste_fixe();
-        const auto &right = other.as_liste_fixe();
-        if (left == right)
+        // nested fixed lists compare structurally and every other type keeps its
+        // own rule.
+        if (ref_identity() == other.ref_identity())
         {
             return true;
         }
+        const auto &left = as_liste_fixe();
+        const auto &right = other.as_liste_fixe();
         if (left == nullptr || right == nullptr)
         {
             return false;
         }
         return left->elements == right->elements;
     }
+    case Type::RESULTAT:
+        return as_resultat()->success == other.as_resultat()->success &&
+               as_resultat()->payload == other.as_resultat()->payload;
+    default:
+        break;
+    }
 
-    return data == other.data;
+    // Everything left is a handle, compared by identity.
+    return ref_identity() == other.ref_identity();
 }
 
 std::string Value::to_string() const

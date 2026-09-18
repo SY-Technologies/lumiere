@@ -2,6 +2,7 @@
 
 #include "lumiere/interpreter/runtime/native_args.hpp"
 #include "lumiere/parser/type_expr.hpp"
+#include <cassert>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -138,15 +139,16 @@ std::size_t value_hash(const Value &value);
 struct ResultData;
 
 /**
- * @brief Immutable, shared text storage.
+ * @brief Shared text storage.
  *
- * Text used to sit inside the variant as a std::string, which made Value 48
- * bytes and gave every copy of any value — an integer pushed on the stack
- * included — a fourteen-way visitor to run instead of a move of bytes. Sharing
- * the buffer makes copying text a reference count and shrinks every Value.
- * The buffer is const because Lumière text is immutable.
+ * Text used to sit inside the value as a std::string, which made a Value 48
+ * bytes and copying one an allocation and a memcpy of the whole buffer. Sharing
+ * the buffer makes a copy a reference count. Lumière text is immutable, which
+ * is enforced by `as_texte` handing out a const reference rather than by the
+ * pointee's type: the buffer is stored without const so it can share the one
+ * type-erased handle every heap value uses.
  */
-using TexteRef = std::shared_ptr<const std::string>;
+using TexteRef = std::shared_ptr<std::string>;
 
 struct Value
 {
@@ -170,26 +172,7 @@ struct Value
         RIEN          = 14,
     };
 
-    using Data = std::variant<
-        int64_t,                            // ENTIER
-        double,                             // DECIMAL
-        bool,                               // LOGIQUE
-        char32_t,                           // SYMBOLE
-        TexteRef,                           // TEXTE
-        std::shared_ptr<ListeData>,          // LISTE
-        std::shared_ptr<ListeFixeData>,      // LISTE_FIXE
-        std::shared_ptr<DictData>,           // DICTIONNAIRE
-        std::shared_ptr<EnsembleData>,       // ENSEMBLE
-        std::shared_ptr<LumiereObject>,     // OBJET
-        std::shared_ptr<LumiereFunction>,   // FONCTION
-        std::shared_ptr<LumiereClass>,      // CLASSE
-        std::shared_ptr<LumiereInterface>,  // INTERFACE
-        std::shared_ptr<const ResultData>   // RESULTAT
-    >;
-    static_assert(std::variant_size_v<Data> == 14,"Data variant and Type enum are out of sync — check indices");
-
     Type type = Type::RIEN;
-    Data data;
 
     //factories
 
@@ -204,7 +187,7 @@ struct Value
     {
         Value v;
         v.type = Type::ENTIER;
-        v.data = n;
+        v.m_payload.entier = n;
         return v;
     }
 
@@ -212,7 +195,7 @@ struct Value
     {
         Value v;
         v.type = Type::DECIMAL;
-        v.data = d;
+        v.m_payload.decimal = d;
         return v;
     }
 
@@ -220,7 +203,7 @@ struct Value
     {
         Value v;
         v.type = Type::LOGIQUE;
-        v.data = b;
+        v.m_payload.logique = b;
         return v;
     }
 
@@ -228,7 +211,7 @@ struct Value
     {
         Value v;
         v.type = Type::SYMBOLE;
-        v.data = chtr;
+        v.m_payload.symbole = chtr;
         return v;
     }
 
@@ -236,7 +219,7 @@ struct Value
     {
         Value v;
         v.type = Type::TEXTE;
-        v.data = std::make_shared<const std::string>(std::move(str));
+        v.m_ref = std::make_shared<std::string>(std::move(str));
         return v;
     }
 
@@ -245,7 +228,7 @@ struct Value
     {
         Value v;
         v.type = Type::TEXTE;
-        v.data = std::move(str);
+        v.m_ref = std::move(str);
         return v;
     }
 
@@ -253,7 +236,7 @@ struct Value
     {
         Value v;
         v.type = Type::LISTE;
-        v.data = std::move(lst);
+        v.m_ref = std::move(lst);
         return v;
     }
 
@@ -261,7 +244,7 @@ struct Value
     {
         Value v;
         v.type = Type::DICTIONNAIRE;
-        v.data = std::move(data);
+        v.m_ref = std::move(data);
         return v;
     }
 
@@ -269,7 +252,7 @@ struct Value
     {
         Value v;
         v.type = Type::LISTE_FIXE;
-        v.data = std::move(lst);
+        v.m_ref = std::move(lst);
         return v;
     }
 
@@ -277,7 +260,7 @@ struct Value
     {
         Value v;
         v.type = Type::ENSEMBLE;
-        v.data = std::move(ens);
+        v.m_ref = std::move(ens);
         return v;
     }
 
@@ -285,7 +268,7 @@ struct Value
     {
         Value v;
         v.type = Type::OBJET;
-        v.data = std::move(obj);
+        v.m_ref = std::move(obj);
         return v;
     }
 
@@ -293,7 +276,7 @@ struct Value
     {
         Value v;
         v.type = Type::FONCTION;
-        v.data = std::move(fn);
+        v.m_ref = std::move(fn);
         return v;
     }
 
@@ -301,7 +284,7 @@ struct Value
     {
         Value v;
         v.type = Type::CLASSE;
-        v.data = std::move(cls);
+        v.m_ref = std::move(cls);
         return v;
     }
 
@@ -309,7 +292,7 @@ struct Value
     {
         Value v;
         v.type = Type::INTERFACE;
-        v.data = std::move(iface);
+        v.m_ref = std::move(iface);
         return v;
     }
 
@@ -325,66 +308,80 @@ struct Value
 
     //accessors
 
-    int64_t     as_entier()  const { return std::get<int64_t>(data); }
-    double      as_decimal() const { return std::get<double>(data); }
-    bool        as_logique() const { return std::get<bool>(data); }
-    char32_t    as_symbole() const { return std::get<char32_t>(data); }
+    int64_t     as_entier()  const { assert(is_entier());   return m_payload.entier; }
+    double      as_decimal() const { assert(is_decimal());  return m_payload.decimal; }
+    bool        as_logique() const { assert(is_logique());  return m_payload.logique; }
+    char32_t    as_symbole() const { assert(is_symbole());  return m_payload.symbole; }
 
     const std::string &as_texte() const
     {
-        return *std::get<TexteRef>(data);
+        assert(is_texte());
+        return *static_cast<const std::string *>(m_ref.get());
     }
 
     /** @brief The shared buffer, for handing text on without copying it. */
-    const TexteRef &as_texte_ref() const
+    TexteRef as_texte_ref() const
     {
-        return std::get<TexteRef>(data);
+        assert(is_texte());
+        return std::static_pointer_cast<std::string>(m_ref);
     }
 
     std::shared_ptr<ListeData> as_liste() const
     {
-        return std::get<std::shared_ptr<ListeData>>(data);
+        assert(is_liste());
+        return std::static_pointer_cast<ListeData>(m_ref);
     }
 
     std::shared_ptr<DictData> as_dictionnaire() const
     {
-        return std::get<std::shared_ptr<DictData>>(data);
+        assert(is_dictionnaire());
+        return std::static_pointer_cast<DictData>(m_ref);
     }
 
     std::shared_ptr<ListeFixeData> as_liste_fixe() const
     {
-        return std::get<std::shared_ptr<ListeFixeData>>(data);
+        assert(is_liste_fixe());
+        return std::static_pointer_cast<ListeFixeData>(m_ref);
     }
 
     std::shared_ptr<EnsembleData> as_ensemble() const
     {
-        return std::get<std::shared_ptr<EnsembleData>>(data);
+        assert(is_ensemble());
+        return std::static_pointer_cast<EnsembleData>(m_ref);
     }
 
     std::shared_ptr<LumiereObject> as_objet() const
     {
-        return std::get<std::shared_ptr<LumiereObject>>(data);
+        assert(is_objet());
+        return std::static_pointer_cast<LumiereObject>(m_ref);
     }
 
     std::shared_ptr<LumiereFunction> as_fonction() const
     {
-        return std::get<std::shared_ptr<LumiereFunction>>(data);
+        assert(is_fonction());
+        return std::static_pointer_cast<LumiereFunction>(m_ref);
     }
 
     std::shared_ptr<LumiereClass> as_classe() const
     {
-        return std::get<std::shared_ptr<LumiereClass>>(data);
+        assert(is_classe());
+        return std::static_pointer_cast<LumiereClass>(m_ref);
     }
 
     std::shared_ptr<LumiereInterface> as_interface() const
     {
-        return std::get<std::shared_ptr<LumiereInterface>>(data);
+        assert(is_interface());
+        return std::static_pointer_cast<LumiereInterface>(m_ref);
     }
 
     std::shared_ptr<const ResultData> as_resultat() const
     {
-        return std::get<std::shared_ptr<const ResultData>>(data);
+        assert(is_resultat());
+        return std::static_pointer_cast<const ResultData>(m_ref);
     }
+
+    /** @brief Address of the shared object, for identity comparison and hashing. */
+    const void *ref_identity() const { return m_ref.get(); }
 
     //type checks
 
@@ -414,6 +411,29 @@ struct Value
 
     std::string to_string() const;
     std::string type_name() const;
+
+private:
+    /**
+     * Scalars live in the payload, and every heap type shares one type-erased
+     * handle. Copying a Value is therefore a tag, eight bytes and at most one
+     * reference count, never a switch over fourteen alternatives — which is
+     * what a std::variant generates, and what an integer pushed on the stack
+     * used to pay for even though it owns nothing.
+     *
+     * `type` says which member is live. Reading any other one is undefined, so
+     * every accessor asserts its tag; the assertions are active in the Debug
+     * and sanitizer builds that run the suite, and compile away in Release.
+     */
+    union Payload
+    {
+        std::int64_t entier;
+        double decimal;
+        bool logique;
+        char32_t symbole;
+    };
+
+    Payload m_payload {};
+    std::shared_ptr<void> m_ref;
 };
 
 struct TraceFrame
