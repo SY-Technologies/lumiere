@@ -129,9 +129,11 @@ soit profils: Dictionnaire[Texte, Entier] = {"ada": 12}
 Rules:
 
 - `N` is part of the type annotation and must be an integer literal in type position.
-- the size of a `ListeFixe` never changes after construction
-- elements may be replaced by index
-- out-of-bounds reads and writes report an `ErreurIndice` runtime failure
+- a `ListeFixe` never changes after construction: neither its size nor its elements
+- assigning to an element reports a runtime failure
+- out-of-bounds reads report an `ErreurIndice` runtime failure
+- because it cannot change, a `ListeFixe` is compared by its contents and may be
+  used as a dictionary key
 - `ListeFixe` is iterable in index order, like `Liste`
 
 Current construction surface:

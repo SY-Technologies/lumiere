@@ -3693,4 +3693,48 @@ fonction principal() {
     std::filesystem::remove_all(root);
 }
 
+TEST(CliIntegration, BothBackendsUseFixedListsAsDictionaryKeys)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_fixed_list_keys";
+    const auto file = root / "main.lum";
+    // A fixed list is compared by content and can no longer be reassigned, so it
+    // stays equal to the key that was stored: two fixed lists with the same
+    // elements are the same key, and a different order is a different key.
+    write_source(file, R"lum(
+fonction principal() {
+    soit fx = {}
+    fx[[1, 2].en_liste_fixe(2)] = "paire"
+    afficher(fx[[1, 2].en_liste_fixe(2)])
+    fx[[1, 2].en_liste_fixe(2)] = "encore"
+    afficher(fx.taille())
+    afficher(fx[[1, 2].en_liste_fixe(2)])
+    fx[[2, 1].en_liste_fixe(2)] = "inverse"
+    afficher(fx.taille())
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "paire\n1\nencore\n2\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsRejectFixedListElementAssignment)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_fixed_list_immutable";
+    const auto file = root / "main.lum";
+    write_source(file, "fonction principal() { soit t = [1, 2].en_liste_fixe(2) t[0] = 9 }\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_NE(result.exit_code, 0);
+        EXPECT_NE(result.stderr_text.find("immuable"), std::string::npos) << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
 } // namespace

@@ -149,9 +149,6 @@ public:
     void enforce_list_element(const std::shared_ptr<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
-    void enforce_fixed_list_element(const std::shared_ptr<ListeFixeData> &list,
-                                    const Value &value,
-                                    const std::string &context) const;
     void enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
                                   const Value &key,
                                   const Value &value,
@@ -483,19 +480,6 @@ void VmRuntimeServices::annotate_value(const Value &value,
 void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &list,
                                            const Value &value,
                                            const std::string &context) const
-{
-    if (const auto &constraint = list->constraint;
-        constraint && !matches_type_name(value, constraint->element_type))
-    {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
-    }
-    if (list->constraint)
-        annotate_value(value, list->constraint->element_type, {});
-}
-
-void VmRuntimeServices::enforce_fixed_list_element(const std::shared_ptr<ListeFixeData> &list,
-                                                 const Value &value,
-                                                 const std::string &context) const
 {
     if (const auto &constraint = list->constraint;
         constraint && !matches_type_name(value, constraint->element_type))
@@ -1048,19 +1032,7 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
 
     if (object.is_liste_fixe())
     {
-        if (!index.is_entier())
-        {
-            throw VmRuntimeError("VM: l'index de liste fixe doit etre un Entier");
-        }
-        const std::int64_t raw_index = index.as_entier();
-        if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= object.as_liste_fixe()->elements.size())
-        {
-            throw VmRuntimeError("VM: index de liste fixe hors limites");
-        }
-        runtime.enforce_fixed_list_element(object.as_liste_fixe(), value, "l'affectation de liste fixe");
-        object.as_liste_fixe()->elements[static_cast<std::size_t>(raw_index)] = value;
-        stack.push_back(value);
-        return;
+        throw VmRuntimeError("VM: une ListeFixe est immuable : ses elements ne peuvent pas etre remplaces");
     }
 
     if (object.is_dictionnaire())

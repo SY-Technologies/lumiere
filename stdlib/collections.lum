@@ -42,7 +42,11 @@ classe Liste
     }
 }
 
-/** Séquence ordonnée de taille fixe, cohérent avec son type statique. */
+/**
+ * Séquence ordonnée immuable : ni sa taille ni ses éléments ne changent après
+ * sa construction. Elle est comparée par son contenu et peut donc servir de clé
+ * de dictionnaire.
+ */
 classe ListeFixe
 {
     /** Retourne le nombre d'éléments de la séquence. */

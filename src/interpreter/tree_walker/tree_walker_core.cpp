@@ -660,7 +660,7 @@ namespace lumiere
 
     bool TreeWalker::supports_mutable_index_assignment(const Value &value) const
     {
-        return value.is_liste() || value.is_liste_fixe() || value.is_dictionnaire();
+        return value.is_liste() || value.is_dictionnaire();
     }
 
     const std::vector<Value> *TreeWalker::sequence_elements(const Value &value) const

@@ -435,9 +435,16 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     const Value key = evaluate(*target.index);
     Value value = evaluate(value_expr);
 
+    if (object.is_liste_fixe())
+    {
+        throw_runtime_error(target.bracket,
+                            "une ListeFixe est immuable : ses elements ne peuvent pas etre remplaces");
+    }
+
     if (!supports_mutable_index_assignment(object))
     {
-        throw_runtime_error(target.bracket, "affectation par indice impossible: la cible doit etre une Liste, une ListeFixe ou un Dictionnaire");
+        throw_runtime_error(target.bracket,
+                            "affectation par indice impossible: la cible doit etre une Liste ou un Dictionnaire");
     }
 
     if (object.is_liste())
@@ -454,20 +461,6 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
         return;
     }
 
-    if (object.is_liste_fixe())
-    {
-        const int64_t position = assert_entier(key, target.bracket);
-        auto list = object.as_liste_fixe();
-        if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
-        {
-            throw_runtime_error(target.bracket, "indice hors limites");
-        }
-        enforce_fixed_list_element_constraint(list, value, target.bracket, "l'element de liste fixe");
-        list->elements[static_cast<std::size_t>(position)] = value;
-        m_result = std::move(value);
-        return;
-    }
-
     if (object.is_dictionnaire())
     {
         auto dict = object.as_dictionnaire();
@@ -478,7 +471,8 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
         return;
     }
 
-    throw_runtime_error(target.bracket, "affectation par indice impossible: la cible doit etre une Liste, une ListeFixe ou un Dictionnaire");
+    throw_runtime_error(target.bracket,
+                        "affectation par indice impossible: la cible doit etre une Liste ou un Dictionnaire");
 }
 
 void TreeWalker::visit(DictionaryExpr &expr)

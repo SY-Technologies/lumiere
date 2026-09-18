@@ -566,17 +566,6 @@ namespace lumiere
                                              const std::string &context) const;
 
         /**
-         * @brief Checks that a fixed-list write respects its declared element type.
-         *
-         * Size is fixed by the container definition itself; this helper enforces the
-         * element-type part of that contract during updates.
-         */
-        void enforce_fixed_list_element_constraint(const std::shared_ptr<ListeFixeData> &list,
-                                                   const Value &element,
-                                                   const Token &site,
-                                                   const std::string &context) const;
-
-        /**
          * @brief Enforces declared key and value constraints before mutating a dictionary.
          *
          * This keeps `Dictionnaire[K, V]` runtime writes aligned with the type

@@ -4666,13 +4666,16 @@ TEST(InterpreterFunctions, SupportsFixedListConversionAndPreservesElementType)
         "  soit notes: Liste[Entier] = [1, 2, 3]\n"
         "  soit fixe trio: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)\n"
         "  afficher(trio.taille())\n"
-        "  trio[1] = 9\n"
+        "  afficher(trio[1])\n"
+        "  notes[1] = 9\n"
         "  afficher(trio[1])\n"
         "}\n");
 
     EXPECT_TRUE(completed);
     EXPECT_TRUE(error.empty());
-    EXPECT_EQ(output, "3\n9\n");
+    // The conversion copies, so later writes to the source list do not reach the
+    // fixed list.
+    EXPECT_EQ(output, "3\n2\n2\n");
 }
 
 TEST(InterpreterFunctions, SupportsFixedListFactoryAndIteration)
@@ -4703,19 +4706,18 @@ TEST(InterpreterFunctions, RejectsFixedListLengthMismatchDuringConversion)
     EXPECT_NE(error.find("Liste.en_liste_fixe"), std::string::npos);
 }
 
-TEST(InterpreterFunctions, EnforcesFixedListElementTypeOnAssignment)
+TEST(InterpreterFunctions, RejectsFixedListElementAssignment)
 {
     const auto [output, completed, error] = execute_program_with_error(
         "fonction principal() {\n"
         "  soit notes: Liste[Entier] = [1, 2, 3]\n"
         "  soit fixe trio = notes.en_liste_fixe(3)\n"
-        "  trio[0] = \"oops\"\n"
+        "  trio[0] = 9\n"
         "}\n");
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("liste fixe"), std::string::npos);
-    EXPECT_NE(error.find("Entier"), std::string::npos);
+    EXPECT_NE(error.find("immuable"), std::string::npos);
 }
 
 TEST(InterpreterFunctions, EnforcesFixedListFactoryElementType)
