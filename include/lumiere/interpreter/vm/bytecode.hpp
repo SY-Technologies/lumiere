@@ -26,6 +26,12 @@ enum class Opcode : std::uint8_t
     INIT_GLOBAL_LONG,
     GET_LOCAL,
     SET_LOCAL,
+    // Returns a run of local slots to their initial state at the top of a
+    // loop body. A local declared in a loop body is a new binding on every
+    // iteration; without this the frame would reuse one slot, and a closure
+    // made on the second iteration would share the cell captured on the
+    // first. Operands: first slot, then how many.
+    CLEAR_LOCALS,
     GET_CAPTURE,
     SET_CAPTURE,
     CLOSURE,
@@ -141,6 +147,12 @@ struct FunctionBytecode
     std::vector<bool> optional_params;
     std::size_t local_slot_count = 0;
     std::size_t capture_count = 0;
+    // True for the synthetic function the compiler wraps a module's top-level
+    // code in. It is not a function anyone wrote, so it must not appear in a
+    // traceback: the tree walker runs that code with no frame at all, and a
+    // diagnostic that names __module_init__ under one engine and not the other
+    // is a difference in the compiler leaking into the language.
+    bool is_module_initializer = false;
     Chunk chunk;
 };
 
@@ -203,11 +215,22 @@ struct VmNamespaceDescriptor
     std::vector<VmNamespaceMember> members;
 };
 
+// A declared type together with what declared it. ASSERT_TYPE names one of
+// these rather than a bare type, so a failure can say "la variable 'x' attend
+// ..." the way the tree walker does. Without the context the same failure reads
+// differently depending on which engine ran the program.
+struct VmAnnotation
+{
+    std::size_t type_index = 0;
+    std::string context;
+};
+
 struct ModuleBytecode
 {
     std::string source_path;
     std::vector<std::string> globals;
     std::vector<std::string> types;
+    std::vector<VmAnnotation> annotations;
     std::vector<std::string> members;
     std::vector<VmClassDescriptor> classes;
     std::vector<VmInterfaceDescriptor> interfaces;

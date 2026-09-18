@@ -170,7 +170,7 @@ public:
             {
                 const LirOperand nil = constant_nil(Token{TokenType::RIEN, "rien", 0, 0});
                 m_function.set_terminator(m_current_block,
-                                          LirTerminator::return_value(assert_type(nil, m_return_type, {})));
+                                          LirTerminator::return_value(assert_type(nil, m_return_type, {}, current_function_context())));
             }
         }
     }
@@ -267,7 +267,8 @@ public:
                 LirOperand assigned_value = lower_expr(*expr.right);
                 if (const auto type = m_local_types.find(*local); type != m_local_types.end() && !type->second.empty())
                 {
-                    assigned_value = assert_type(assigned_value, type->second, lir_loc(expr.op));
+                    assigned_value = assert_type(assigned_value, type->second, lir_loc(expr.op),
+                                                 variable_context(identifier->name.lexeme));
                 }
                 emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                             {LirOperand::local(*local), assigned_value},
@@ -288,7 +289,8 @@ public:
                 LirOperand assigned_value = lower_expr(*expr.right);
                 if (!capture->type.empty())
                 {
-                    assigned_value = assert_type(assigned_value, capture->type, lir_loc(expr.op));
+                    assigned_value = assert_type(assigned_value, capture->type, lir_loc(expr.op),
+                                                 variable_context(identifier->name.lexeme));
                 }
                 emit_effect(LirOpcode::IR_OP_STORE_CAPTURE,
                             {capture->operand, assigned_value},
@@ -317,7 +319,8 @@ public:
                 const auto type = m_global_types->find(identifier->name.lexeme);
                 if (type != m_global_types->end() && !type->second.empty())
                 {
-                    assigned = assert_type(assigned, type->second, lir_loc(expr.op));
+                    assigned = assert_type(assigned, type->second, lir_loc(expr.op),
+                                           variable_context(identifier->name.lexeme));
                 }
             }
             const std::size_t global = m_module.add_global(identifier->name.lexeme);
@@ -687,7 +690,7 @@ public:
         const LirOperand value = stmt.value ? lower_expr(*stmt.value) : constant_nil(stmt.keyword);
         const LirOperand checked = m_return_type.empty()
                                        ? value
-                                       : assert_type(value, m_return_type, lir_loc(stmt.keyword));
+                                       : assert_type(value, m_return_type, lir_loc(stmt.keyword), current_function_context());
         m_function.set_terminator(
             m_current_block,
             LirTerminator::return_value(checked, lir_loc(stmt.keyword)));
@@ -700,7 +703,8 @@ public:
             LirOperand value = stmt.initializer ? lower_expr(*stmt.initializer) : constant_nil(stmt.name);
             if (!stmt.type.empty())
             {
-                value = assert_type(value, type_name(stmt.type), lir_loc(stmt.name));
+                value = assert_type(value, type_name(stmt.type), lir_loc(stmt.name),
+                                   variable_context(stmt.name.lexeme));
             }
             emit_effect(LirOpcode::IR_OP_STORE_GLOBAL,
                         {LirOperand::global(m_module.add_global(stmt.name.lexeme)), value},
@@ -722,7 +726,8 @@ public:
         if (!stmt.type.empty())
         {
             m_local_types.emplace(local_index, type_name(stmt.type));
-            initial_value = assert_type(initial_value, type_name(stmt.type), lir_loc(stmt.name));
+            initial_value = assert_type(initial_value, type_name(stmt.type), lir_loc(stmt.name),
+                                        variable_context(stmt.name.lexeme));
         }
         if (stmt.is_fixe)
         {
@@ -1068,6 +1073,9 @@ public:
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
         leave_scope();
+        // The loop variable and everything the body declares are new bindings on
+        // each turn, so their slots start each turn empty.
+        clear_body_locals(body_block, item_local, stmt.variable);
         if (!current_block().is_terminated())
         {
             m_function.set_terminator(m_current_block, LirTerminator::jump(increment_block));
@@ -1110,9 +1118,13 @@ public:
                                                         lir_loc(Token{TokenType::TANT_QUE, "tant que", 0, 0})));
 
         m_current_block = body_block;
+        const std::size_t first_body_local = m_next_local_index;
         m_loop_stack.push_back({condition_block, exit_block});
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
+        clear_body_locals(body_block,
+                          first_body_local,
+                          Token{TokenType::TANT_QUE, "tant que", 0, 0});
         if (!current_block().is_terminated())
         {
             m_function.set_terminator(m_current_block, LirTerminator::jump(condition_block));
@@ -1257,7 +1269,8 @@ public:
                         matched = assert_type(
                             matched,
                             m_return_type,
-                            lir_loc(branch.terminator_token));
+                            lir_loc(branch.terminator_token),
+                            current_function_context());
                     }
                     m_function.set_terminator(m_current_block,
                                               LirTerminator::return_value(
@@ -1484,6 +1497,44 @@ private:
         return LirOperand::temp(temp_index);
     }
 
+    // Puts a CLEAR_LOCALS at the top of a loop body covering every slot the body
+    // allocated. It goes in after lowering because only then is the range known,
+    // and at the front because the body's first act must be to start from empty
+    // slots -- including the loop variable, which is stored just after it.
+    //
+    // Reusing one slot across iterations is what a frame naturally does, and it
+    // is invisible until a closure captures that slot: the cell is created once
+    // and every closure made later in the loop shares it, so all of them see the
+    // last iteration's value. The tree walker gives each iteration its own
+    // environment and so its own binding; this is how the VM agrees.
+    void clear_body_locals(const std::size_t body_block,
+                           const std::size_t first_local,
+                           const Token &site)
+    {
+        const std::size_t count = m_next_local_index - first_local;
+        if (count == 0)
+        {
+            return;
+        }
+        std::vector<LirInstruction> &instructions = m_function.blocks[body_block].instructions;
+        instructions.insert(instructions.begin(),
+                            LirInstruction::make(LirOpcode::IR_OP_CLEAR_LOCALS,
+                                                 LirOperand::temp(0),
+                                                 {LirOperand::local(first_local),
+                                                  LirOperand::local(count)},
+                                                 lir_loc(site)));
+    }
+
+    [[nodiscard]] std::string variable_context(const std::string &name) const
+    {
+        return "la variable '" + name + "'";
+    }
+
+    [[nodiscard]] std::string current_function_context() const
+    {
+        return "la fonction '" + m_function.name + "'";
+    }
+
     [[nodiscard]] std::size_t allocate_hidden_local()
     {
         const std::size_t local_index = m_next_local_index++;
@@ -1540,18 +1591,23 @@ private:
                                                 lir_loc(params[i].type));
             const LirOperand checked = assert_type(value,
                                                    type_name(params[i].type),
-                                                   lir_loc(params[i].type));
+                                                   lir_loc(params[i].type),
+                                                   "le paramètre '" + params[i].name + "'");
             emit_effect(LirOpcode::IR_OP_DISCARD, {checked}, lir_loc(params[i].type));
         }
     }
 
     [[nodiscard]] LirOperand assert_type(const LirOperand value,
                                          const std::string &type_name,
-                                         const LirSourceLocation source)
+                                         const LirSourceLocation source,
+                                         const std::string &context)
     {
+        // The operand names an annotation, not a bare type: the failure message
+        // has to say what asked for the type, the way the tree walker does.
         const std::size_t type_index = m_module.add_type(type_name);
+        const std::size_t annotation_index = m_module.add_annotation(type_index, context);
         return emit_value(LirOpcode::IR_OP_ASSERT_TYPE,
-                          {value, LirOperand::type(type_index)},
+                          {value, LirOperand::annotation(annotation_index)},
                           source);
     }
 

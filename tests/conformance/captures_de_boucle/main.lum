@@ -1,0 +1,38 @@
+// Une variable déclarée dans le corps d'une boucle est une nouvelle liaison à
+// chaque tour. Une fermeture créée au tour n doit donc voir la valeur du tour n,
+// et non celle du dernier tour : partager une seule case entre les tours est
+// invisible jusqu'à ce qu'une fermeture la capture.
+fonction principal() {
+    soit depuis_variable_de_boucle = []
+    pour chaque v dans [10, 20, 30] {
+        depuis_variable_de_boucle.ajouter(fonction() { afficher(v) })
+    }
+    pour chaque f dans depuis_variable_de_boucle { f() }
+
+    soit depuis_local_pour_chaque = []
+    pour chaque v dans [1, 2, 3] {
+        soit local = v * 100
+        depuis_local_pour_chaque.ajouter(fonction() { afficher(local) })
+    }
+    pour chaque f dans depuis_local_pour_chaque { f() }
+
+    soit depuis_local_tant_que = []
+    soit i = 0
+    tant que i < 3 {
+        soit local = i
+        depuis_local_tant_que.ajouter(fonction() { afficher(local) })
+        i = i + 1
+    }
+    pour chaque f dans depuis_local_tant_que { f() }
+
+    // Une variable déclarée hors de la boucle reste une seule liaison.
+    soit partagee = 0
+    soit lecteurs = []
+    soit j = 0
+    tant que j < 3 {
+        lecteurs.ajouter(fonction() { afficher(partagee) })
+        j = j + 1
+    }
+    partagee = 42
+    pour chaque f dans lecteurs { f() }
+}

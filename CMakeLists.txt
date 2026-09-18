@@ -303,6 +303,21 @@ if(BUILD_TESTING)
             set(LUMIERE_TEST_TIMEOUT 180)
         endif()
         gtest_discover_tests(lumiere_unit_tests PROPERTIES TIMEOUT ${LUMIERE_TEST_TIMEOUT})
+
+        # The conformance corpus runs the real CLI under both engines and checks
+        # that they agree, which no in-process test can do. It is a ctest entry
+        # so a divergence fails the build instead of waiting to be noticed.
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME conformance
+                     COMMAND ${Python3_EXECUTABLE}
+                             ${PROJECT_SOURCE_DIR}/scripts/conformance
+                             $<TARGET_FILE:lumiere_cli>
+                             --out ${CMAKE_BINARY_DIR}/conformance)
+            set_tests_properties(conformance PROPERTIES TIMEOUT ${LUMIERE_TEST_TIMEOUT})
+        else()
+            message(STATUS "Skipping the conformance corpus: no Python 3 interpreter found.")
+        endif()
     else()
         message(STATUS "Skipping lumiere_unit_tests: test sources are empty.")
     endif()

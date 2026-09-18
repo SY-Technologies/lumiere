@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Throws malformed and hostile input at the front end and at both engines.
+
+Four strategies, each with an invariant that has nothing to do with what the
+program means:
+
+  syntaxe   mutated corpus sources through `check`. A malformed program must be
+            rejected with a diagnostic. It must not crash, hang, or leak a C++
+            artifact such as a `terminate called` or a bare `stoll` into the
+            message: those are the shape of an unhandled exception, not of a
+            language saying no.
+  utf8      the same, with invalid UTF-8 spliced into literals and identifiers.
+            Text handling is defined over Unicode scalars, so a byte sequence
+            that is not one has to be refused rather than misread.
+  nombres   generated programs sitting on the Entier and Décimal boundaries, run
+            under both engines. The invariant is that the two agree exactly --
+            neither one is assumed correct.
+  execution mutated corpus sources actually run under both engines. Anything
+            that survives the analyzer must either run or fail cleanly, and both
+            engines must reach the same verdict.
+
+Every failure is shrunk -- lines first, then characters -- to the smallest input
+that still fails, and written under the output directory with the command that
+reproduces it. A finding nobody can reproduce in one line is a finding nobody
+fixes.
+
+  scripts/fuzz build/lumiere
+  scripts/fuzz build/lumiere --iterations 2000 --strategy syntaxe
+"""
+
+import argparse
+import concurrent.futures
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# The shape of an unhandled C++ exception or a crash reaching the user.
+LEAKED_INTERNALS = (
+    "terminate called",
+    "Segmentation fault",
+    "std::bad_alloc",
+    "basic_string::",
+    "stoll",
+    "stod",
+    "stoi",
+    "vector::_M_range_check",
+    "Assertion",
+    "AddressSanitizer",
+    "UndefinedBehaviorSanitizer",
+)
+
+INTERESTING_TEXT = [
+    "", " ", "\t", "\n", "\\", "\"", "'", "{", "}", "(", ")", "[", "]",
+    "é", "中", "😀", "﻿", "//", "/*", "*/", "0x", "1e999",
+    "9223372036854775808", "-9223372036854775809", "1_000", "...", "=>",
+    "fonction", "classe", "retourne", "soit", "rien", "vrai", "faux",
+]
+
+NUMERIC_EDGES = [
+    "0", "1", "-1", "9223372036854775807", "-9223372036854775808",
+    "4611686018427387904", "-4611686018427387904", "2", "-2", "3", "-3",
+]
+
+NUMERIC_OPERATORS = ["+", "-", "*", "/", "%"]
+
+
+def run(binary, arguments, source_path, timeout, stdin_text=""):
+    command = [str(binary), *arguments, str(source_path)]
+    try:
+        finished = subprocess.run(command, input=stdin_text, capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace",
+                                  timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"command": command, "code": None, "stdout": "", "stderr": "",
+                "verdict": "blocage"}
+    output = (finished.stdout or "") + (finished.stderr or "")
+    verdict = None
+    if finished.returncode < 0:
+        verdict = "signal " + str(-finished.returncode)
+    else:
+        for marker in LEAKED_INTERNALS:
+            if marker in output:
+                verdict = "trace interne dans la sortie : " + marker
+                break
+    return {"command": command, "code": finished.returncode,
+            "stdout": finished.stdout or "", "stderr": finished.stderr or "",
+            "verdict": verdict}
+
+
+# ---------------------------------------------------------------- strategies
+
+
+def mutate(source, rng, utf8):
+    """Applies a few edits. Small, repeated edits reach further than one big one."""
+    data = list(source)
+    for _ in range(rng.randint(1, 6)):
+        if not data:
+            break
+        choice = rng.random()
+        position = rng.randrange(len(data))
+        if choice < 0.3:
+            del data[position]
+        elif choice < 0.6:
+            data.insert(position, rng.choice(INTERESTING_TEXT))
+        elif choice < 0.8:
+            data[position] = rng.choice(INTERESTING_TEXT)
+        else:
+            end = min(len(data), position + rng.randint(1, 40))
+            chunk = data[position:end]
+            data[position:end] = list(reversed(chunk))
+    text = "".join(data)
+    if utf8:
+        # Splice in bytes that cannot begin a Unicode scalar sequence.
+        raw = text.encode("utf-8", errors="replace")
+        for _ in range(rng.randint(1, 3)):
+            if not raw:
+                break
+            position = rng.randrange(len(raw))
+            raw = raw[:position] + bytes([rng.randrange(0x80, 0x100)]) + raw[position:]
+        text = raw.decode("utf-8", errors="surrogateescape")
+    return text
+
+
+def numeric_program(rng):
+    lines = ["fonction principal() {"]
+    for _ in range(rng.randint(1, 6)):
+        left = rng.choice(NUMERIC_EDGES)
+        right = rng.choice(NUMERIC_EDGES)
+        operator = rng.choice(NUMERIC_OPERATORS)
+        decimal = ".0" if rng.random() < 0.3 else ""
+        lines.append("    afficher(" + left + decimal + " " + operator + " " + right + decimal + ")")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def write_source(path, source):
+    path.write_text(source, encoding="utf-8", errors="surrogateescape")
+
+
+def check_front_end(binary, source, work, timeout):
+    """A malformed program is rejected, not survived."""
+    path = work / "main.lum"
+    write_source(path, source)
+    result = run(binary, ["check"], path, timeout)
+    if result["verdict"]:
+        return [result["verdict"]], {"check": result}
+    if result["code"] not in (0, 1):
+        return ["code de sortie inattendu " + str(result["code"])], {"check": result}
+    return [], {"check": result}
+
+
+def check_both_engines(binary, source, work, timeout):
+    """Whatever the analyzer lets through, the two engines must agree on."""
+    path = work / "main.lum"
+    write_source(path, source)
+    analysis = run(binary, ["check"], path, timeout)
+    if analysis["verdict"]:
+        return [analysis["verdict"]], {"check": analysis}
+    if analysis["code"] != 0:
+        return [], {}  # rejected before either engine sees it, which is fine
+
+    results = {backend: run(binary, ["--" + backend], path, timeout)
+               for backend in ("tw", "vm")}
+    # A program with no entry point is a known divergence about what counts as a
+    # runnable program, not a fresh finding, and shrinking collapses onto it from
+    # almost anywhere. It is recorded once, as a corpus case; here it is simply
+    # out of scope, so the search keeps looking for something new.
+    if any("aucun point d'entrée" in result["stderr"] for result in results.values()):
+        return [], {}
+    problems = [backend + ": " + result["verdict"]
+                for backend, result in results.items() if result["verdict"]]
+    if problems:
+        return problems, results
+    if results["tw"]["code"] != results["vm"]["code"]:
+        problems.append("désaccord: sortie tw=" + str(results["tw"]["code"]) +
+                        " vm=" + str(results["vm"]["code"]))
+    for stream in ("stdout", "stderr"):
+        if results["tw"][stream] != results["vm"][stream]:
+            problems.append("désaccord: " + stream + " diffère entre les moteurs")
+    return problems, results
+
+
+STRATEGIES = {
+    "syntaxe": (check_front_end, False),
+    "utf8": (check_front_end, True),
+    "execution": (check_both_engines, False),
+    "nombres": (check_both_engines, None),
+}
+
+
+# ------------------------------------------------------------------ shrinking
+
+
+def shrink(source, still_fails, rounds=60):
+    """Delta-debugging: lines first, then characters. Stops when nothing helps."""
+    best = source
+    for _ in range(rounds):
+        lines = best.split("\n")
+        reduced = False
+        for index in range(len(lines)):
+            candidate = "\n".join(lines[:index] + lines[index + 1:])
+            if candidate.strip() and still_fails(candidate):
+                best, reduced = candidate, True
+                break
+        if not reduced:
+            break
+    for _ in range(rounds):
+        reduced = False
+        for index in range(len(best)):
+            candidate = best[:index] + best[index + 1:]
+            if candidate.strip() and still_fails(candidate):
+                best, reduced = candidate, True
+                break
+        if not reduced:
+            break
+    return best
+
+
+def corpus_sources(root):
+    sources = []
+    for directory in ("tests/fixtures/interpreter", "tests/conformance", "examples"):
+        for path in (root / directory).rglob("*.lum"):
+            try:
+                sources.append(path.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+    return sources
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("binary", type=Path)
+    parser.add_argument("--iterations", type=int, default=400)
+    parser.add_argument("--strategy", action="append", choices=sorted(STRATEGIES))
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--out", type=Path, default=Path("build/fuzz"))
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
+        parser.error("binaire introuvable ou non exécutable : " + str(args.binary))
+
+    root = Path(__file__).resolve().parent.parent
+    seed = args.seed if args.seed is not None else random.randrange(1 << 30)
+    strategies = args.strategy or sorted(STRATEGIES)
+    sources = corpus_sources(root)
+    if not sources:
+        print("aucune source de départ trouvée", file=sys.stderr)
+        return 2
+
+    if args.out.exists():
+        shutil.rmtree(args.out, ignore_errors=True)
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    def attempt(strategy, index):
+        rng = random.Random(hash((seed, strategy, index)))
+        checker, utf8 = STRATEGIES[strategy]
+        source = numeric_program(rng) if utf8 is None else mutate(rng.choice(sources), rng, utf8)
+        work = args.out / ("tmp-" + strategy + "-" + str(index))
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            problems, _ = checker(args.binary, source, work, args.timeout)
+            if not problems:
+                return None
+
+            def still_fails(candidate):
+                found, _ = checker(args.binary, candidate, work, args.timeout)
+                return bool(found)
+
+            minimal = shrink(source, still_fails)
+            final, results = checker(args.binary, minimal, work, args.timeout)
+            return {"strategie": strategy, "graine": seed, "iteration": index,
+                    "problemes": final or problems, "source": minimal,
+                    "commandes": [" ".join(result["command"]) for result in results.values()]}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    findings = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futures = [pool.submit(attempt, strategy, index)
+                   for strategy in strategies
+                   for index in range(args.iterations)]
+        for future in concurrent.futures.as_completed(futures):
+            finding = future.result()
+            if finding is None:
+                continue
+            findings.append(finding)
+            target = args.out / (finding["strategie"] + "-" + str(len(findings)).zfill(3))
+            target.mkdir(parents=True, exist_ok=True)
+            write_source(target / "main.lum", finding["source"])
+            (target / "problemes.txt").write_text(
+                "\n".join(finding["problemes"]) +
+                "\n\ngraine : " + str(finding["graine"]) +
+                "\ncommandes :\n" + "\n".join(finding["commandes"]) + "\n",
+                encoding="utf-8")
+            finding["reproduction"] = str(target)
+
+    total = len(strategies) * args.iterations
+    if args.json:
+        print(json.dumps({"graine": seed, "essais": total, "trouvailles": findings},
+                         ensure_ascii=False, indent=2))
+    else:
+        for finding in findings:
+            print("TROUVÉ  " + finding["strategie"] + "  " + finding["reproduction"])
+            for problem in finding["problemes"]:
+                print("          " + problem)
+        print()
+        print(str(total) + " essais, " + str(len(findings)) + " trouvaille(s), graine " + str(seed) + ".")
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

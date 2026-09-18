@@ -38,6 +38,7 @@ enum class LirOperandKind : std::uint8_t
     IR_OPERAND_FUNCTION,
     IR_OPERAND_BLOCK,
     IR_OPERAND_TYPE,
+    IR_OPERAND_ANNOTATION,
     IR_OPERAND_MEMBER,
     IR_OPERAND_CAPTURE,
     IR_OPERAND_CLASS,
@@ -60,6 +61,7 @@ struct LirOperand
     [[nodiscard]] static LirOperand function(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand block(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand type(std::size_t index) noexcept;
+    [[nodiscard]] static LirOperand annotation(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand member(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand capture(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand klass(std::size_t index) noexcept;
@@ -78,6 +80,7 @@ enum class LirOpcode : std::uint8_t
     IR_OP_INIT_GLOBAL,
     IR_OP_LOAD_LOCAL,
     IR_OP_STORE_LOCAL,
+    IR_OP_CLEAR_LOCALS,
     IR_OP_MOVE,
     IR_OP_ADD,
     IR_OP_SUBTRACT,
@@ -206,6 +209,14 @@ struct LirType
     std::string name;
 };
 
+// See VmAnnotation: a type plus what required it.
+struct LirAnnotation
+{
+    std::size_t index = 0;
+    std::size_t type_index = 0;
+    std::string context;
+};
+
 struct LirMember
 {
     std::size_t index = 0;
@@ -319,6 +330,7 @@ struct LirModule
     std::vector<LirConstant> constants;
     std::vector<LirGlobal> globals;
     std::vector<LirType> types;
+    std::vector<LirAnnotation> annotations;
     std::vector<LirMember> members;
     std::vector<LirClassDescriptor> classes;
     std::vector<LirInterfaceDescriptor> interfaces;
@@ -335,6 +347,7 @@ struct LirModule
     [[nodiscard]] std::size_t add_global(std::string name);
 
     [[nodiscard]] std::size_t add_type(std::string name);
+    [[nodiscard]] std::size_t add_annotation(std::size_t type_index, std::string context);
     [[nodiscard]] std::size_t add_member(std::string name);
     [[nodiscard]] std::size_t add_argument_name(std::string name);
 

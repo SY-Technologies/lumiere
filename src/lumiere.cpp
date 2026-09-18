@@ -796,14 +796,19 @@ int main(int argc, char *argv[])
 
         if (options.execute)
         {
+            // The backend is destroyed first -- locals go in reverse order of
+            // declaration -- so by the time this guard runs, whatever the
+            // backend held in a cycle is unreachable and collectable. A guard
+            // rather than a statement after the block because the program may
+            // leave by throwing, and a program that ends in an error has no
+            // less right to be cleaned up than one that ends well.
+            struct CollectWhenDone
             {
-                auto backend = make_backend(options.backend);
-                backend->execute(*program);
-            }
-            // The backend is gone, so whatever it held in a cycle is now
-            // unreachable. The tree walker keeps its environments alive for as
-            // long as it lives, so this has to happen after it is destroyed.
-            lumiere::collect_cycles();
+                ~CollectWhenDone() { lumiere::collect_cycles(); }
+            } collect_when_done;
+
+            auto backend = make_backend(options.backend);
+            backend->execute(*program);
         }
 
         return 0;

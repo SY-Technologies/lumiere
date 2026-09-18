@@ -800,6 +800,50 @@ The cost is at the noise floor on the VM and roughly 0 to 5 per cent on the tree
 walker, measured by building the previous commit in the same session and running
 the two binaries back to back.
 
+## Cross-engine conformance
+
+The tree walker and the bytecode VM have to be the same language. Nothing
+enforced that: the fixture corpus under `tests/fixtures/interpreter` ran only
+through the tree walker, in process, skipping the analyzer — so it was checking a
+pipeline no user takes, and three of its expectations had drifted onto a runtime
+message for a program the CLI rejects statically with a better one.
+
+`scripts/conformance` replaces that. It runs every case through the real CLI
+under both engines and asks two separate questions: does the case still do what
+it is documented to do, and do the two engines do the same thing. The second
+question is the one a single-engine replay cannot ask, and it is where the bugs
+were. It is a ctest entry, so a divergence fails the build.
+
+`scripts/fuzz` attacks the same property from the other side: mutated corpus
+sources through the analyzer and both engines, invalid UTF-8 spliced into source,
+and generated programs on the numeric boundaries. Its invariants are independent
+of meaning — no crash, no hang, no C++ artifact such as a bare `stoll` or a
+`terminate called` reaching the user, and no disagreement between the engines.
+Every finding is shrunk, lines then characters, to the smallest input that still
+fails.
+
+The first runs found, and these are now fixed:
+
+- The VM showed `__module_init__`, the synthetic function it wraps top-level code
+  in, as a traceback frame. The tree walker runs that code with no frame at all,
+  so the same failure read differently depending on the engine.
+- The VM reused one local slot for every iteration of a loop. Invisible until a
+  closure captured it: all closures made in the loop then shared one cell and
+  reported the last iteration's value, where the tree walker gives each iteration
+  its own binding. Fixed with a `CLEAR_LOCALS` instruction at the top of a loop
+  body, costing nothing measurable.
+- Five families of runtime diagnostic were worded differently by the two engines,
+  among them every binary arithmetic and comparison operator, unknown symbols,
+  unknown text members, and unmet type annotations. The VM's type assertions now
+  carry the context that required the type, so they say "la variable 'f' attend
+  …" rather than naming only the types, which is what the tree walker always did.
+
+Three divergences are recorded rather than closed, each as a corpus case with a
+`divergence.connue` note: whether `principal` is required at all, an assignment to
+an undeclared name that the analyzer accepts, and which token a runtime error
+points at. A recorded divergence fails the run once the engines agree, so the note
+cannot outlive the problem.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
@@ -814,9 +858,9 @@ the two binaries back to back.
    at analysis. Tightening them needs the analyzer to follow the aliasing that
    the allocation-carried constraints already handle, which is the same work as
    richer mutable-generic relations in priority 1.
-3. **One conformance corpus.** Run language and stdlib fixtures under both
-   engines, comparing values, errors, evaluation order, and side effects.
-   Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.
+3. **One conformance corpus.** Built; see "Cross-engine conformance" above.
+   What remains is fuzzing malformed bytecode against the verifier, and closing
+   the three recorded divergences.
 4. **Value representation.** Profiling said the 48-byte non-trivial `Value` was
    about 40% of execution. It is now 24 bytes and holds a `Ref` rather than a
    `shared_ptr`, which was the part that had to wait for the runtime to own its

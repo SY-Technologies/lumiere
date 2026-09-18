@@ -1,0 +1,22 @@
+// Les bornes d'Entier, le signe de la division et du modulo, et la conversion
+// de texte : chacune est un endroit où deux implémentations peuvent diverger
+// sans que rien ne le signale.
+fonction principal() {
+    afficher(9223372036854775807)
+    afficher(-9223372036854775807 - 1)
+
+    // La division tronque vers zéro et le modulo prend le signe du dividende.
+    afficher(7 / 2)
+    afficher(-7 / 2)
+    afficher(7 % 3)
+    afficher(-7 % 3)
+    afficher(7 % -3)
+
+    // Les séparateurs de chiffres et la notation scientifique sont des littéraux.
+    afficher(1_000_000)
+    afficher(1e3)
+
+    afficher("42".en_entier())
+    afficher("-42".en_entier())
+    afficher(9223372036854775807 == 9223372036854775807)
+}

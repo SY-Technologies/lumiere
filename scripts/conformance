@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""Runs the conformance corpus through both engines and reports every divergence.
+
+Two questions are asked of every case, and they are not the same question:
+
+  1. Does the case still do what it is documented to do? That is the expectation
+     files, and it is what an ordinary fixture suite checks.
+  2. Do the two engines do the same thing? That is checked whether or not the
+     case has expectations, and it is the one that cannot be asked of a fixture
+     that only ever runs through one engine.
+
+Every failure is written out as a reproduction: the case, the exact command, and
+what each engine actually produced, so a mismatch does not have to be recreated
+by hand before it can be looked at.
+
+  scripts/conformance build/lumiere
+  scripts/conformance build/lumiere --corpus tests/fixtures/interpreter
+"""
+
+import argparse
+import concurrent.futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+BACKENDS = ("tw", "vm")
+DEFAULT_CORPORA = ("tests/fixtures/interpreter", "tests/conformance", "examples")
+
+
+class Case:
+    """One program plus whatever is expected of it."""
+
+    def __init__(self, root: Path, entry: Path):
+        self.root = root                      # directory holding the case
+        self.entry = entry                    # the .lum file to run
+        self.name = str(entry.relative_to(root.parent if entry == root else root.parent))
+
+    @property
+    def stdin_path(self):
+        candidate = self.root / "stdin.txt"
+        return candidate if candidate.is_file() else None
+
+    def expectation(self, stream: str):
+        """(kind, text) where kind is 'exact', 'contains' or None."""
+        exact = self.root / f"expected.{stream}"
+        if exact.is_file():
+            return "exact", exact.read_text(encoding="utf-8")
+        contains = self.root / f"expected.{stream}.contains"
+        if contains.is_file():
+            return "contains", contains.read_text(encoding="utf-8")
+        return None, None
+
+    def known_divergence(self):
+        """A difference between the engines that is recorded rather than fixed.
+
+        A gap nobody has written down is a gap nobody remembers. The file names
+        the streams that may differ and why; if they stop differing the run fails
+        so the note gets deleted instead of outliving the problem.
+        """
+        marker = self.root / "divergence.connue"
+        if marker.is_file():
+            return marker.read_text(encoding="utf-8").strip() or "sans raison donnée"
+        return None
+
+    def skip_reason(self, backend: str):
+        marker = self.root / f"skip.{backend}"
+        if marker.is_file():
+            return marker.read_text(encoding="utf-8").strip() or "sans raison donnée"
+        return None
+
+    def source_relatives(self):
+        """Case-relative paths of every source file, longest first."""
+        sources = [p.relative_to(self.root).as_posix()
+                   for p in self.root.rglob("*.lum")] if self.root.is_dir() else []
+        sources.append(self.entry.name)
+        return sorted(set(sources), key=len, reverse=True)
+
+
+def discover(corpus: Path):
+    """A case is a directory holding main.lum, or a standalone .lum file."""
+    cases = []
+    if not corpus.exists():
+        return cases
+    if corpus.is_file():
+        return [Case(corpus.parent, corpus)]
+    main = corpus / "main.lum"
+    if main.is_file():
+        return [Case(corpus, main)]
+    for child in sorted(corpus.iterdir()):
+        if child.is_dir():
+            cases.extend(discover(child))
+        elif child.suffix == ".lum":
+            cases.append(Case(child.parent, child))
+    return cases
+
+
+def normalise(text: str, case: Case) -> str:
+    """Strips the directory a case happens to live in out of its own output.
+
+    Expectation files were written on someone's machine and carry that machine's
+    absolute paths; the runner sees whatever path it was invoked with. Neither is
+    a property of the language, so both are reduced to the case-relative path
+    before anything is compared.
+    """
+    text = text.replace("\\", "/")
+    for relative in case.source_relatives():
+        text = re.sub(r'[^\s"\'()\[\]]*/' + re.escape(relative), relative, text)
+    return text.rstrip()
+
+
+def run(binary: Path, case: Case, backend: str, timeout: float):
+    command = [str(binary), "--" + backend, str(case.entry)]
+    stdin_text = case.stdin_path.read_text(encoding="utf-8") if case.stdin_path else ""
+    try:
+        finished = subprocess.run(command, input=stdin_text, capture_output=True,
+                                  text=True, encoding="utf-8", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"command": command, "timeout": True, "code": None,
+                "stdout": "", "stderr": f"pas de réponse après {timeout} s"}
+    return {"command": command, "timeout": False, "code": finished.returncode,
+            "stdout": finished.stdout or "", "stderr": finished.stderr or ""}
+
+
+def check_expectations(case: Case, result, backend: str):
+    """What the case is documented to do. Returns a list of complaints."""
+    problems = []
+    if result["timeout"]:
+        return [f"{backend}: {result['stderr']}"]
+
+    for stream in ("stdout", "stderr"):
+        kind, expected = case.expectation(stream)
+        actual = normalise(result[stream], case)
+        if kind == "exact":
+            if actual != normalise(expected, case):
+                problems.append(f"{backend}: {stream} ne correspond pas à expected.{stream}")
+        elif kind == "contains":
+            if normalise(expected, case) not in actual:
+                problems.append(f"{backend}: {stream} ne contient pas expected.{stream}.contains")
+
+    stderr_kind, _ = case.expectation("stderr")
+    if stderr_kind is None:
+        # No stated failure, so the program is expected to run to completion.
+        if result["code"] != 0:
+            problems.append(f"{backend}: sortie {result['code']} alors qu'aucune erreur n'est attendue")
+    elif result["code"] == 0:
+        problems.append(f"{backend}: sortie 0 alors qu'une erreur est attendue")
+    return problems
+
+
+def compare_engines(case: Case, results):
+    """The property no single-engine fixture can check."""
+    first, second = results["tw"], results["vm"]
+    if first["timeout"] or second["timeout"]:
+        return []  # already reported as an expectation failure
+    problems = []
+    if first["code"] != second["code"]:
+        problems.append(f"désaccord: sortie tw={first['code']} vm={second['code']}")
+    for stream in ("stdout", "stderr"):
+        if normalise(first[stream], case) != normalise(second[stream], case):
+            problems.append(f"désaccord: {stream} diffère entre les moteurs")
+
+    recorded = case.known_divergence()
+    if recorded is None:
+        return problems
+    if problems:
+        return []  # the difference is the one already written down
+    return [f"divergence.connue à retirer : les moteurs s'accordent désormais ({recorded})"]
+
+
+def write_reproduction(out_dir: Path, case: Case, results, problems):
+    target = out_dir / case.name.replace("/", "__").replace(".lum", "")
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "problemes.txt").write_text("\n".join(problems) + "\n", encoding="utf-8")
+    if case.root.is_dir() and case.root != case.entry.parent.parent:
+        shutil.copytree(case.root, target / "cas", dirs_exist_ok=True)
+    else:
+        shutil.copy2(case.entry, target / case.entry.name)
+    for backend, result in results.items():
+        (target / f"{backend}.commande").write_text(" ".join(result["command"]) + "\n", encoding="utf-8")
+        (target / f"{backend}.stdout").write_text(result["stdout"], encoding="utf-8")
+        (target / f"{backend}.stderr").write_text(result["stderr"], encoding="utf-8")
+        (target / f"{backend}.sortie").write_text(f"{result['code']}\n", encoding="utf-8")
+    return target
+
+
+def examine(binary, case, timeout):
+    results, problems, skipped = {}, [], []
+    recorded = case.known_divergence()
+    for backend in BACKENDS:
+        reason = case.skip_reason(backend)
+        if reason:
+            skipped.append(f"{backend}: {reason}")
+            continue
+        results[backend] = run(binary, case, backend, timeout)
+        # A case that exists to document a difference is not also asserting what
+        # either engine does; its whole expectation is that they still differ.
+        if recorded is None:
+            problems.extend(check_expectations(case, results[backend], backend))
+    if len(results) == len(BACKENDS):
+        problems.extend(compare_engines(case, results))
+    return case, results, problems, skipped
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("binary", type=Path)
+    parser.add_argument("--corpus", type=Path, action="append", default=None)
+    parser.add_argument("--out", type=Path, default=Path("build/conformance"))
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--json", action="store_true", help="rapport lisible par une machine")
+    args = parser.parse_args()
+
+    if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
+        parser.error(f"binaire introuvable ou non exécutable : {args.binary}")
+
+    root = Path(__file__).resolve().parent.parent
+    corpora = args.corpus or [root / part for part in DEFAULT_CORPORA]
+    cases = [case for corpus in corpora for case in discover(Path(corpus))]
+    if not cases:
+        print("aucun cas trouvé", file=sys.stderr)
+        return 2
+
+    if args.out.exists():
+        shutil.rmtree(args.out, ignore_errors=True)
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    failures, skips, report = 0, 0, []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futures = [pool.submit(examine, args.binary, case, args.timeout) for case in cases]
+        for future in concurrent.futures.as_completed(futures):
+            case, results, problems, skipped = future.result()
+            skips += len(skipped)
+            entry = {"cas": case.name, "problemes": problems, "ignores": skipped}
+            if problems:
+                failures += 1
+                entry["reproduction"] = str(write_reproduction(args.out, case, results, problems))
+            report.append(entry)
+
+    report.sort(key=lambda item: item["cas"])
+    if args.json:
+        print(json.dumps({"cas": len(cases), "echecs": failures, "details": report},
+                         ensure_ascii=False, indent=2))
+    else:
+        for entry in report:
+            for reason in entry["ignores"]:
+                print(f"IGNORÉ  {entry['cas']}  ({reason})")
+            if entry["problemes"]:
+                print(f"ÉCHEC   {entry['cas']}")
+                for problem in entry["problemes"]:
+                    print(f"          {problem}")
+                print(f"          reproduction : {entry['reproduction']}")
+        print()
+        print(f"{len(cases)} cas, {failures} en échec, {skips} ignoré(s).")
+
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -320,7 +320,8 @@ TEST(CliIntegration, RejectsUnknownVmGlobalReference)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("variable globale introuvable"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("est introuvable dans la portée courante"),
+              std::string::npos);
 }
 
 TEST(CliIntegration, ExecutesVmModuleGlobalsAndFirstClassFunctions)
@@ -744,7 +745,11 @@ TEST(CliIntegration, EnforcesVmExplicitAndImplicitReturnTypes)
     EXPECT_NE(explicit_result.exit_code, 0);
     EXPECT_NE(explicit_result.stderr_text.find("attend Entier; reçu Texte"), std::string::npos);
     EXPECT_NE(implicit_result.exit_code, 0);
-    EXPECT_NE(implicit_result.stderr_text.find("incompatible avec Entier"), std::string::npos);
+    // Both engines now word this the same way, and both name the function whose
+    // declared return was not met rather than only the types involved.
+    EXPECT_NE(implicit_result.stderr_text.find(
+                  "la fonction 'incomplete' attend une valeur de type Entier; type reçu : Rien"),
+              std::string::npos);
 }
 
 TEST(CliIntegration, ExecutesVmRecursiveFunctionCalls)

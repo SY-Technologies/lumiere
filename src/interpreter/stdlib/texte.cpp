@@ -1,3 +1,4 @@
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
@@ -386,7 +387,7 @@ Value execute_texte_operation(IRuntime &runtime,
             call_site);
     }
 
-    runtime.raise_runtime_error(call_site, "opération Texte inconnue: " + operation);
+    runtime.raise_runtime_error(call_site, messages::membre_introuvable(operation, "Texte"));
     return Value::rien();
 }
 

@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_membre_texte/main.lum)
+  File "diagnostic_membre_texte/main.lum", line 4, column 29
+        afficher(t.membre_absent())
+                                ^
+erreur d'exécution: membre introuvable 'membre_absent' pour une valeur de type Texte

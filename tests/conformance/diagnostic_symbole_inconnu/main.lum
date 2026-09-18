@@ -1,0 +1,5 @@
+// Un nom qui ne désigne rien : les deux moteurs le rapportent avec les mêmes
+// mots, alors qu'ils le découvrent dans du code entièrement différent.
+fonction principal() {
+    afficher(fonction_absente())
+}

@@ -1,0 +1,9 @@
+// Une affectation à un nom jamais déclaré. L'analyseur l'accepte, ce qu'il ne
+// devrait pas : la VM l'attrape à la compilation, le tree-walker seulement en
+// arrivant dessus. Tant que l'analyseur ne le refuse pas, les deux moteurs
+// rapportent la même faute à des moments différents et avec des mots différents.
+index = 42
+
+fonction principal() {
+    afficher(index)
+}

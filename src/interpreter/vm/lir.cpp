@@ -87,6 +87,11 @@ LirOperand LirOperand::type(const std::size_t index) noexcept
     return {LirOperandKind::IR_OPERAND_TYPE, index};
 }
 
+LirOperand LirOperand::annotation(const std::size_t index) noexcept
+{
+    return {LirOperandKind::IR_OPERAND_ANNOTATION, index};
+}
+
 LirOperand LirOperand::member(const std::size_t index) noexcept
 {
     return {LirOperandKind::IR_OPERAND_MEMBER, index};
@@ -240,6 +245,21 @@ std::size_t LirModule::add_global(std::string name)
     return index;
 }
 
+std::size_t LirModule::add_annotation(const std::size_t type_index, std::string context)
+{
+    for (const LirAnnotation &annotation : annotations)
+    {
+        if (annotation.type_index == type_index && annotation.context == context)
+        {
+            return annotation.index;
+        }
+    }
+
+    const std::size_t index = annotations.size();
+    annotations.push_back({index, type_index, std::move(context)});
+    return index;
+}
+
 std::size_t LirModule::add_type(std::string name)
 {
     for (const LirType &type : types)
@@ -315,6 +335,9 @@ std::string to_string(const LirOperand &operand)
     case LirOperandKind::IR_OPERAND_TYPE:
         out << "TYPE";
         break;
+    case LirOperandKind::IR_OPERAND_ANNOTATION:
+        out << "ANNOTATION";
+        break;
     case LirOperandKind::IR_OPERAND_MEMBER:
         out << "MEMBER";
         break;
@@ -354,6 +377,8 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_LOAD_LOCAL";
     case LirOpcode::IR_OP_STORE_LOCAL:
         return "IR_OP_STORE_LOCAL";
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        return "IR_OP_CLEAR_LOCALS";
     case LirOpcode::IR_OP_MOVE:
         return "IR_OP_MOVE";
     case LirOpcode::IR_OP_ADD:
@@ -452,6 +477,7 @@ std::string to_string(const LirInstruction &instruction)
     std::ostringstream out;
 
     if (instruction.opcode == LirOpcode::IR_OP_STORE_LOCAL ||
+        instruction.opcode == LirOpcode::IR_OP_CLEAR_LOCALS ||
         instruction.opcode == LirOpcode::IR_OP_STORE_GLOBAL ||
         instruction.opcode == LirOpcode::IR_OP_INIT_GLOBAL ||
         instruction.opcode == LirOpcode::IR_OP_SET_MEMBER ||

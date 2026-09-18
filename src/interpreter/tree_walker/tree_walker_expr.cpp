@@ -23,17 +23,12 @@ Value checked_integer(TreeWalker &runtime, const Token &site,
     return Value::entier(*value);
 }
 
-std::string describe_binary_operand_types(const Value &left, const Value &right)
-{
-    return "types reçus: " + left.type_name() + " et " + right.type_name();
-}
-
 std::string describe_expected_binary_types(const std::string &operation,
                                            const Value &left,
                                            const Value &right,
                                            const std::string &expected_types)
 {
-    return operation + " attend " + expected_types + "; " + describe_binary_operand_types(left, right);
+    return messages::operandes_attendues(operation, expected_types, left.type_name(), right.type_name());
 }
 
 std::string describe_expected_unary_type(const std::string &operation,

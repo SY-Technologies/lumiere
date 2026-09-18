@@ -629,8 +629,9 @@ namespace lumiere
 
         throw_runtime_error(
             site,
-            context + " attend une valeur de type " + display_runtime_type(annotation.to_string()) +
-                "; type reçu: " + value.type_name());
+            messages::type_attendu(context,
+                                   display_runtime_type(annotation.to_string()),
+                                   value.type_name()));
     }
 
 } // namespace lumiere

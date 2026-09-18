@@ -173,13 +173,6 @@ bool test_tcp_binding_available()
         }                                                                                \
     } while (false)
 
-std::string read_text_file(const std::filesystem::path &path)
-{
-    std::ifstream file(path);
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
 
 std::string trim_trailing_whitespace(std::string text)
 {
@@ -190,34 +183,7 @@ std::string trim_trailing_whitespace(std::string text)
     return text;
 }
 
-bool file_exists(const std::filesystem::path &path)
-{
-    return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
-}
 
-std::string normalize_fixture_paths(std::string text)
-{
-    std::replace(text.begin(), text.end(), '\\', '/');
-    const std::string marker = "/tests/fixtures/interpreter/";
-    std::size_t marker_pos = text.find(marker);
-    while (marker_pos != std::string::npos)
-    {
-        std::size_t start = marker_pos;
-        while (start > 0)
-        {
-            const char ch = text[start - 1];
-            if (ch == '"' || ch == '(' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t')
-            {
-                break;
-            }
-            --start;
-        }
-
-        text.erase(start, marker_pos - start);
-        marker_pos = text.find(marker, start + marker.size());
-    }
-    return text;
-}
 
 std::string normalize_path_text(const std::filesystem::path &path)
 {
@@ -506,110 +472,14 @@ void write_module(const std::filesystem::path &path, const std::string &source)
     module_file << source;
 }
 
-TEST(InterpreterFixtures, MatchesFixtureExpectations)
-{
-#ifndef LUMIERE_INTERPRETER_FIXTURE_DIR
-    GTEST_SKIP() << "interpreter fixture directory not configured";
-#else
-    const std::filesystem::path fixtures_dir(LUMIERE_INTERPRETER_FIXTURE_DIR);
-    ASSERT_TRUE(std::filesystem::exists(fixtures_dir));
-
-    bool saw_fixture = false;
-    for (const auto &entry : std::filesystem::directory_iterator(fixtures_dir))
-    {
-        if (!entry.is_directory())
-        {
-            continue;
-        }
-
-        saw_fixture = true;
-        const std::filesystem::path case_dir = entry.path();
-        const std::filesystem::path source_path = case_dir / "main.lum";
-        ASSERT_TRUE(std::filesystem::exists(source_path)) << case_dir.string();
-
-        Lexer lexer(read_text_file(source_path));
-        Parser parser(lexer.tokenise());
-
-        Program program;
-        program.statements = parser.parse();
-        program.source_path = source_path.string();
-        program.source_text = read_text_file(source_path);
-
-        ASSERT_FALSE(parser.had_error()) << case_dir.string();
-
-        TreeWalker walker;
-        walker.add_import_path(case_dir);
-
-        std::ostringstream captured;
-        std::istringstream provided_input(file_exists(case_dir / "stdin.txt")
-                                              ? read_text_file(case_dir / "stdin.txt")
-                                              : std::string{});
-        auto *previous = std::cout.rdbuf(captured.rdbuf());
-        auto *previous_input = std::cin.rdbuf(provided_input.rdbuf());
-        bool completed = true;
-        std::string error_message;
-
-        try
-        {
-            walker.execute(program);
-        }
-        catch (const RuntimeError &err)
-        {
-            completed = false;
-            error_message = err.what();
-        }
-        catch (...)
-        {
-            completed = false;
-            error_message = "unknown error";
-        }
-
-        std::cout.rdbuf(previous);
-        std::cin.rdbuf(previous_input);
-
-        const std::filesystem::path stdout_path = case_dir / "expected.stdout";
-        const std::filesystem::path stderr_path = case_dir / "expected.stderr";
-        const std::filesystem::path stderr_contains_path = case_dir / "expected.stderr.contains";
-        const std::filesystem::path stdout_contains_path = case_dir / "expected.stdout.contains";
-
-        if (std::filesystem::exists(stdout_path))
-        {
-            EXPECT_EQ(trim_trailing_whitespace(captured.str()),
-                      trim_trailing_whitespace(read_text_file(stdout_path)))
-                << case_dir.string();
-        }
-        else if (std::filesystem::exists(stdout_contains_path))
-        {
-            const std::string expected_fragment = trim_trailing_whitespace(read_text_file(stdout_contains_path));
-            EXPECT_NE(captured.str().find(expected_fragment), std::string::npos) << case_dir.string();
-        }
-        else
-        {
-            EXPECT_TRUE(trim_trailing_whitespace(captured.str()).empty()) << case_dir.string();
-        }
-
-        if (std::filesystem::exists(stderr_path))
-        {
-            EXPECT_FALSE(completed) << case_dir.string();
-            EXPECT_EQ(trim_trailing_whitespace(normalize_fixture_paths(error_message)),
-                      trim_trailing_whitespace(normalize_fixture_paths(read_text_file(stderr_path))))
-                << case_dir.string();
-        }
-        else if (std::filesystem::exists(stderr_contains_path))
-        {
-            EXPECT_FALSE(completed) << case_dir.string();
-            const std::string expected_fragment = trim_trailing_whitespace(read_text_file(stderr_contains_path));
-            EXPECT_NE(error_message.find(expected_fragment), std::string::npos) << case_dir.string();
-        }
-        else
-        {
-            EXPECT_TRUE(completed) << case_dir.string() << "\n" << error_message;
-        }
-    }
-
-    EXPECT_TRUE(saw_fixture);
-#endif
-}
+// The fixture corpus under tests/fixtures/interpreter used to be replayed here,
+// through Lexer -> Parser -> TreeWalker. That pipeline skips the analyzer and
+// only ever ran one engine, so the expectations drifted onto a path no user
+// takes: three of them pinned a runtime message for a program the CLI rejects
+// statically, with a better diagnostic. scripts/conformance owns the corpus now
+// -- it runs each case through the real CLI under both engines and checks that
+// they agree, which is the property a single-engine replay cannot check. See the
+// `conformance` test registered in CMakeLists.txt.
 
 TEST(InterpreterRuntimeCall, ExecutesUserPrincipalThroughRuntimeCall)
 {

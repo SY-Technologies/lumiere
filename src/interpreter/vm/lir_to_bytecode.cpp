@@ -62,6 +62,8 @@ std::size_t instr_size(const LirModule &module,
     case LirOpcode::IR_OP_LOAD_CAPTURE:
     case LirOpcode::IR_OP_STORE_CAPTURE:
         return 2;
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        return 3;
     case LirOpcode::IR_OP_CLOSURE:
         return 4 + (instruction.operands.size() - 1) * 2;
     case LirOpcode::IR_OP_NOT:
@@ -201,6 +203,13 @@ void emit_instr(const LirModule &module,
     case LirOpcode::IR_OP_STORE_LOCAL:
         chunk.write_opcode(Opcode::SET_LOCAL, bc_loc(instruction.source));
         chunk.write_byte(require_u8_index(instruction.operands.at(0).index, "l'index de local"),
+                         bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        chunk.write_opcode(Opcode::CLEAR_LOCALS, bc_loc(instruction.source));
+        chunk.write_byte(require_u8_index(instruction.operands.at(0).index, "l'index de local"),
+                         bc_loc(instruction.source));
+        chunk.write_byte(require_u8_index(instruction.operands.at(1).index, "le nombre de locaux"),
                          bc_loc(instruction.source));
         return;
     case LirOpcode::IR_OP_LOAD_CAPTURE:
@@ -538,6 +547,11 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         bytecode_module.globals.push_back(global.name);
     }
+    bytecode_module.annotations.reserve(module.annotations.size());
+    for (const LirAnnotation &annotation : module.annotations)
+    {
+        bytecode_module.annotations.push_back({annotation.type_index, annotation.context});
+    }
     bytecode_module.types.reserve(module.types.size());
     for (const LirType &type : module.types)
     {
@@ -633,6 +647,14 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
         bytecode_function.capture_count = lir_function.captures.size();
         emit_fn(module, lir_function, bytecode_function);
         bytecode_module.functions.push_back(std::move(bytecode_function));
+    }
+
+    for (const std::size_t index : bytecode_module.initializer_function_indices)
+    {
+        if (index < bytecode_module.functions.size())
+        {
+            bytecode_module.functions[index].is_module_initializer = true;
+        }
     }
 
     return bytecode_module;

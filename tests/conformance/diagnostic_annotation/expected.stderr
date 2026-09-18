@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_annotation/main.lum)
+  File "diagnostic_annotation/main.lum", line 4, column 11
+        soit f: ListeFixe[Entier, 3] = [1, 2, 3]
+              ^
+erreur d'exécution: la variable 'f' attend une valeur de type ListeFixe[Entier,3]; type reçu : Liste

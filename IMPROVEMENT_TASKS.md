@@ -68,14 +68,47 @@ other benchmark workloads.
 
 ## T4 — Build one cross-engine conformance and fuzzing corpus
 
-Status: pending
+Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences open
 
-- Run language and standard-library fixtures under both engines.
-- Compare values, diagnostics, evaluation order, and side effects.
-- Fuzz UTF-8, parser input, numeric boundaries, and malformed bytecode.
+- [x] Run language and standard-library fixtures under both engines.
+      `scripts/conformance` runs every case through the real CLI under `--tw`
+      and `--vm`, checks each against its expectations, and diffs the engines
+      against each other. It is a ctest entry, so a divergence fails the build.
+- [x] Compare values, diagnostics, evaluation order, and side effects. The
+      corpus covers evaluation and side-effect order, closure capture, dispatch,
+      pattern matching, iteration under mutation, numeric boundaries, and the
+      shape of a traceback.
+- [x] Fuzz UTF-8, parser input, and numeric boundaries. `scripts/fuzz` mutates
+      corpus sources and generates boundary programs; every finding is shrunk to
+      a minimal reproduction on disk. A crash, a hang, a leaked C++ artifact in a
+      message, or a disagreement between the engines all count as findings.
+- [ ] Fuzz malformed bytecode against the verifier. The verifier's guarantee —
+      that anything it accepts cannot make the interpreter read out of bounds —
+      is the one property here with no test behind it.
+- [ ] Decide whether `principal` is required. The tree walker runs a program
+      without one; the VM refuses to compile it. This is a language decision, not
+      an implementation detail. Recorded as
+      `tests/conformance/divergence_point_entree`.
+- [ ] Reject assignment to an undeclared name in the analyzer. `lumiere check`
+      accepts `index = 42` at top level with no declaration; the VM catches it
+      when compiling and the tree walker only on reaching it. Fixing the analyzer
+      removes both differences at once. Recorded as
+      `tests/conformance/divergence_globale_non_declaree`.
+- [ ] Settle which token a runtime error points at. The two engines pick
+      different tokens for the same failure, so the caret can sit one character
+      apart. A spot fix traded one divergence for another; this needs a stated
+      rule, not a patch.
 
-Acceptance: one command runs the corpus and stores minimal reproductions for
-every discovered mismatch or crash.
+What it found on the first run, all since fixed: the VM showed its synthetic
+`__module_init__` frame in tracebacks the tree walker had no frame for; the VM
+shared one local slot across loop iterations, so every closure made in a loop saw
+the last iteration's value; and five families of runtime diagnostic were worded
+differently by the two engines, including every binary arithmetic and comparison
+operator. Three of the five were found by the fuzzer rather than by hand.
+
+Acceptance: `scripts/conformance` and `scripts/fuzz` each run from one command
+and store minimal reproductions. Met, except that malformed bytecode is not yet
+fuzzed and three divergences above are recorded rather than closed.
 
 ## T5 — Profile representative workloads
 

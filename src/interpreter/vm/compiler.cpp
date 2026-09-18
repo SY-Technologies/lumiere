@@ -267,6 +267,7 @@ LirOperand remap_operand(const LirOperand operand,
                          const std::vector<std::size_t> &globals,
                          const std::vector<std::size_t> &functions,
                          const std::vector<std::size_t> &types,
+                         const std::vector<std::size_t> &annotations,
                          const std::vector<std::size_t> &members,
                          const std::vector<std::size_t> &classes,
                          const std::vector<std::size_t> &interfaces,
@@ -279,6 +280,7 @@ LirOperand remap_operand(const LirOperand operand,
     case LirOperandKind::IR_OPERAND_GLOBAL: return LirOperand::global(globals.at(operand.index));
     case LirOperandKind::IR_OPERAND_FUNCTION: return LirOperand::function(functions.at(operand.index));
     case LirOperandKind::IR_OPERAND_TYPE: return LirOperand::type(types.at(operand.index));
+    case LirOperandKind::IR_OPERAND_ANNOTATION: return LirOperand::annotation(annotations.at(operand.index));
     case LirOperandKind::IR_OPERAND_MEMBER: return LirOperand::member(members.at(operand.index));
     case LirOperandKind::IR_OPERAND_CLASS: return LirOperand::klass(classes.at(operand.index));
     case LirOperandKind::IR_OPERAND_INTERFACE: return LirOperand::interface(interfaces.at(operand.index));
@@ -322,6 +324,12 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
     for (const LirType &type : source.types)
     {
         types.push_back(target.add_type(type.name));
+    }
+    // An annotation points into the type table, so it is remapped after types.
+    std::vector<std::size_t> annotations;
+    for (const LirAnnotation &annotation : source.annotations)
+    {
+        annotations.push_back(target.add_annotation(types.at(annotation.type_index), annotation.context));
     }
     std::vector<std::size_t> members;
     for (const LirMember &member : source.members)
@@ -375,7 +383,7 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
             method.function_index = functions.at(method.function_index);
             for (LirOperand &capture : method.capture_sources)
             {
-                capture = remap_operand(capture, constants, globals, functions, types, members, classes, interfaces,
+                capture = remap_operand(capture, constants, globals, functions, types, annotations, members, classes, interfaces,
                                         argument_names, namespaces);
             }
         }
@@ -408,7 +416,7 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
         {
             function.captures.push_back({capture.index,
                                          capture.name,
-                                         remap_operand(capture.source, constants, globals, functions, types,
+                                         remap_operand(capture.source, constants, globals, functions, types, annotations,
                                                        members, classes, interfaces, argument_names, namespaces)});
         }
         for (const LirBlock &source_block : source_function.blocks)
@@ -419,19 +427,19 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
                 std::vector<LirOperand> operands;
                 for (const LirOperand operand : source_instruction.operands)
                 {
-                    operands.push_back(remap_operand(operand, constants, globals, functions, types, members, classes,
+                    operands.push_back(remap_operand(operand, constants, globals, functions, types, annotations, members, classes,
                                                      interfaces, argument_names, namespaces));
                 }
                 block.instructions.push_back(LirInstruction::make(
                     source_instruction.opcode,
-                    remap_operand(source_instruction.destination, constants, globals, functions, types,
+                    remap_operand(source_instruction.destination, constants, globals, functions, types, annotations,
                                   members, classes, interfaces, argument_names, namespaces),
                     std::move(operands), source_instruction.source));
             }
             std::vector<LirOperand> term_operands;
             for (const LirOperand operand : source_block.terminator->operands)
             {
-                term_operands.push_back(remap_operand(operand, constants, globals, functions, types, members, classes,
+                term_operands.push_back(remap_operand(operand, constants, globals, functions, types, annotations, members, classes,
                                                       interfaces, argument_names, namespaces));
             }
             block.terminator = std::make_unique<LirTerminator>(LirTerminator{

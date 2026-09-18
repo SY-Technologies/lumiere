@@ -495,7 +495,10 @@ std::string Value::type_name() const
     case Type::ENTIER:
         return "Entier";
     case Type::DECIMAL:
-        return "Decimal";
+        // The accented spelling is the language's own name for the type. The
+        // unaccented one is accepted in annotations as a convenience for
+        // keyboards, but a diagnostic reports what the type is called.
+        return "Décimal";
     case Type::LOGIQUE:
         return "Logique";
     case Type::SYMBOLE:

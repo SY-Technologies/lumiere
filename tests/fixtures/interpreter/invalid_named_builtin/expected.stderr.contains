@@ -1,1 +1,1 @@
-arguments nommés ne sont pas pris en charge pour 'afficher'
+erreur[LUM-S0018]: cette fonction native n'accepte pas d'arguments nommés

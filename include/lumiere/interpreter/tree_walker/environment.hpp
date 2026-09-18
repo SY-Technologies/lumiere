@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/runtime/value.hpp"
 #include <memory>
@@ -84,7 +85,7 @@ public:
             return m_parent->get(name);
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portée courante"
+            messages::symbole_introuvable(name)
         );
     }
 
@@ -123,7 +124,7 @@ public:
             return;
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portée courante"
+            messages::symbole_introuvable(name)
         );
     }
 
@@ -148,7 +149,7 @@ public:
             return m_parent->declared_type_of(name);
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portée courante"
+            messages::symbole_introuvable(name)
         );
     }
 

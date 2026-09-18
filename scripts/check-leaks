@@ -26,6 +26,11 @@ if [ ! -x "$binary" ]; then
     exit 2
 fi
 
+# Programs that run to completion, and programs that die part way through. The
+# second group is not an afterthought: a run that ends in an error leaves the
+# runtime mid-flight, and for a while the CLI collected cycles only on the path
+# where nothing went wrong, so every failing program leaked everything it had
+# built. A list of programs that all succeed cannot notice that.
 programs=(
     examples/bonjour.lum
     examples/analyse_collections.lum
@@ -36,6 +41,12 @@ programs=(
     benchmarks/dictionary_lookup.lum
     benchmarks/text_iteration.lum
     benchmarks/function_calls.lum
+    tests/conformance/captures_de_boucle/main.lum
+    tests/conformance/diagnostic_annotation/main.lum
+    tests/conformance/diagnostic_membre_texte/main.lum
+    tests/conformance/diagnostic_portee_module/main.lum
+    tests/fixtures/interpreter/error_traceback/main.lum
+    tests/fixtures/interpreter/interface_contract_violation/main.lum
 )
 
 failures=0

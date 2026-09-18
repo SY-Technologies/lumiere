@@ -116,6 +116,8 @@ private:
         case Opcode::GET_LOCAL:
         case Opcode::SET_LOCAL:
             return index(1, m_function.local_slot_count, "variable locale");
+        case Opcode::CLEAR_LOCALS:
+            return local_range();
         case Opcode::GET_CAPTURE:
         case Opcode::SET_CAPTURE:
             return index(1, m_function.capture_count, "capture");
@@ -156,14 +158,16 @@ private:
             return index(2, m_module.interfaces.size(), "interface");
         case Opcode::NAMESPACE:
             return index(2, m_module.namespaces.size(), "espace de noms");
+        case Opcode::ASSERT_TYPE:
+            return index(1, m_module.annotations.size(), "annotation");
+        case Opcode::ASSERT_TYPE_LONG:
+            return index(3, m_module.annotations.size(), "annotation");
         case Opcode::CAST:
         case Opcode::TYPE_CHECK:
-        case Opcode::ASSERT_TYPE:
         case Opcode::RESULT_FAILURE_TYPE:
             return index(1, m_module.types.size(), "type");
         case Opcode::CAST_LONG:
         case Opcode::TYPE_CHECK_LONG:
-        case Opcode::ASSERT_TYPE_LONG:
         case Opcode::RESULT_FAILURE_TYPE_LONG:
             return index(3, m_module.types.size(), "type");
         default:
@@ -193,6 +197,24 @@ private:
         {
             return fail(std::string("index de ") + what + ' ' + std::to_string(value) + " hors table (" +
                         std::to_string(limit) + ")");
+        }
+        return std::nullopt;
+    }
+
+    // CLEAR_LOCALS names a run of slots rather than one, so both ends have to
+    // be inside the frame: the interpreter walks the range without checking.
+    std::optional<std::string> local_range()
+    {
+        if (!available(2))
+        {
+            return fail("opérande de plage de variables locales tronquée");
+        }
+        const std::size_t first = u8();
+        const std::size_t count = u8();
+        if (first + count > m_function.local_slot_count)
+        {
+            return fail("plage de variables locales " + std::to_string(first) + '+' + std::to_string(count) +
+                        " hors du cadre (" + std::to_string(m_function.local_slot_count) + ')');
         }
         return std::nullopt;
     }

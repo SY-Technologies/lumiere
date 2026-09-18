@@ -698,6 +698,7 @@ void execute_type_check(std::vector<Value> &stack, const std::string &type_name)
 
 void execute_type_assertion(std::vector<Value> &stack,
                             const std::string &type_name,
+                            const std::string &context,
                             VmRuntimeServices &runtime)
 {
     if (stack.empty())
@@ -706,8 +707,9 @@ void execute_type_assertion(std::vector<Value> &stack,
     }
     if (!matches_type_name(stack.back(), type_name))
     {
-        throw VmRuntimeError("VM: valeur de type " + stack.back().type_name() +
-                             " incompatible avec " + display_runtime_type(type_name));
+        throw VmRuntimeError("VM: " + messages::type_attendu(context,
+                                                             display_runtime_type(type_name),
+                                                             stack.back().type_name()));
     }
     runtime.annotate_value(stack.back(), type_name, {});
 }
@@ -735,7 +737,9 @@ void execute_add(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: addition attend deux valeurs numériques ou au moins un Texte");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "l'addition", "deux valeurs numériques ou au moins un Texte",
+        left.type_name(), right.type_name()));
 }
 
 void execute_subtract(std::vector<Value> &stack)
@@ -755,7 +759,8 @@ void execute_subtract(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: soustraction attend deux valeurs numériques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la soustraction", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_multiply(std::vector<Value> &stack)
@@ -775,7 +780,8 @@ void execute_multiply(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: multiplication attend deux valeurs numériques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la multiplication", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_divide(std::vector<Value> &stack)
@@ -804,7 +810,8 @@ void execute_divide(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: division attend deux valeurs numériques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la division", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_modulo(std::vector<Value> &stack)
@@ -813,7 +820,8 @@ void execute_modulo(std::vector<Value> &stack)
     const Value left = pop_value(stack);
     if (!left.is_entier() || !right.is_entier())
     {
-        throw VmRuntimeError("VM: modulo attend deux valeurs de type Entier");
+        throw VmRuntimeError("VM: " + messages::operandes_attendues(
+            "le modulo", "deux valeurs de type Entier", left.type_name(), right.type_name()));
     }
     if (right.as_entier() == 0)
     {
@@ -862,7 +870,7 @@ void execute_not_equal(std::vector<Value> &stack)
 }
 
 template <typename Predicate>
-void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, const char *message)
+void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, const char *operation)
 {
     const Value right = pop_value(stack);
     const Value left = pop_value(stack);
@@ -879,7 +887,8 @@ void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, con
         return;
     }
 
-    throw VmRuntimeError(message);
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(operation, "deux valeurs numériques",
+                                                                left.type_name(), right.type_name()));
 }
 
 void execute_list(std::vector<Value> &stack, const std::size_t length)
@@ -1855,6 +1864,13 @@ Value run_frames(VmExecutionState &execution,
         trace.reserve(frames.size());
         for (const CallFrame &frame : frames)
         {
+            // Top-level code is a real frame to the VM and no frame at all to
+            // the tree walker. Showing it would make the same failure read
+            // differently depending on which engine ran it.
+            if (frame.function->is_module_initializer)
+            {
+                continue;
+            }
             trace.push_back({frame.function->name,
                              frame.function->source_path,
                              static_cast<std::uint32_t>(frame.call_site.line),
@@ -1930,7 +1946,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (!global_defined[index])
             {
-                throw VmRuntimeError("VM: variable globale introuvable: " + module.globals[index]);
+                throw VmRuntimeError("VM: " + messages::symbole_introuvable(module.globals[index]));
             }
             stack.push_back(globals[index]);
             break;
@@ -1944,7 +1960,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (!global_defined[index])
             {
-                throw VmRuntimeError("VM: variable globale introuvable: " + module.globals[index]);
+                throw VmRuntimeError("VM: " + messages::symbole_introuvable(module.globals[index]));
             }
             stack.push_back(globals[index]);
             break;
@@ -2009,6 +2025,21 @@ Value run_frames(VmExecutionState &execution,
                 throw VmRuntimeError("VM: index local invalide");
             }
             locals[index].get() = pop_value(stack);
+            break;
+        }
+        case Opcode::CLEAR_LOCALS:
+        {
+            // A loop body's locals are new bindings on every iteration. Dropping
+            // the slots here is what makes that true for a closure as well: the
+            // cell a closure captured on the previous iteration stays with that
+            // closure, and the next capture of this slot allocates a fresh one.
+            const std::uint8_t first = read_byte(chunk, ip);
+            const std::uint8_t count = read_byte(chunk, ip);
+            const std::size_t end = std::min<std::size_t>(first + count, locals.size());
+            for (std::size_t slot = first; slot < end; ++slot)
+            {
+                locals[slot] = LocalSlot{};
+            }
             break;
         }
         case Opcode::GET_CAPTURE:
@@ -2255,19 +2286,19 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::LESS:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left < right; },
-                                    "VM: comparaison '<' attend deux valeurs numériques");
+                                    "la comparaison '<'");
             break;
         case Opcode::LESS_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left <= right; },
-                                    "VM: comparaison '<=' attend deux valeurs numériques");
+                                    "la comparaison '<='");
             break;
         case Opcode::GREATER:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left > right; },
-                                    "VM: comparaison '>' attend deux valeurs numériques");
+                                    "la comparaison '>'");
             break;
         case Opcode::GREATER_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left >= right; },
-                                    "VM: comparaison '>=' attend deux valeurs numériques");
+                                    "la comparaison '>='");
             break;
         case Opcode::CALL:
         {
@@ -2468,7 +2499,7 @@ Value run_frames(VmExecutionState &execution,
                 break;
             }
 
-            throw VmRuntimeError("VM: fonction globale inconnue '" + name + "'");
+            throw VmRuntimeError("VM: " + messages::symbole_introuvable(name));
         }
         case Opcode::CALL_MEMBER:
         case Opcode::CALL_MEMBER_LONG:
@@ -2756,11 +2787,19 @@ Value run_frames(VmExecutionState &execution,
             const std::size_t index = opcode == Opcode::ASSERT_TYPE_LONG
                                           ? read_u24(chunk, ip)
                                           : read_byte(chunk, ip);
-            if (index >= module.types.size())
+            if (index >= module.annotations.size())
+            {
+                throw VmRuntimeError("VM: index d'annotation invalide");
+            }
+            const VmAnnotation &annotation = module.annotations[index];
+            if (annotation.type_index >= module.types.size())
             {
                 throw VmRuntimeError("VM: index de type invalide");
             }
-            execute_type_assertion(stack, module.types[index], runtime_services);
+            execute_type_assertion(stack,
+                                   module.types[annotation.type_index],
+                                   annotation.context,
+                                   runtime_services);
             break;
         }
         case Opcode::MATCH_ERROR:

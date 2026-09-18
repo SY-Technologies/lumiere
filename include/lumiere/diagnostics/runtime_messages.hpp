@@ -75,6 +75,32 @@ inline std::string valeur_non_iterable(const std::string_view type_name)
     return "cette valeur n'est pas itérable : elle est de type " + std::string(type_name);
 }
 
+/**
+ * @brief A binary operator applied to operands it does not accept.
+ *
+ * Naming both operand types is the difference between a message that says what
+ * is wrong and one that only says what was wanted. The two engines detect this
+ * in unrelated code -- one on an AST node, one on a stack -- so the wording
+ * lives here rather than in either of them.
+ */
+inline std::string operandes_attendues(const std::string_view operation,
+                                       const std::string_view expected,
+                                       const std::string_view left_type,
+                                       const std::string_view right_type)
+{
+    return std::string(operation) + " attend " + std::string(expected) + "; types reçus : " +
+           std::string(left_type) + " et " + std::string(right_type);
+}
+
+/** @brief A unary operator applied to an operand it does not accept. */
+inline std::string operande_attendue(const std::string_view operation,
+                                     const std::string_view expected,
+                                     const std::string_view received_type)
+{
+    return std::string(operation) + " attend " + std::string(expected) + "; type reçu : " +
+           std::string(received_type);
+}
+
 /** @brief A declared element, key or value type was not respected. */
 inline std::string type_attendu(const std::string_view context,
                                 const std::string_view expected,
@@ -82,6 +108,12 @@ inline std::string type_attendu(const std::string_view context,
 {
     return std::string(context) + " attend une valeur de type " + std::string(expected) +
            "; type reçu : " + std::string(received);
+}
+
+/** @brief A name that resolves to nothing, whether it is called or merely read. */
+inline std::string symbole_introuvable(const std::string_view name)
+{
+    return "le symbole '" + std::string(name) + "' est introuvable dans la portée courante";
 }
 
 inline std::string cle_introuvable()
