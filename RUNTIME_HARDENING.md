@@ -511,6 +511,32 @@ in the same session. The sweep covered message text only: dispatch keys, member
 names and identifiers inside diagnostics are untouched, which is why
 `lire_decimal` and `en_liste_fixe` still read as they are written in source.
 
+### Result types for builtin collection members — 2026-09-17
+
+The analyzer typed `taille` on a builtin collection and nothing else, so every
+other member call was `Universel`. `Universel` is assignable to a declared type
+in neither direction, so no collection member call could initialize one:
+`soit t: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)` was rejected even though
+`docs/implemented-language-overview.md` documents that exact line, and the
+runtime has carried the element type through that conversion all along. The unit
+fixtures did not catch it because they drive the tree walker directly, without
+analysis; only the CLI path ran the analyzer.
+
+Member results now follow the receiver: `Dictionnaire[K, V].clés()` is a
+`Liste[K]`, `Liste[T].en_ensemble()` an `Ensemble[T]`, `Ensemble[T].union` an
+`Ensemble[T]`, `Liste[T].retirer_a` a `T`. `ListeFixe` carries its length in its
+type, so `en_liste_fixe(n)` is read at the call site, where the literal is
+visible. Chained calls work because each link now has a type.
+
+Parameters stay `Universel`. Element and key types are enforced at run time
+against the constraint carried by the allocation, which sees through aliases the
+analyzer cannot follow, so declaring them here would reject programs the runtime
+accepts. That is a separate change, listed as a priority below.
+
+This is the first checkpoint that makes a mistyped result a compile error:
+assigning `Dictionnaire[Texte, Entier].clés()` to a `Liste[Entier]` now reports
+`attend Liste[Entier]; reçu Liste[Texte]` instead of running.
+
 ## Verification and measurement
 
 ```sh
@@ -549,11 +575,12 @@ so parallel CTest runs cannot overwrite each other's results.
    Implement
    cycle collection with explicit roots and allocation accounting, then enable
    leak checks. Long-running applications need bounded memory behavior.
-2. **Builtin member types in the analyzer.** The analyzer types `taille` on a
-   builtin collection and nothing else, so `notes.en_liste_fixe(3)` and every
-   other collection member call is `Universel` and cannot initialize a declared
-   collection type. The runtime already carries these types; the analyzer needs
-   the matching signatures.
+2. **Argument types for builtin members.** Result types are now known, but the
+   parameters of a builtin collection member are still `Universel`, so
+   `notes.ajouter("x")` on a `Liste[Entier]` is caught at run time rather than
+   at analysis. Tightening them needs the analyzer to follow the aliasing that
+   the allocation-carried constraints already handle, which is the same work as
+   richer mutable-generic relations in priority 1.
 3. **One conformance corpus.** Run language and stdlib fixtures under both
    engines, comparing values, errors, evaluation order, and side effects.
    Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.

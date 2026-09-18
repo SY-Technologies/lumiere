@@ -3934,4 +3934,62 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
     std::filesystem::remove_all(root);
 }
 
+TEST(CliIntegration, BothBackendsTypeBuiltinCollectionMembers)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_collection_member_types";
+    const auto file = root / "main.lum";
+    // Every one of these declarations used to fail analysis with "reçu Universel":
+    // the analyzer typed only `taille`, so a collection member call could not
+    // initialize a declared collection type, including the idiom the overview
+    // documents for en_liste_fixe.
+    write_source(file, R"lum(
+fonction principal() {
+    soit notes: Liste[Entier] = [1, 2, 3]
+    soit trio: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)
+    soit revenu: Liste[Entier] = trio.en_liste()
+    soit unique: Ensemble[Entier] = notes.en_ensemble()
+    soit combine: Ensemble[Entier] = unique.union(unique)
+    soit premier: Entier = notes.retirer_a(0)
+
+    soit index: Dictionnaire[Texte, Entier] = {"a": 1, "b": 2}
+    soit clés: Liste[Texte] = index.clés()
+    soit valeurs: Liste[Entier] = index.valeurs()
+
+    afficher(trio.taille())
+    afficher(revenu.joindre(","))
+    afficher(combine.taille())
+    afficher(premier)
+    afficher(clés.joindre(",") + " " + valeurs.joindre(","))
+    afficher(notes.en_ensemble().en_liste().joindre("-"))
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "3\n1,2,3\n3\n1\na,b 1,2\n2-3\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, RejectsMistypedCollectionMemberResult)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_collection_member_mistype";
+    const auto file = root / "main.lum";
+    // Knowing the result type also means a wrong one is caught before the program runs.
+    write_source(file, R"lum(
+fonction principal() {
+    soit index: Dictionnaire[Texte, Entier] = {"a": 1}
+    soit mauvais: Liste[Entier] = index.clés()
+    afficher(mauvais.taille())
+}
+)lum");
+    const auto result = run_cli("--vm " + shell_quote(file.string()), root);
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stderr_text.find("attend Liste[Entier]; reçu Liste[Texte]"), std::string::npos)
+        << result.stderr_text;
+    std::filesystem::remove_all(root);
+}
+
 } // namespace

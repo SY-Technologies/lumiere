@@ -1,6 +1,8 @@
 #include "lumiere/analysis/semantic_analysis.hpp"
 #include "lumiere/analysis/native_signatures.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
+#include <map>
 #include <algorithm>
 #include <iterator>
 #include <unordered_set>
@@ -1601,6 +1603,158 @@ private:
         return &m_builtin_member_signatures.emplace(key, std::move(signature)).first->second;
     }
 
+    /**
+     * @brief Signature of a member call on a builtin collection.
+     *
+     * The runtime already carries these result types — `Dictionnaire.clés()` hands
+     * back a `Liste[K]` and `Liste.en_ensemble()` an `Ensemble[T]` — but the
+     * analyzer knew only `taille`, so every other member call was `Universel` and
+     * could not initialize a declared collection type. Even the idiom the overview
+     * documents, `soit t: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)`, was
+     * rejected.
+     *
+     * Parameters stay `Universel` on purpose. Element and key types are enforced at
+     * run time, against the constraint carried by the allocation, which sees through
+     * aliases that the analyzer cannot follow. Declaring them here would reject
+     * programs the runtime accepts.
+     */
+    const CallableSignature *collection_member_signature(const SemanticTypeRef &receiver,
+                                                         const std::string &member)
+    {
+        if (receiver == nullptr || receiver->kind() != SemanticTypeKind::GENERIC)
+        {
+            return nullptr;
+        }
+        const std::string family(receiver->name());
+        if (family != "Liste" && family != "ListeFixe" &&
+            family != "Dictionnaire" && family != "Ensemble")
+        {
+            return nullptr;
+        }
+
+        const std::pair<const SemanticType *, std::string> key{receiver.get(), member};
+        if (const auto cached = m_collection_member_signatures.find(key);
+            cached != m_collection_member_signatures.end())
+        {
+            return &cached->second;
+        }
+
+        const SemanticTypeRef universel = *m_analysis.model.find_type("Universel");
+        const SemanticTypeRef entier = *m_analysis.model.find_type("Entier");
+        const SemanticTypeRef logique = *m_analysis.model.find_type("Logique");
+        const SemanticTypeRef texte = *m_analysis.model.find_type("Texte");
+        const auto &arguments = receiver->arguments();
+        // Liste[T] and Ensemble[T] carry one argument; Dictionnaire[K, V] and
+        // ListeFixe[T, N] carry two, the second of which is a size for ListeFixe.
+        const SemanticTypeRef first = arguments.empty() ? universel : arguments[0];
+        const SemanticTypeRef second = arguments.size() < 2 ? universel : arguments[1];
+        const auto liste_of = [&](const SemanticTypeRef &element) {
+            return m_analysis.model.types.generic("Liste", {element});
+        };
+
+        CallableSignature signature;
+        signature.accepts_named_arguments = false;
+        signature.has_explicit_return_type = true;
+        const auto takes = [&](const std::size_t count) {
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                signature.parameter_names.push_back("argument" + std::to_string(i + 1));
+                signature.parameter_types.push_back(universel);
+                signature.optional_parameters.push_back(false);
+            }
+        };
+
+        if (member == "taille")
+        {
+            signature.return_type = entier;
+        }
+        else if (member == "vide")
+        {
+            signature.return_type = logique;
+        }
+        else if (member == "contient")
+        {
+            takes(1);
+            signature.return_type = logique;
+        }
+        else if (member == "joindre" && family != "Dictionnaire")
+        {
+            takes(1);
+            signature.return_type = texte;
+        }
+        else if (family == "Liste" && member == "ajouter")
+        {
+            takes(1);
+            signature.return_type = entier;
+        }
+        else if (family == "Liste" && member == "inserer")
+        {
+            takes(2);
+            signature.return_type = entier;
+        }
+        else if (family == "Liste" && member == "retirer_a")
+        {
+            takes(1);
+            signature.return_type = first;
+        }
+        else if (family == "Liste" && member == "en_liste_fixe")
+        {
+            // The size comes from the argument, so the call site refines this.
+            takes(1);
+            signature.return_type = m_analysis.model.types.bottom();
+        }
+        else if (family == "Liste" && member == "en_ensemble")
+        {
+            signature.return_type = m_analysis.model.types.generic("Ensemble", {first});
+        }
+        else if (family == "ListeFixe" && member == "en_liste")
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Dictionnaire" && (member == "clés" || member == "cles"))
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Dictionnaire" && member == "valeurs")
+        {
+            signature.return_type = liste_of(second);
+        }
+        else if (family == "Dictionnaire" && member == "paires")
+        {
+            // A pair keeps a shared key/value type and falls back to Universel.
+            const SemanticTypeRef element = same_type(first, second) ? first : universel;
+            signature.return_type = liste_of(m_analysis.model.types.generic(
+                "ListeFixe", {element, m_analysis.model.types.integer_argument(2)}));
+        }
+        else if (family == "Dictionnaire" && member == "retirer")
+        {
+            takes(1);
+            signature.return_type = second;
+        }
+        else if (family == "Ensemble" && (member == "ajouter" || member == "retirer" ||
+                                          member == "sous_ensemble_de"))
+        {
+            takes(1);
+            signature.return_type = logique;
+        }
+        else if (family == "Ensemble" && member == "en_liste")
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Ensemble" && (member == "union" || member == "intersection" ||
+                                          member == "difference" || member == "différence"))
+        {
+            takes(1);
+            signature.return_type = m_analysis.model.types.generic("Ensemble", {first});
+        }
+        else
+        {
+            return nullptr;
+        }
+
+        return &m_collection_member_signatures.emplace(key, std::move(signature)).first->second;
+    }
+
     const CallableSignature *callable_signature(const Expr &callee)
     {
         if (const auto *function = dynamic_cast<const FunctionExpr *>(&callee))
@@ -1720,22 +1874,10 @@ private:
                 {
                     return text_member_signature(member_name);
                 }
-                const bool has_builtin_size =
-                    object_type->second != nullptr &&
-                    (object_type->second->kind() ==
-                          SemanticTypeKind::GENERIC &&
-                      (object_type->second->name() == "Liste" ||
-                       object_type->second->name() == "ListeFixe" ||
-                       object_type->second->name() == "Dictionnaire"));
-                if (member->member.lexeme == "taille" &&
-                    has_builtin_size)
+                if (const CallableSignature *builtin =
+                        collection_member_signature(object_type->second, member_name))
                 {
-                    CallableSignature signature;
-                    signature.return_type =
-                        *m_analysis.model.find_type("Entier");
-                    return &m_builtin_member_signatures
-                                .insert_or_assign("taille", std::move(signature))
-                                .first->second;
+                    return builtin;
                 }
                 if (const ClassDeclStmt *klass =
                         class_declaration(object_type->second))
@@ -2114,6 +2256,38 @@ private:
                     identifier->name.lexeme == "Succès"
                         ? std::vector<SemanticTypeRef>{payload, bottom}
                         : std::vector<SemanticTypeRef>{bottom, payload});
+            }
+            // ListeFixe carries its length in its type, and the length is the
+            // argument, so this one result can only be read at the call.
+            if (const auto *member =
+                    dynamic_cast<const MemberAccessExpr *>(call->callee.get());
+                member != nullptr && member->member.lexeme == "en_liste_fixe" &&
+                call->args.size() == 1)
+            {
+                const auto receiver =
+                    m_analysis.model.m_expression_types.find(member->object.get());
+                const auto *length_literal =
+                    dynamic_cast<const LiteralExpr *>(call->args.front().value.get());
+                if (receiver != m_analysis.model.m_expression_types.end() &&
+                    receiver->second != nullptr &&
+                    receiver->second->kind() == SemanticTypeKind::GENERIC &&
+                    receiver->second->name() == "Liste" &&
+                    length_literal != nullptr &&
+                    length_literal->token.type == TokenType::ENTIER_LIT)
+                {
+                    if (const auto length =
+                            numeric::parse_integer_literal(length_literal->token.lexeme);
+                        length.has_value() && *length >= 0)
+                    {
+                        const auto &arguments = receiver->second->arguments();
+                        return m_analysis.model.types.generic(
+                            "ListeFixe",
+                            {arguments.empty() ? *m_analysis.model.find_type("Universel")
+                                               : arguments[0],
+                             m_analysis.model.types.integer_argument(
+                                 static_cast<std::uint64_t>(*length))});
+                    }
+                }
             }
             if (const CallableSignature *signature = callable_signature(*call->callee);
                 signature != nullptr)
@@ -3607,6 +3781,9 @@ private:
     std::unordered_set<const ClassDeclStmt *> m_constructor_stack;
     std::unordered_map<std::string, CallableSignature>
         m_builtin_member_signatures;
+    /** Keyed by receiver type and member, since the result type follows the receiver. */
+    std::map<std::pair<const SemanticType *, std::string>, CallableSignature>
+        m_collection_member_signatures;
     SemanticAnalysisOptions m_options;
     const Stmt *m_consumed_expression_statement = nullptr;
     std::unordered_map<std::size_t, ResultObligation> m_obligations;
