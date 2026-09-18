@@ -51,8 +51,8 @@ namespace lumiere
         return true;
     }
 
-    VarDeclStmt *TreeWalker::find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name,
-                                           std::shared_ptr<LumiereClass> *owner) const
+    VarDeclStmt *TreeWalker::find_field_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                           Ref<LumiereClass> *owner) const
     {
         ClassDeclStmt *klass_decl = class_decl(klass);
         if (klass_decl == nullptr)
@@ -73,7 +73,7 @@ namespace lumiere
             }
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(klass))
+        if (Ref<LumiereClass> parent = parent_class(klass))
         {
             return find_field_decl(parent, name, owner);
         }
@@ -81,8 +81,8 @@ namespace lumiere
         return nullptr;
     }
 
-    FunctionDeclStmt *TreeWalker::find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name,
-                                                 std::shared_ptr<LumiereClass> *owner) const
+    FunctionDeclStmt *TreeWalker::find_method_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                                 Ref<LumiereClass> *owner) const
     {
         ClassDeclStmt *klass_decl = class_decl(klass);
         if (klass_decl == nullptr)
@@ -103,7 +103,7 @@ namespace lumiere
             }
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(klass))
+        if (Ref<LumiereClass> parent = parent_class(klass))
         {
             return find_method_decl(parent, name, owner);
         }
@@ -127,7 +127,7 @@ namespace lumiere
         return nullptr;
     }
 
-    std::shared_ptr<LumiereInterface> TreeWalker::resolve_interface_value(const TypeExpr &type) const
+    Ref<LumiereInterface> TreeWalker::resolve_interface_value(const TypeExpr &type) const
     {
         std::string name;
         try
@@ -157,7 +157,7 @@ namespace lumiere
     }
 
     void TreeWalker::validate_class_interfaces(ClassDeclStmt &klass,
-                                               const std::shared_ptr<LumiereClass> &class_value) const
+                                               const Ref<LumiereClass> &class_value) const
     {
         if (m_env == nullptr)
         {

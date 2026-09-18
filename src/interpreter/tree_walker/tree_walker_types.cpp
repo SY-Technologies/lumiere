@@ -508,7 +508,7 @@ namespace lumiere
         register_value_annotation(value, resolved);
     }
 
-    void TreeWalker::enforce_list_element_constraint(const std::shared_ptr<ListeData> &list,
+    void TreeWalker::enforce_list_element_constraint(const Ref<ListeData> &list,
                                                      const Value &element,
                                                      const Token &site,
                                                      const std::string &context) const
@@ -527,7 +527,7 @@ namespace lumiere
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 
-    void TreeWalker::enforce_set_element_constraint(const std::shared_ptr<EnsembleData> &set,
+    void TreeWalker::enforce_set_element_constraint(const Ref<EnsembleData> &set,
                                                     const Value &element,
                                                     const Token &site,
                                                     const std::string &context) const
@@ -541,7 +541,7 @@ namespace lumiere
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 
-    void TreeWalker::enforce_dict_entry_constraint(const std::shared_ptr<DictData> &dict,
+    void TreeWalker::enforce_dict_entry_constraint(const Ref<DictData> &dict,
                                                    const Value &key,
                                                    const Value &entry_value,
                                                    const Token &site,
@@ -563,10 +563,10 @@ namespace lumiere
         ensure_value_matches_annotation(entry_value, value_annotation, site, context + " (valeur)");
     }
 
-    bool TreeWalker::class_derives_from(const std::shared_ptr<LumiereClass> &klass,
+    bool TreeWalker::class_derives_from(const Ref<LumiereClass> &klass,
                                         const std::string &ancestor_name) const
     {
-        for (std::shared_ptr<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
+        for (Ref<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
         {
             if ((current->type_identity.empty() ? current->name : current->type_identity) == ancestor_name)
             {
@@ -577,10 +577,10 @@ namespace lumiere
         return false;
     }
 
-    bool TreeWalker::class_implements_interface(const std::shared_ptr<LumiereClass> &klass,
+    bool TreeWalker::class_implements_interface(const Ref<LumiereClass> &klass,
                                                 const std::string &interface_name) const
     {
-        for (std::shared_ptr<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
+        for (Ref<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
         {
             if (current->interfaces.count(interface_name) != 0)
             {

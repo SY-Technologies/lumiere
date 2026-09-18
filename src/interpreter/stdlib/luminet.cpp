@@ -39,7 +39,7 @@ void register_luminet_module(Module &module)
          {"ErreurAdresse", "ErreurDNS", "ErreurConnexion",
           "ErreurDélai", "ErreurIO", "ErreurProtocole", "ErreurHTTP"})
     {
-        auto error_class = std::make_shared<LumiereClass>();
+        auto error_class = make_ref<LumiereClass>();
         error_class->name = "LumiNet." + std::string(name);
         stdlib_bind_public_value(
             module,

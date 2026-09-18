@@ -639,6 +639,33 @@ The next lever inside the interpreter is still the object model: a trivially
 copyable value would remove the last third of the copy cost the variant used to
 charge, and the same work is what bounded memory needs.
 
+### The runtime owns its heap values — 2026-09-18
+
+Every heap value was owned by a `std::shared_ptr`, which keeps its count in a
+separate control block and updates it with an atomic read-modify-write. Nothing
+in the runtime creates a thread, so that atomic was paid on every copy of every
+value for a guarantee nothing needed, and releasing a reference called out of
+line where a compare-and-branch would do.
+
+The count now lives in the object. `RefCounted` carries it, every heap type
+derives from it, and `Ref<T>` is the handle. `Value` holds one `Ref<RefCounted>`
+and downcasts on access, so it is 24 bytes rather than 32. Ownership and
+destruction order are unchanged; only the mechanism moved.
+
+Every workload that touches a heap value is 4% to 8% faster and the integer loop
+is unchanged, which is the opposite shape to what an isolated model predicted —
+see the benchmark notes, where that mistake is written down, because it is a
+lesson about models rather than about values.
+
+**Leak detection works now, for everything except cycles.** This is the first
+part of T2 to land. `scripts/check-leaks` runs nine example and benchmark
+programs under a leak-detecting sanitizer build, and all nine are clean: a
+value's last reference destroys it, deterministically. A program that builds a
+reference cycle still retains it, which is exactly the remaining work, and it is
+now the *only* remaining source of retained memory rather than one of several.
+That also makes the cycle collector testable: anything the collector fails to
+reclaim will now show up on its own rather than in a crowd of ordinary leaks.
+
 ## Verification and measurement
 
 ```sh

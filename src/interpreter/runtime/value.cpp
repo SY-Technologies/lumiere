@@ -11,6 +11,11 @@
 namespace lumiere
 {
 
+void RefCounted::destroy() const noexcept
+{
+    delete this;
+}
+
 Value Value::resultat(
     const bool success,
     Value payload,
@@ -18,12 +23,11 @@ Value Value::resultat(
 {
     Value value;
     value.type = Type::RESULTAT;
-    value.m_ref = std::make_shared<ResultData>(
-        ResultData{
-            success,
-            std::move(payload),
-            success ? std::nullopt : std::move(origin),
-            {}});
+    value.m_ref = make_ref<ResultData>(
+        success,
+        std::move(payload),
+        success ? std::nullopt : std::move(origin),
+        std::vector<TraceFrame>{});
     return value;
 }
 
@@ -48,12 +52,11 @@ Value Value::with_trace_frame(const TraceFrame &frame) const
 
     Value value;
     value.type = Type::RESULTAT;
-    value.m_ref = std::make_shared<ResultData>(
-        ResultData{
-            result->success,
-            result->payload,
-            result->origin,
-            std::move(trace)});
+    value.m_ref = make_ref<ResultData>(
+        result->success,
+        result->payload,
+        result->origin,
+        std::move(trace));
     return value;
 }
 

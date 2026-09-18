@@ -110,7 +110,7 @@ namespace lumiere
             program.source_path.empty()
                 ? "#anonymous:" + std::to_string(++m_incremental_unit)
                 : program.source_path);
-        auto error_interface = std::make_shared<LumiereInterface>();
+        auto error_interface = make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
         m_env->define_fixe(
             "Erreur",
@@ -184,7 +184,7 @@ namespace lumiere
             m_env_owner = std::make_shared<Environment>();
             m_env = m_env_owner.get();
             auto error_interface =
-                std::make_shared<LumiereInterface>();
+                make_ref<LumiereInterface>();
             error_interface->name = "Erreur";
             m_env->define_fixe(
                 "Erreur",
@@ -330,9 +330,9 @@ namespace lumiere
         return runtime_args;
     }
 
-    std::shared_ptr<LumiereFunction> TreeWalker::make_native_function(LumiereFunction::NativeHandler handler) const
+    Ref<LumiereFunction> TreeWalker::make_native_function(LumiereFunction::NativeHandler handler) const
     {
-        auto function = std::make_shared<LumiereFunction>();
+        auto function = make_ref<LumiereFunction>();
         function->name = "<native>";
         function->native_handler = std::move(handler);
         function->receiver = Value::rien();
@@ -341,7 +341,7 @@ namespace lumiere
         return function;
     }
 
-    std::shared_ptr<LumiereFunction> TreeWalker::make_native_method(Value receiver,
+    Ref<LumiereFunction> TreeWalker::make_native_method(Value receiver,
                                                                     LumiereFunction::NativeHandler handler) const
     {
         auto function = make_native_function(std::move(handler));
@@ -349,12 +349,12 @@ namespace lumiere
         return function;
     }
 
-    std::shared_ptr<LumiereFunction> TreeWalker::make_declared_function(FunctionDeclStmt &decl,
+    Ref<LumiereFunction> TreeWalker::make_declared_function(FunctionDeclStmt &decl,
                                                                         Value receiver,
                                                                         std::shared_ptr<Environment> closure,
                                                                         std::string source_identity) const
     {
-        auto function = std::make_shared<LumiereFunction>();
+        auto function = make_ref<LumiereFunction>();
         function->name = decl.name.lexeme;
         auto body = std::make_shared<TreeWalkerFunctionBody>();
         body->decl = &decl;
@@ -370,12 +370,12 @@ namespace lumiere
         return function;
     }
 
-    std::shared_ptr<LumiereFunction> TreeWalker::make_declared_function(FunctionExpr &expr,
+    Ref<LumiereFunction> TreeWalker::make_declared_function(FunctionExpr &expr,
                                                                         Value receiver,
                                                                         std::shared_ptr<Environment> closure,
                                                                         std::string source_identity) const
     {
-        auto function = std::make_shared<LumiereFunction>();
+        auto function = make_ref<LumiereFunction>();
         function->name = "<anonyme>";
         auto body = std::make_shared<TreeWalkerFunctionBody>();
         body->expr = &expr;
@@ -391,9 +391,9 @@ namespace lumiere
         return function;
     }
 
-    std::shared_ptr<LumiereClass> TreeWalker::make_runtime_class(ClassDeclStmt &decl) const
+    Ref<LumiereClass> TreeWalker::make_runtime_class(ClassDeclStmt &decl) const
     {
-        auto klass = std::make_shared<LumiereClass>();
+        auto klass = make_ref<LumiereClass>();
         klass->name = decl.name.lexeme;
         klass->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
         auto body = std::make_shared<TreeWalkerClassBody>();
@@ -423,9 +423,9 @@ namespace lumiere
         return klass;
     }
 
-    std::shared_ptr<LumiereInterface> TreeWalker::make_runtime_interface(InterfaceDeclStmt &decl) const
+    Ref<LumiereInterface> TreeWalker::make_runtime_interface(InterfaceDeclStmt &decl) const
     {
-        auto iface = std::make_shared<LumiereInterface>();
+        auto iface = make_ref<LumiereInterface>();
         iface->name = decl.name.lexeme;
         iface->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
         auto body = std::make_shared<TreeWalkerInterfaceBody>();
@@ -465,20 +465,20 @@ namespace lumiere
         return body ? body->source_identity : empty;
     }
 
-    std::shared_ptr<Environment> TreeWalker::class_closure_owner(const std::shared_ptr<LumiereClass> &klass) const
+    std::shared_ptr<Environment> TreeWalker::class_closure_owner(const Ref<LumiereClass> &klass) const
     {
         const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
         return body ? body->closure_owner : nullptr;
     }
 
-    const std::string &TreeWalker::class_source_identity(const std::shared_ptr<LumiereClass> &klass) const
+    const std::string &TreeWalker::class_source_identity(const Ref<LumiereClass> &klass) const
     {
         const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
         static const std::string empty;
         return body ? body->source_identity : empty;
     }
 
-    Token TreeWalker::class_annotation(const std::shared_ptr<LumiereClass> &klass, const TypeExpr &type) const
+    Token TreeWalker::class_annotation(const Ref<LumiereClass> &klass, const TypeExpr &type) const
     {
         Token annotation = type.as_token();
         try
@@ -493,7 +493,7 @@ namespace lumiere
         return annotation;
     }
 
-    ClassDeclStmt *TreeWalker::class_decl(const std::shared_ptr<LumiereClass> &klass) const
+    ClassDeclStmt *TreeWalker::class_decl(const Ref<LumiereClass> &klass) const
     {
         if (klass == nullptr)
         {
@@ -504,7 +504,7 @@ namespace lumiere
         return body ? body->decl : nullptr;
     }
 
-    std::shared_ptr<LumiereClass> TreeWalker::parent_class(const std::shared_ptr<LumiereClass> &klass) const
+    Ref<LumiereClass> TreeWalker::parent_class(const Ref<LumiereClass> &klass) const
     {
         if (klass == nullptr)
         {
@@ -514,7 +514,7 @@ namespace lumiere
         return klass->parent;
     }
 
-    InterfaceDeclStmt *TreeWalker::interface_decl(const std::shared_ptr<LumiereInterface> &iface) const
+    InterfaceDeclStmt *TreeWalker::interface_decl(const Ref<LumiereInterface> &iface) const
     {
         if (iface == nullptr)
         {

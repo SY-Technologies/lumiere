@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Runs programs under a leak-detecting build and reports which ones retain memory.
+#
+# Leak detection has been disabled in the sanitizer suite because reference
+# cycles are not collected yet. That is still true for cycles, but everything
+# else is now freed deterministically: the runtime owns its heap values through
+# its own reference counts rather than through shared_ptr, and a value's last
+# reference destroys it.
+#
+# This script pins that down. Every program listed here must run clean, so a
+# regression in ownership shows up as a leak rather than as slow growth in a
+# long-running process.
+#
+#   cmake -S . -B build_asan -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+#     -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined" \
+#     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+#   cmake --build build_asan
+#   scripts/check-leaks build_asan/lumiere
+
+set -u
+
+binary=${1:-build_asan/lumiere}
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+if [ ! -x "$binary" ]; then
+    echo "usage: scripts/check-leaks <chemin/vers/lumiere>  (build with -fsanitize=address)" >&2
+    exit 2
+fi
+
+programs=(
+    examples/bonjour.lum
+    examples/analyse_collections.lum
+    examples/tri_rapide.lum
+    examples/objets.lum
+    benchmarks/integer_loop.lum
+    benchmarks/typed_list.lum
+    benchmarks/dictionary_lookup.lum
+    benchmarks/text_iteration.lum
+    benchmarks/function_calls.lum
+)
+
+failures=0
+for program in "${programs[@]}"; do
+    printf '%-42s ' "$program"
+    output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --vm "$root/$program" 2>&1)
+    if printf '%s' "$output" | grep -q 'leak of'; then
+        echo "FUITE"
+        printf '%s\n' "$output" | grep -E 'SUMMARY|leak of' | head -3
+        failures=$((failures + 1))
+    else
+        echo "aucune fuite"
+    fi
+done
+
+if [ "$failures" -ne 0 ]; then
+    echo
+    echo "$failures programme(s) retiennent de la mémoire."
+    exit 1
+fi
+
+echo
+echo "Aucune fuite. Les cycles de références restent non collectés : voir T2."

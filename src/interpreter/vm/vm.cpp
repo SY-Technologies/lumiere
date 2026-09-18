@@ -150,22 +150,22 @@ public:
 
     void annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &) const override;
 
-    void enforce_list_element(const std::shared_ptr<ListeData> &list,
+    void enforce_list_element(const Ref<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
-    void enforce_set_element(const std::shared_ptr<EnsembleData> &set,
+    void enforce_set_element(const Ref<EnsembleData> &set,
                              const Value &value,
                              const std::string &context) const;
-    void enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
+    void enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                   const Value &key,
                                   const Value &value,
                                   const std::string &context) const;
 
-    [[nodiscard]] std::optional<std::string> list_element_type(const std::shared_ptr<ListeData> &list) const;
-    [[nodiscard]] std::optional<std::string> fixed_list_element_type(const std::shared_ptr<ListeFixeData> &list) const;
-    [[nodiscard]] std::optional<std::string> set_element_type(const std::shared_ptr<EnsembleData> &set) const;
+    [[nodiscard]] std::optional<std::string> list_element_type(const Ref<ListeData> &list) const;
+    [[nodiscard]] std::optional<std::string> fixed_list_element_type(const Ref<ListeFixeData> &list) const;
+    [[nodiscard]] std::optional<std::string> set_element_type(const Ref<EnsembleData> &set) const;
     [[nodiscard]] std::optional<std::pair<std::string, std::string>> dictionary_types(
-        const std::shared_ptr<DictData> &dictionary) const;
+        const Ref<DictData> &dictionary) const;
 
 private:
     CallbackExecutor m_callback_executor;
@@ -292,7 +292,7 @@ bool matches_type_name(const Value &value, std::string_view full_name)
 
     if (value.is_objet())
     {
-        std::shared_ptr<LumiereClass> klass = value.as_objet()->klass;
+        Ref<LumiereClass> klass = value.as_objet()->klass;
         while (klass != nullptr)
         {
             if ((klass->type_identity.empty() ? klass->name : klass->type_identity) == name ||
@@ -485,7 +485,7 @@ void VmRuntimeServices::annotate_value(const Value &value,
     }
 }
 
-void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &list,
+void VmRuntimeServices::enforce_list_element(const Ref<ListeData> &list,
                                            const Value &value,
                                            const std::string &context) const
 {
@@ -498,7 +498,7 @@ void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &l
         annotate_value(value, list->constraint->element_type, {});
 }
 
-void VmRuntimeServices::enforce_set_element(const std::shared_ptr<EnsembleData> &set,
+void VmRuntimeServices::enforce_set_element(const Ref<EnsembleData> &set,
                                             const Value &value,
                                             const std::string &context) const
 {
@@ -511,7 +511,7 @@ void VmRuntimeServices::enforce_set_element(const std::shared_ptr<EnsembleData> 
         annotate_value(value, set->constraint->element_type, {});
 }
 
-void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
+void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                                const Value &key,
                                                const Value &value,
                                                const std::string &context) const
@@ -537,24 +537,24 @@ void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData>
     annotate_value(value, constraint->value_type, {});
 }
 
-std::optional<std::string> VmRuntimeServices::list_element_type(const std::shared_ptr<ListeData> &list) const
+std::optional<std::string> VmRuntimeServices::list_element_type(const Ref<ListeData> &list) const
 {
     return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::string> VmRuntimeServices::fixed_list_element_type(
-    const std::shared_ptr<ListeFixeData> &list) const
+    const Ref<ListeFixeData> &list) const
 {
     return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
 }
 
-std::optional<std::string> VmRuntimeServices::set_element_type(const std::shared_ptr<EnsembleData> &set) const
+std::optional<std::string> VmRuntimeServices::set_element_type(const Ref<EnsembleData> &set) const
 {
     return set->constraint ? std::optional<std::string>(set->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
-    const std::shared_ptr<DictData> &dictionary) const
+    const Ref<DictData> &dictionary) const
 {
     if (!dictionary->constraint)
         return std::nullopt;
@@ -888,7 +888,7 @@ void execute_list(std::vector<Value> &stack, const std::size_t length)
         throw VmRuntimeError("VM: pile insuffisante pour construire une liste");
     }
 
-    auto data = std::make_shared<ListeData>();
+    auto data = make_ref<ListeData>();
     data->elements.reserve(length);
 
     const std::size_t start = stack.size() - length;
@@ -909,7 +909,7 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
         throw VmRuntimeError("VM: pile insuffisante pour construire un dictionnaire");
     }
 
-    auto data = std::make_shared<DictData>();
+    auto data = make_ref<DictData>();
     data->reserve(entry_count);
 
     const std::size_t start = stack.size() - value_count;
@@ -930,7 +930,7 @@ void execute_ensemble(std::vector<Value> &stack, const std::size_t element_count
         throw VmRuntimeError("VM: pile insuffisante pour construire un ensemble");
     }
 
-    auto data = std::make_shared<EnsembleData>();
+    auto data = make_ref<EnsembleData>();
     data->reserve(element_count);
 
     const std::size_t start = stack.size() - element_count;
@@ -947,7 +947,7 @@ void execute_ensemble(std::vector<Value> &stack, const std::size_t element_count
 void execute_iteration_snapshot(std::vector<Value> &stack)
 {
     const Value iterable = pop_value(stack);
-    auto snapshot = std::make_shared<ListeData>();
+    auto snapshot = make_ref<ListeData>();
     // Match the tree walker: membership is fixed before the first iteration.
     if (iterable.is_liste())
         snapshot->elements = iterable.as_liste()->elements;
@@ -1244,7 +1244,7 @@ Value execute_member_call(const Value &receiver,
         if (member == "en_ensemble")
         {
             require_member_arity("Liste.en_ensemble", args, 0);
-            auto set = std::make_shared<EnsembleData>();
+            auto set = make_ref<EnsembleData>();
             set->reserve(list->elements.size());
             for (const Value &element : list->elements)
             {
@@ -1266,7 +1266,7 @@ Value execute_member_call(const Value &receiver,
             {
                 throw VmRuntimeError("VM: Liste.en_liste_fixe requiert une liste de taille exacte");
             }
-            auto fixed = std::make_shared<ListeFixeData>();
+            auto fixed = make_ref<ListeFixeData>();
             fixed->elements = list->elements;
             Value result = Value::liste_fixe(std::move(fixed));
             if (const auto type = runtime.list_element_type(list); type.has_value())
@@ -1290,7 +1290,7 @@ Value execute_member_call(const Value &receiver,
         if (member == "en_liste")
         {
             require_member_arity("ListeFixe.en_liste", args, 0);
-            auto dynamic = std::make_shared<ListeData>();
+            auto dynamic = make_ref<ListeData>();
             dynamic->elements = list->elements;
             Value result = Value::liste(std::move(dynamic));
             if (const auto type = runtime.fixed_list_element_type(list); type.has_value())
@@ -1345,7 +1345,7 @@ Value execute_member_call(const Value &receiver,
         if (member == "en_liste")
         {
             require_member_arity("Ensemble.en_liste", args, 0);
-            auto list = std::make_shared<ListeData>();
+            auto list = make_ref<ListeData>();
             list->elements = set->items();
             Value result = Value::liste(std::move(list));
             if (const auto type = runtime.set_element_type(set); type.has_value())
@@ -1358,7 +1358,7 @@ Value execute_member_call(const Value &receiver,
         {
             require_member_arity("Ensemble." + member, args, 1);
             const auto other = other_set(member);
-            auto result = std::make_shared<EnsembleData>();
+            auto result = make_ref<EnsembleData>();
             result->constraint = set->constraint;
             if (member == "union")
             {
@@ -1415,7 +1415,7 @@ Value execute_member_call(const Value &receiver,
         if (wants_keys || member == "valeurs")
         {
             require_member_arity("Dictionnaire." + member, args, 0);
-            auto result = std::make_shared<ListeData>();
+            auto result = make_ref<ListeData>();
             for (const auto &entry : dictionary->items())
             {
                 result->elements.push_back(wants_keys ? entry.first : entry.second);
@@ -1432,10 +1432,10 @@ Value execute_member_call(const Value &receiver,
         if (member == "paires")
         {
             require_member_arity("Dictionnaire.paires", args, 0);
-            auto pairs = std::make_shared<ListeData>();
+            auto pairs = make_ref<ListeData>();
             for (const auto &entry : dictionary->items())
             {
-                auto pair = std::make_shared<ListeFixeData>();
+                auto pair = make_ref<ListeFixeData>();
                 pair->elements = {entry.first, entry.second};
                 pairs->elements.push_back(Value::liste_fixe(std::move(pair)));
             }
@@ -1477,7 +1477,7 @@ Value make_bound_member(Value receiver,
                         std::string member,
                         VmRuntimeServices &runtime)
 {
-    auto function = std::make_shared<LumiereFunction>();
+    auto function = make_ref<LumiereFunction>();
     function->name = member;
     function->receiver = std::move(receiver);
     function->min_arity = 0;
@@ -1549,7 +1549,7 @@ struct VmInterfaceBody final : RuntimeInterfaceBody
 };
 
 const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
-                                          const std::shared_ptr<LumiereClass> &klass)
+                                          const Ref<LumiereClass> &klass)
 {
     if (klass == nullptr)
     {
@@ -1564,7 +1564,7 @@ const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
 }
 
 const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
-                                         std::shared_ptr<LumiereClass> klass,
+                                         Ref<LumiereClass> klass,
                                          const std::string &name)
 {
     while (klass != nullptr)
@@ -1587,7 +1587,7 @@ const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
 }
 
 const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
-                                       std::shared_ptr<LumiereClass> klass,
+                                       Ref<LumiereClass> klass,
                                        const std::string &name)
 {
     while (klass != nullptr)
@@ -1609,7 +1609,7 @@ const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
     return nullptr;
 }
 
-std::vector<std::shared_ptr<Value>> find_vm_method_captures(std::shared_ptr<LumiereClass> klass,
+std::vector<std::shared_ptr<Value>> find_vm_method_captures(Ref<LumiereClass> klass,
                                                             const std::size_t function_index)
 {
     while (klass != nullptr)
@@ -1629,7 +1629,7 @@ std::vector<std::shared_ptr<Value>> find_vm_method_captures(std::shared_ptr<Lumi
 }
 
 void collect_vm_fields(const ModuleBytecode &module,
-                       const std::shared_ptr<LumiereClass> &klass,
+                       const Ref<LumiereClass> &klass,
                        std::vector<const VmFieldDescriptor *> &fields)
 {
     if (klass == nullptr)
@@ -1649,7 +1649,7 @@ void collect_vm_fields(const ModuleBytecode &module,
 }
 
 Value instantiate_vm_class(const ModuleBytecode &module,
-                           const std::shared_ptr<LumiereClass> &klass,
+                           const Ref<LumiereClass> &klass,
                            const std::vector<RuntimeArgument> &arguments)
 {
     std::vector<const VmFieldDescriptor *> fields;
@@ -1658,7 +1658,7 @@ Value instantiate_vm_class(const ModuleBytecode &module,
     {
         throw VmRuntimeError("VM: trop d'arguments pour construire '" + klass->name + "'");
     }
-    auto object = std::make_shared<LumiereObject>();
+    auto object = make_ref<LumiereObject>();
     object->klass = klass;
     std::unordered_map<std::string, Value> assigned;
     std::size_t positional = 0;
@@ -2015,7 +2015,7 @@ Value run_frames(VmExecutionState &execution,
                 const std::uint8_t source_index = read_byte(chunk, ip);
                 body->captures.push_back(frame.capture(from_capture, source_index));
             }
-            auto closure = std::make_shared<LumiereFunction>();
+            auto closure = make_ref<LumiereFunction>();
             closure->name = module.functions[function_index].name;
             closure->body = std::move(body);
             stack.push_back(Value::fonction(std::move(closure)));
@@ -2035,7 +2035,7 @@ Value run_frames(VmExecutionState &execution,
                 interface_values[i - 1] = pop_value(stack);
             }
             const Value parent_value = descriptor.parent.empty() ? Value::rien() : pop_value(stack);
-            auto klass = std::make_shared<LumiereClass>();
+            auto klass = make_ref<LumiereClass>();
             klass->name = descriptor.name;
             klass->type_identity = descriptor.type_identity;
             auto body = std::make_shared<VmClassBody>();
@@ -2136,7 +2136,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: descripteur d'interface invalide");
             }
-            auto interface = std::make_shared<LumiereInterface>();
+            auto interface = make_ref<LumiereInterface>();
             interface->name = module.interfaces[descriptor_index].name;
             interface->type_identity = module.interfaces[descriptor_index].type_identity;
             auto body = std::make_shared<VmInterfaceBody>();
@@ -2152,7 +2152,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: descripteur d'espace de noms invalide");
             }
-            auto name_space = std::make_shared<LumiereObject>();
+            auto name_space = make_ref<LumiereObject>();
             for (const VmNamespaceMember &member : module.namespaces[descriptor_index].members)
             {
                 if (member.global_index >= globals.size() || !global_defined[member.global_index])
@@ -2611,7 +2611,7 @@ Value run_frames(VmExecutionState &execution,
                 body->function_index = method->function_index;
                 body->captures = find_vm_method_captures(receiver.as_objet()->klass,
                                                          method->function_index);
-                auto function = std::make_shared<LumiereFunction>();
+                auto function = make_ref<LumiereFunction>();
                 function->name = method->name;
                 function->body = std::move(body);
                 function->receiver = receiver;
@@ -2940,7 +2940,7 @@ Value VM::run(const ModuleBytecode &module)
                  "::Erreur") == 0))
         {
             auto interface =
-                std::make_shared<LumiereInterface>();
+                make_ref<LumiereInterface>();
             interface->name = "Erreur";
             globals[i] =
                 Value::interface(std::move(interface));
@@ -2951,7 +2951,7 @@ Value VM::run(const ModuleBytecode &module)
         {
             auto body = std::make_shared<VmClosureBody>();
             body->function_index = function->second;
-            auto closure = std::make_shared<LumiereFunction>();
+            auto closure = make_ref<LumiereFunction>();
             closure->name = name;
             closure->body = std::move(body);
             globals[i] = Value::fonction(std::move(closure));
@@ -2959,7 +2959,7 @@ Value VM::run(const ModuleBytecode &module)
         }
         else if (const auto native = natives.find(name); native != natives.end())
         {
-            auto callable = std::make_shared<LumiereFunction>();
+            auto callable = make_ref<LumiereFunction>();
             callable->name = name;
             callable->min_arity = 0;
             callable->max_arity = 255;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lumiere/interpreter/runtime/native_args.hpp"
+#include "lumiere/interpreter/runtime/ref.hpp"
 #include "lumiere/parser/type_expr.hpp"
 #include <cassert>
 #include <functional>
@@ -23,6 +24,8 @@ struct LumiereInterface;
 struct RuntimeFunctionBody;
 struct RuntimeClassBody;
 struct RuntimeInterfaceBody;
+
+
 struct RuntimeModuleState;
 class Environment;
 struct TraceFrame;
@@ -38,12 +41,12 @@ struct FixedListConstraint { std::string element_type; std::size_t length = 0; }
 struct DictConstraint { std::string key_type; std::string value_type; };
 struct SetConstraint { std::string element_type; };
 
-struct ListeData
+struct ListeData : RefCounted
 {
     std::vector<Value> elements;
     std::optional<ListConstraint> constraint;
 };
-struct ListeFixeData
+struct ListeFixeData : RefCounted
 {
     std::vector<Value> elements;
     std::optional<FixedListConstraint> constraint;
@@ -55,7 +58,7 @@ struct ListeFixeData
  * uses the same index and the same key rule as a dictionary: an element must
  * stay equal to itself while it is stored.
  */
-struct EnsembleData
+struct EnsembleData : RefCounted
 {
     std::optional<SetConstraint> constraint;
 
@@ -88,7 +91,7 @@ using DictEntry = std::pair<Value, Value>;
  * from. The entry vector is private because the index stores positions into
  * it, and any removal shifts them.
  */
-struct DictData
+struct DictData : RefCounted
 {
     std::optional<DictConstraint> constraint;
 
@@ -148,7 +151,14 @@ struct ResultData;
  * pointee's type: the buffer is stored without const so it can share the one
  * type-erased handle every heap value uses.
  */
-using TexteRef = std::shared_ptr<std::string>;
+struct TexteData : RefCounted
+{
+    std::string text;
+
+    explicit TexteData(std::string value) : text(std::move(value)) {}
+};
+
+using TexteRef = Ref<TexteData>;
 
 struct Value
 {
@@ -219,7 +229,7 @@ struct Value
     {
         Value v;
         v.type = Type::TEXTE;
-        v.m_ref = std::make_shared<std::string>(std::move(str));
+        v.m_ref = make_ref<TexteData>(std::move(str));
         return v;
     }
 
@@ -232,7 +242,7 @@ struct Value
         return v;
     }
 
-    static Value liste(std::shared_ptr<ListeData> lst)
+    static Value liste(Ref<ListeData> lst)
     {
         Value v;
         v.type = Type::LISTE;
@@ -240,7 +250,7 @@ struct Value
         return v;
     }
 
-    static Value dictionnaire(std::shared_ptr<DictData> data)
+    static Value dictionnaire(Ref<DictData> data)
     {
         Value v;
         v.type = Type::DICTIONNAIRE;
@@ -248,7 +258,7 @@ struct Value
         return v;
     }
 
-    static Value liste_fixe(std::shared_ptr<ListeFixeData> lst)
+    static Value liste_fixe(Ref<ListeFixeData> lst)
     {
         Value v;
         v.type = Type::LISTE_FIXE;
@@ -256,7 +266,7 @@ struct Value
         return v;
     }
 
-    static Value ensemble(std::shared_ptr<EnsembleData> ens)
+    static Value ensemble(Ref<EnsembleData> ens)
     {
         Value v;
         v.type = Type::ENSEMBLE;
@@ -264,37 +274,13 @@ struct Value
         return v;
     }
 
-    static Value objet(std::shared_ptr<LumiereObject> obj)
-    {
-        Value v;
-        v.type = Type::OBJET;
-        v.m_ref = std::move(obj);
-        return v;
-    }
+    static Value objet(Ref<LumiereObject> obj);
 
-    static Value fonction(std::shared_ptr<LumiereFunction> fn)
-    {
-        Value v;
-        v.type = Type::FONCTION;
-        v.m_ref = std::move(fn);
-        return v;
-    }
+    static Value fonction(Ref<LumiereFunction> fn);
 
-    static Value classe(std::shared_ptr<LumiereClass> cls)
-    {
-        Value v;
-        v.type = Type::CLASSE;
-        v.m_ref = std::move(cls);
-        return v;
-    }
+    static Value classe(Ref<LumiereClass> cls);
 
-    static Value interface(std::shared_ptr<LumiereInterface> iface)
-    {
-        Value v;
-        v.type = Type::INTERFACE;
-        v.m_ref = std::move(iface);
-        return v;
-    }
+    static Value interface(Ref<LumiereInterface> iface);
 
     static Value resultat(
         bool success,
@@ -316,69 +302,49 @@ struct Value
     const std::string &as_texte() const
     {
         assert(is_texte());
-        return *static_cast<const std::string *>(m_ref.get());
+        return static_cast<const TexteData *>(m_ref.get())->text;
     }
 
     /** @brief The shared buffer, for handing text on without copying it. */
     TexteRef as_texte_ref() const
     {
         assert(is_texte());
-        return std::static_pointer_cast<std::string>(m_ref);
+        return TexteRef(static_cast<TexteData *>(m_ref.get()));
     }
 
-    std::shared_ptr<ListeData> as_liste() const
+    Ref<ListeData> as_liste() const
     {
         assert(is_liste());
-        return std::static_pointer_cast<ListeData>(m_ref);
+        return Ref<ListeData>(static_cast<ListeData *>(m_ref.get()));
     }
 
-    std::shared_ptr<DictData> as_dictionnaire() const
+    Ref<DictData> as_dictionnaire() const
     {
         assert(is_dictionnaire());
-        return std::static_pointer_cast<DictData>(m_ref);
+        return Ref<DictData>(static_cast<DictData *>(m_ref.get()));
     }
 
-    std::shared_ptr<ListeFixeData> as_liste_fixe() const
+    Ref<ListeFixeData> as_liste_fixe() const
     {
         assert(is_liste_fixe());
-        return std::static_pointer_cast<ListeFixeData>(m_ref);
+        return Ref<ListeFixeData>(static_cast<ListeFixeData *>(m_ref.get()));
     }
 
-    std::shared_ptr<EnsembleData> as_ensemble() const
+    Ref<EnsembleData> as_ensemble() const
     {
         assert(is_ensemble());
-        return std::static_pointer_cast<EnsembleData>(m_ref);
+        return Ref<EnsembleData>(static_cast<EnsembleData *>(m_ref.get()));
     }
 
-    std::shared_ptr<LumiereObject> as_objet() const
-    {
-        assert(is_objet());
-        return std::static_pointer_cast<LumiereObject>(m_ref);
-    }
+    Ref<LumiereObject> as_objet() const;
 
-    std::shared_ptr<LumiereFunction> as_fonction() const
-    {
-        assert(is_fonction());
-        return std::static_pointer_cast<LumiereFunction>(m_ref);
-    }
+    Ref<LumiereFunction> as_fonction() const;
 
-    std::shared_ptr<LumiereClass> as_classe() const
-    {
-        assert(is_classe());
-        return std::static_pointer_cast<LumiereClass>(m_ref);
-    }
+    Ref<LumiereClass> as_classe() const;
 
-    std::shared_ptr<LumiereInterface> as_interface() const
-    {
-        assert(is_interface());
-        return std::static_pointer_cast<LumiereInterface>(m_ref);
-    }
+    Ref<LumiereInterface> as_interface() const;
 
-    std::shared_ptr<const ResultData> as_resultat() const
-    {
-        assert(is_resultat());
-        return std::static_pointer_cast<const ResultData>(m_ref);
-    }
+    Ref<const ResultData> as_resultat() const;
 
     /** @brief Address of the shared object, for identity comparison and hashing. */
     const void *ref_identity() const { return m_ref.get(); }
@@ -433,7 +399,7 @@ private:
     };
 
     Payload m_payload {};
-    std::shared_ptr<void> m_ref;
+    Ref<RefCounted> m_ref;
 };
 
 struct TraceFrame
@@ -444,12 +410,21 @@ struct TraceFrame
     uint32_t column = 0;
 };
 
-struct ResultData
+struct ResultData : RefCounted
 {
     bool success;
     Value payload;
     std::optional<RuntimeSite> origin;
     std::vector<TraceFrame> trace;
+
+    // Carrying a reference count makes this no longer an aggregate.
+    ResultData(const bool success,
+               Value payload,
+               std::optional<RuntimeSite> origin,
+               std::vector<TraceFrame> trace)
+        : success(success), payload(std::move(payload)), origin(std::move(origin)), trace(std::move(trace))
+    {
+    }
 };
 
 //  LumiereFunction
@@ -460,7 +435,7 @@ struct RuntimeFunctionBody
     virtual ~RuntimeFunctionBody() = default;
 };
 
-struct LumiereFunction
+struct LumiereFunction : RefCounted
 {
     // Generic runtime callback signature for native callables.
     // This is the backend-facing signature used by `LumiereFunction` itself:
@@ -500,16 +475,16 @@ struct RuntimeInterfaceBody
     virtual ~RuntimeInterfaceBody() = default;
 };
 
-struct LumiereClass
+struct LumiereClass : RefCounted
 {
     std::string name;
     std::string type_identity;
     std::shared_ptr<RuntimeClassBody> body;
-    std::shared_ptr<LumiereClass> parent;
-    std::unordered_map<std::string, std::shared_ptr<LumiereInterface>> interfaces;
+    Ref<LumiereClass> parent;
+    std::unordered_map<std::string, Ref<LumiereInterface>> interfaces;
 };
 
-struct LumiereInterface
+struct LumiereInterface : RefCounted
 {
     std::string name;
     std::string type_identity;
@@ -518,9 +493,9 @@ struct LumiereInterface
 
 //  LumiereObject
 //  A class instance at runtime.
-struct LumiereObject
+struct LumiereObject : RefCounted
 {
-    std::shared_ptr<LumiereClass>           klass;
+    Ref<LumiereClass>           klass;
     std::shared_ptr<void>                   native_state;
     std::unordered_map<std::string, Value> fields;
 };
@@ -539,5 +514,69 @@ struct Module {
     std::unordered_set<std::string> public_type_aliases;
     std::unordered_map<std::string, Value> public_type_values;
 };
+
+// Defined here rather than in the class body: downcasting the shared handle
+// needs these types complete, and they are declared below Value.
+inline Value Value::objet(Ref<LumiereObject> obj)
+{
+    Value v;
+    v.type = Type::OBJET;
+    v.m_ref = std::move(obj);
+    return v;
+}
+
+inline Value Value::fonction(Ref<LumiereFunction> fn)
+{
+    Value v;
+    v.type = Type::FONCTION;
+    v.m_ref = std::move(fn);
+    return v;
+}
+
+inline Value Value::classe(Ref<LumiereClass> cls)
+{
+    Value v;
+    v.type = Type::CLASSE;
+    v.m_ref = std::move(cls);
+    return v;
+}
+
+inline Value Value::interface(Ref<LumiereInterface> iface)
+{
+    Value v;
+    v.type = Type::INTERFACE;
+    v.m_ref = std::move(iface);
+    return v;
+}
+
+inline Ref<LumiereObject> Value::as_objet() const
+{
+    assert(is_objet());
+    return Ref<LumiereObject>(static_cast<LumiereObject *>(m_ref.get()));
+}
+
+inline Ref<LumiereFunction> Value::as_fonction() const
+{
+    assert(is_fonction());
+    return Ref<LumiereFunction>(static_cast<LumiereFunction *>(m_ref.get()));
+}
+
+inline Ref<LumiereClass> Value::as_classe() const
+{
+    assert(is_classe());
+    return Ref<LumiereClass>(static_cast<LumiereClass *>(m_ref.get()));
+}
+
+inline Ref<LumiereInterface> Value::as_interface() const
+{
+    assert(is_interface());
+    return Ref<LumiereInterface>(static_cast<LumiereInterface *>(m_ref.get()));
+}
+
+inline Ref<const ResultData> Value::as_resultat() const
+{
+    assert(is_resultat());
+    return Ref<const ResultData>(static_cast<const ResultData *>(m_ref.get()));
+}
 
 } // namespace lumiere

@@ -69,7 +69,7 @@ std::filesystem::path sanitize_path(IRuntime &runtime,
 void register_fichier_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    auto error_class = std::make_shared<LumiereClass>();
+    auto error_class = make_ref<LumiereClass>();
     error_class->name = "Fichier.ErreurFichier";
     stdlib_bind_public_value(
         module,
@@ -245,7 +245,7 @@ void register_fichier_module(Module &module)
                     call_site);
             }
 
-            auto lines = std::make_shared<ListeData>();
+            auto lines = make_ref<ListeData>();
             std::string line;
             while (std::getline(file, line))
             {
@@ -429,7 +429,7 @@ void register_fichier_module(Module &module)
                 }
                 std::sort(entries.begin(), entries.end());
 
-                auto values = std::make_shared<ListeData>();
+                auto values = make_ref<ListeData>();
                 for (const auto &entry : entries)
                 {
                     values->elements.push_back(Value::texte(entry));
@@ -466,7 +466,7 @@ void register_fichier_module(Module &module)
                 }
                 std::sort(entries.begin(), entries.end());
 
-                auto values = std::make_shared<ListeData>();
+                auto values = make_ref<ListeData>();
                 for (const auto &entry : entries)
                 {
                     values->elements.push_back(Value::texte(entry));

@@ -11,8 +11,8 @@
 namespace lumiere
 {
 
-using NativeFunctionFactory = std::function<std::shared_ptr<LumiereFunction>(LumiereFunction::NativeHandler)>;
-using NativeMethodFactory = std::function<std::shared_ptr<LumiereFunction>(Value, LumiereFunction::NativeHandler)>;
+using NativeFunctionFactory = std::function<Ref<LumiereFunction>(LumiereFunction::NativeHandler)>;
+using NativeMethodFactory = std::function<Ref<LumiereFunction>(Value, LumiereFunction::NativeHandler)>;
 
 const NativeFunctionFactory &native_function_factory();
 void register_chemin_module(Module &module);

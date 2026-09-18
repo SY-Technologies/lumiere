@@ -223,8 +223,8 @@ double as_numeric(IRuntime &runtime,
     return 0.0;
 }
 
-void bind_context_methods(const std::shared_ptr<LumiereObject> &context,
-                          const std::shared_ptr<LumiereObject> &root)
+void bind_context_methods(const Ref<LumiereObject> &context,
+                          const Ref<LumiereObject> &root)
 {
     static const std::vector<std::string> method_names = {
         "test",
@@ -254,8 +254,8 @@ void register_lumitest_module(Module &module,
 {
     const auto &make_native_function = native_function_factory();
     module.state = state;
-    auto root = std::make_shared<LumiereObject>();
-    auto context_object = std::make_shared<LumiereObject>();
+    auto root = make_ref<LumiereObject>();
+    auto context_object = make_ref<LumiereObject>();
     const Value context_value = Value::objet(context_object);
 
     root->fields["test"] = Value::fonction(make_native_function(

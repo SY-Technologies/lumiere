@@ -11,10 +11,10 @@
 namespace lumiere
 {
 
-std::shared_ptr<LumiereObject> make_hidden_typed_object(const std::string &type_name)
+Ref<LumiereObject> make_hidden_typed_object(const std::string &type_name)
 {
-    auto object = std::make_shared<LumiereObject>();
-    auto klass = std::make_shared<LumiereClass>();
+    auto object = make_ref<LumiereObject>();
+    auto klass = make_ref<LumiereClass>();
     klass->name = type_name;
     klass->type_identity = type_name.find('.') == std::string::npos
         ? native_nominal_type_identity("LumiNet", type_name)
@@ -23,7 +23,7 @@ std::shared_ptr<LumiereObject> make_hidden_typed_object(const std::string &type_
     return object;
 }
 
-void attach_native_state(const std::shared_ptr<LumiereObject> &object, NativeStatePtr state)
+void attach_native_state(const Ref<LumiereObject> &object, NativeStatePtr state)
 {
     object->native_state = std::move(state);
 }

@@ -58,7 +58,7 @@ namespace lumiere
         return Value::rien();
     }
 
-    Value TreeWalker::resolve_list_native_member(const std::shared_ptr<ListeData> &list,
+    Value TreeWalker::resolve_list_native_member(const Ref<ListeData> &list,
                                                  const Token &member,
                                                  Value receiver) const
     {
@@ -115,7 +115,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Liste.en_ensemble", call_site);
-                auto set = std::make_shared<EnsembleData>();
+                auto set = make_ref<EnsembleData>();
                 set->reserve(list->elements.size());
                 for (const Value &element : list->elements)
                 {
@@ -142,7 +142,7 @@ namespace lumiere
                     walker.throw_runtime_error(call_site, "Liste.en_liste_fixe requiert une liste de taille exacte " + std::to_string(length));
                 }
 
-                auto fixed = std::make_shared<ListeFixeData>();
+                auto fixed = make_ref<ListeFixeData>();
                 fixed->elements = list->elements;
                 Value result = Value::liste_fixe(std::move(fixed));
 
@@ -164,7 +164,7 @@ namespace lumiere
         return Value::rien();
     }
 
-    Value TreeWalker::resolve_fixed_list_native_member(const std::shared_ptr<ListeFixeData> &list,
+    Value TreeWalker::resolve_fixed_list_native_member(const Ref<ListeFixeData> &list,
                                                        const Token &member,
                                                        Value receiver) const
     {
@@ -183,7 +183,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "ListeFixe.en_liste", call_site);
-                auto dynamic = std::make_shared<ListeData>();
+                auto dynamic = make_ref<ListeData>();
                 dynamic->elements = list->elements;
                 Value result = Value::liste(std::move(dynamic));
                 if (list->constraint)
@@ -198,7 +198,7 @@ namespace lumiere
         return Value::rien();
     }
 
-    Value TreeWalker::resolve_set_native_member(const std::shared_ptr<EnsembleData> &set,
+    Value TreeWalker::resolve_set_native_member(const Ref<EnsembleData> &set,
                                                 const Token &member,
                                                 Value receiver) const
     {
@@ -246,7 +246,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, set, element_type](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Ensemble.en_liste", call_site);
-                auto list = std::make_shared<ListeData>();
+                auto list = make_ref<ListeData>();
                 list->elements = set->items();
                 Value result = Value::liste(std::move(list));
                 walker.register_value_annotation(result, Token(TokenType::IDENT, "Liste[" + element_type() + "]", call_site.line, call_site.column));
@@ -264,7 +264,7 @@ namespace lumiere
                     walker.throw_runtime_error(call_site, "Ensemble." + operation + " attend un Ensemble");
                 }
                 const auto other = args[0].value.as_ensemble();
-                auto result = std::make_shared<EnsembleData>();
+                auto result = make_ref<EnsembleData>();
                 result->constraint = set->constraint;
                 if (operation == "union")
                 {
@@ -309,7 +309,7 @@ namespace lumiere
         return Value::rien();
     }
 
-    Value TreeWalker::resolve_dict_native_member(const std::shared_ptr<DictData> &dict,
+    Value TreeWalker::resolve_dict_native_member(const Ref<DictData> &dict,
                                                  const Token &member,
                                                  Value receiver) const
     {
@@ -345,7 +345,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Dictionnaire.clés", call_site);
-                auto keys = std::make_shared<ListeData>();
+                auto keys = make_ref<ListeData>();
                 std::string key_type = "Universel";
                 if (dict->constraint)
                 {
@@ -364,7 +364,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Dictionnaire.valeurs", call_site);
-                auto values = std::make_shared<ListeData>();
+                auto values = make_ref<ListeData>();
                 std::string value_type = "Universel";
                 if (dict->constraint)
                 {
@@ -383,7 +383,7 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Dictionnaire.paires", call_site);
-                auto pairs = std::make_shared<ListeData>();
+                auto pairs = make_ref<ListeData>();
                 std::string key_type = "Universel";
                 std::string value_type = "Universel";
                 if (dict->constraint)
@@ -395,7 +395,7 @@ namespace lumiere
 
                 for (const auto &entry : dict->items())
                 {
-                    auto pair = std::make_shared<ListeFixeData>();
+                    auto pair = make_ref<ListeFixeData>();
                     pair->elements.push_back(entry.first);
                     pair->elements.push_back(entry.second);
                     Value pair_value = Value::liste_fixe(std::move(pair));

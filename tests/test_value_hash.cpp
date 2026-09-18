@@ -13,14 +13,14 @@ namespace
 
 Value fixed_list(std::vector<Value> elements)
 {
-    auto data = std::make_shared<ListeFixeData>();
+    auto data = make_ref<ListeFixeData>();
     data->elements = std::move(elements);
     return Value::liste_fixe(std::move(data));
 }
 
 Value empty_list()
 {
-    return Value::liste(std::make_shared<ListeData>());
+    return Value::liste(make_ref<ListeData>());
 }
 
 /** Every value a key can take, with equal values appearing more than once. */

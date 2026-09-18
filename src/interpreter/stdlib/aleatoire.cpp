@@ -161,7 +161,7 @@ void register_aleatoire_module(Module &module)
             std::vector<Value> shuffled = list->elements;
             std::shuffle(shuffled.begin(), shuffled.end(), state->generator);
 
-            auto sample = std::make_shared<ListeData>();
+            auto sample = make_ref<ListeData>();
             sample->elements.insert(sample->elements.end(), shuffled.begin(), shuffled.begin() + count);
             Value result = Value::liste(std::move(sample));
             runtime.annotate_value(result, "Liste[Universel]", native_args.site);

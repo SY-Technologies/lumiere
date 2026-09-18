@@ -60,9 +60,9 @@ std::string trim_copy(const std::string &text)
     return trim_right_copy(trim_left_copy(text));
 }
 
-std::shared_ptr<ListeData> split_text_items(const std::string &text, const std::string &separator)
+Ref<ListeData> split_text_items(const std::string &text, const std::string &separator)
 {
-    auto items = std::make_shared<ListeData>();
+    auto items = make_ref<ListeData>();
     std::size_t start = 0;
     while (true)
     {
@@ -436,7 +436,7 @@ Value execute_texte_member(IRuntime &runtime,
 void register_texte_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    auto error_class = std::make_shared<LumiereClass>();
+    auto error_class = make_ref<LumiereClass>();
     error_class->name = "Texte.ErreurConversion";
     stdlib_bind_public_value(
         module,

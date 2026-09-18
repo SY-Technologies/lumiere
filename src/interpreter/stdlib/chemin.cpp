@@ -132,7 +132,7 @@ void register_chemin_module(Module &module)
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Chemin.parties", call_site).lexically_normal();
 
-            auto parts = std::make_shared<ListeData>();
+            auto parts = make_ref<ListeData>();
             for (const auto &part : path)
             {
                 const std::string part_text = path_to_text(part);

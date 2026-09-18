@@ -166,7 +166,7 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
                 raise_network_error(runtime, native_args.site, "LumiNet.DNS.résoudre_tous", gai_strerror(rc));
             }
             std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-            auto list = std::make_shared<ListeData>();
+            auto list = make_ref<ListeData>();
             std::vector<std::string> seen;
             for (addrinfo *entry = result; entry != nullptr; entry = entry->ai_next)
             {

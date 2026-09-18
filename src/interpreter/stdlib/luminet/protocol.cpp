@@ -62,7 +62,7 @@ Value make_text_dictionary_value(IRuntime &runtime,
                                  const std::vector<std::pair<std::string, std::string>> &entries,
                                  const RuntimeSite &site)
 {
-    auto dict = std::make_shared<DictData>();
+    auto dict = make_ref<DictData>();
     for (const auto &entry : entries)
     {
         // A repeated header name must not create a second entry under the same key.
@@ -73,9 +73,9 @@ Value make_text_dictionary_value(IRuntime &runtime,
     return result;
 }
 
-std::shared_ptr<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes)
+Ref<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes)
 {
-    auto result = std::make_shared<ListeData>();
+    auto result = make_ref<ListeData>();
     result->elements.reserve(bytes.size());
     for (unsigned char byte : bytes)
     {
@@ -183,7 +183,7 @@ Value make_udp_packet_bytes_value(IRuntime &runtime,
     return Value::objet(std::move(object));
 }
 
-void bind_object_method(const std::shared_ptr<LumiereObject> &object,
+void bind_object_method(const Ref<LumiereObject> &object,
                         const NativeFunctionFactory &make_native_function,
                         const std::string &name,
                         LumiereFunction::NativeHandler handler)

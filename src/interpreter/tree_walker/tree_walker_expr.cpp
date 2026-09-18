@@ -400,7 +400,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     }
 
     auto instance = object.as_objet();
-    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
+    Ref<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
@@ -409,7 +409,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
         }
     }
 
-    std::shared_ptr<LumiereClass> declaring_class;
+    Ref<LumiereClass> declaring_class;
     VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme, &declaring_class) : nullptr;
     if (field_decl == nullptr)
     {
@@ -479,7 +479,7 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
 
 void TreeWalker::visit(SetExpr &expr)
 {
-    auto data = std::make_shared<EnsembleData>();
+    auto data = make_ref<EnsembleData>();
     data->reserve(expr.elements.size());
 
     for (auto &element : expr.elements)
@@ -494,7 +494,7 @@ void TreeWalker::visit(SetExpr &expr)
 
 void TreeWalker::visit(DictionaryExpr &expr)
 {
-    auto data = std::make_shared<DictData>();
+    auto data = make_ref<DictData>();
     data->reserve(expr.entries.size());
 
     for (auto &entry : expr.entries)
@@ -738,7 +738,7 @@ void TreeWalker::visit(CallExpr &expr)
                 expr.paren,
                 "ListeFixe.remplir");
 
-            auto data = std::make_shared<ListeFixeData>();
+            auto data = make_ref<ListeFixeData>();
             data->elements.assign(static_cast<std::size_t>(length), fill_value);
             m_result = Value::liste_fixe(std::move(data));
             register_value_annotation(
@@ -767,7 +767,7 @@ void TreeWalker::visit(CallExpr &expr)
 
 void TreeWalker::visit(ListExpr &expr)
 {
-    auto data = std::make_shared<ListeData>();
+    auto data = make_ref<ListeData>();
     data->elements.reserve(expr.elements.size());
 
     for (auto &element : expr.elements)
@@ -796,7 +796,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
     }
 
     auto instance = object.as_objet();
-    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
+    Ref<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
@@ -835,7 +835,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
     if (lookup_class != nullptr)
     {
-        std::shared_ptr<LumiereClass> declaring_class;
+        Ref<LumiereClass> declaring_class;
         if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme, &declaring_class))
         {
             if (function_decl->is_prive && !access_uses_ici(*expr.object))
@@ -964,7 +964,7 @@ void TreeWalker::visit(PropagationExpr &expr)
     }
 }
 
-Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function,
+Value TreeWalker::call_function(const Ref<LumiereFunction> &function,
                                 const std::vector<Argument> &args,
                                 const Token &call_site)
 {
@@ -991,7 +991,7 @@ Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function
         RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)});
 }
 
-Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &function,
+Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
                                      const std::vector<RuntimeArgument> &args,
                                      const RuntimeSite &call_site)
 {
@@ -1357,7 +1357,7 @@ Value TreeWalker::call_builtin(const std::string &name,
     throw_runtime_error(call_site, "fonction native inconnue: " + name);
 }
 
-Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
+Value TreeWalker::instantiate_class(const Ref<LumiereClass> &klass,
                                     const std::vector<Argument> &args,
                                     const Token &call_site)
 {
@@ -1367,7 +1367,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         throw_runtime_error(call_site, "classe invalide");
     }
 
-    auto object = std::make_shared<LumiereObject>();
+    auto object = make_ref<LumiereObject>();
     object->klass = klass;
 
     struct FieldInfo
@@ -1378,13 +1378,13 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
     std::unordered_map<std::string, FieldInfo> fields_by_name;
     std::vector<std::string> field_order;
 
-    std::function<void(const std::shared_ptr<LumiereClass> &)> collect_fields = [&](const std::shared_ptr<LumiereClass> &current) {
+    std::function<void(const Ref<LumiereClass> &)> collect_fields = [&](const Ref<LumiereClass> &current) {
         if (current == nullptr)
         {
             return;
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(current))
+        if (Ref<LumiereClass> parent = parent_class(current))
         {
             collect_fields(parent);
         }

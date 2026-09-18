@@ -15,10 +15,10 @@ namespace
 
 using TimePointMs = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>;
 
-std::shared_ptr<LumiereObject> make_typed_object(const std::string &type_name, int64_t millis)
+Ref<LumiereObject> make_typed_object(const std::string &type_name, int64_t millis)
 {
-    auto object = std::make_shared<LumiereObject>();
-    auto klass = std::make_shared<LumiereClass>();
+    auto object = make_ref<LumiereObject>();
+    auto klass = make_ref<LumiereClass>();
     klass->name = type_name;
     klass->type_identity = native_nominal_type_identity("Temps", type_name);
     object->klass = std::move(klass);
@@ -422,7 +422,7 @@ void register_temps_module(Module &module)
     const auto &make_native_function = native_function_factory();
     stdlib_bind_public_type(module, "Instant");
     stdlib_bind_public_type(module, "Durée");
-    auto error_class = std::make_shared<LumiereClass>();
+    auto error_class = make_ref<LumiereClass>();
     error_class->name = "Temps.ErreurTemps";
     stdlib_bind_public_value(
         module,

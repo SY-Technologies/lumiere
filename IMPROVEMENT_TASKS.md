@@ -17,15 +17,20 @@ equal-spelling declarations from different owners remain incompatible.
 
 ## T2 — Bound runtime memory with cycle collection
 
-Status: in progress
+Status: ownership landed — 2026-09-18; cycle collection outstanding
 
-- Define explicit roots for globals, frames, callbacks, and native handles.
-- Add allocation accounting and a deterministic collection trigger.
-- Collect closure, environment, object, class, and collection cycles safely.
-- Enable leak detection in sanitizer validation.
+- [x] Give the runtime its own ownership: heap values carry an intrusive,
+      non-atomic reference count instead of being held by `shared_ptr`.
+- [x] Verify that everything except cycles is freed: `scripts/check-leaks` runs
+      nine programs under a leak-detecting build and all are clean.
+- [ ] Define explicit roots for globals, frames, callbacks, and native handles.
+- [ ] Add allocation accounting and a deterministic collection trigger.
+- [ ] Collect closure, environment, object, class, and collection cycles safely.
+- [ ] Enable leak detection across the whole sanitizer suite.
 
 Acceptance: cyclic stress programs have bounded retained memory and the complete
-suite passes with leak detection enabled.
+suite passes with leak detection enabled. Cycles are now the only thing standing
+between here and that, which also means the collector can be tested on its own.
 
 ## T3 — Specify and optimize dictionary/set semantics
 

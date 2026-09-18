@@ -152,12 +152,12 @@ namespace lumiere
         std::vector<unsigned char> payload;
     };
 
-    std::shared_ptr<LumiereObject> make_hidden_typed_object(const std::string &type_name);
-    void attach_native_state(const std::shared_ptr<LumiereObject> &object, NativeStatePtr state);
+    Ref<LumiereObject> make_hidden_typed_object(const std::string &type_name);
+    void attach_native_state(const Ref<LumiereObject> &object, NativeStatePtr state);
 
     template <typename State>
     std::shared_ptr<State> require_native_state(IRuntime &runtime,
-                                                const std::shared_ptr<LumiereObject> &object,
+                                                const Ref<LumiereObject> &object,
                                                 const std::string &expected_type,
                                                 const std::string &context,
                                                 const RuntimeSite &site)
@@ -237,7 +237,7 @@ namespace lumiere
     Value make_text_dictionary_value(IRuntime &runtime,
                                      const std::vector<std::pair<std::string, std::string>> &entries,
                                      const RuntimeSite &site);
-    std::shared_ptr<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes);
+    Ref<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes);
     std::vector<unsigned char> expect_byte_vector(IRuntime &runtime,
                                                   const Value &value,
                                                   const std::string &context,
@@ -259,7 +259,7 @@ namespace lumiere
                                       const std::string &address,
                                       int64_t port,
                                       const RuntimeSite &site);
-    void bind_object_method(const std::shared_ptr<LumiereObject> &object,
+    void bind_object_method(const Ref<LumiereObject> &object,
                             const NativeFunctionFactory &make_native_function,
                             const std::string &name,
                             LumiereFunction::NativeHandler handler);

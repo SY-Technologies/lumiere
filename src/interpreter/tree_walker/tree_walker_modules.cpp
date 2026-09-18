@@ -18,7 +18,7 @@ namespace lumiere
         auto state = std::make_shared<TreeWalkerModuleState>();
         state->environment = std::make_shared<Environment>();
         auto error_interface =
-            std::make_shared<LumiereInterface>();
+            make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
         state->environment->define_fixe(
             "Erreur",
@@ -102,7 +102,7 @@ namespace lumiere
         state->environment->set_source_path(path.string());
         state->environment->set_source_identity(path.string());
         auto error_interface =
-            std::make_shared<LumiereInterface>();
+            make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
         state->environment->define_fixe(
             "Erreur",

@@ -140,18 +140,18 @@ Value stdlib_error_value(
     std::string cause,
     std::string path)
 {
-    auto klass = std::make_shared<LumiereClass>();
+    auto klass = make_ref<LumiereClass>();
     klass->name = type_name;
     klass->type_identity = native_nominal_type_identity(type_name);
     auto error_interface =
-        std::make_shared<LumiereInterface>();
+        make_ref<LumiereInterface>();
     error_interface->name = "Erreur";
     error_interface->type_identity = "Erreur";
     klass->interfaces.emplace(
         "Erreur",
         std::move(error_interface));
 
-    auto object = std::make_shared<LumiereObject>();
+    auto object = make_ref<LumiereObject>();
     object->klass = std::move(klass);
     object->fields.emplace(
         "opération",
@@ -263,7 +263,7 @@ bool register_builtin_module(Module &module,
 const NativeFunctionFactory &native_function_factory()
 {
     static const NativeFunctionFactory factory = [](LumiereFunction::NativeHandler handler) {
-        auto function = std::make_shared<LumiereFunction>();
+        auto function = make_ref<LumiereFunction>();
         function->name = "<native>";
         function->native_handler = std::move(handler);
         return function;

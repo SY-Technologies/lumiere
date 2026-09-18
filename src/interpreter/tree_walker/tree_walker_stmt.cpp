@@ -81,7 +81,7 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
         throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
-    std::shared_ptr<LumiereClass> runtime_parent = nullptr;
+    Ref<LumiereClass> runtime_parent = nullptr;
     ClassDeclStmt *parent = nullptr;
     if (!stmt.parent.empty())
     {
@@ -122,7 +122,7 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
         }
     }
 
-    std::shared_ptr<LumiereClass> runtime_class = make_runtime_class(stmt);
+    Ref<LumiereClass> runtime_class = make_runtime_class(stmt);
     validate_class_interfaces(stmt, runtime_class);
 
     try
@@ -215,7 +215,7 @@ void TreeWalker::visit(ImportStmt &stmt)
                                          ? default_module_alias(stmt.module_name.lexeme)
                                          : stmt.alias.lexeme;
 
-    auto namespace_object = std::make_shared<LumiereObject>();
+    auto namespace_object = make_ref<LumiereObject>();
     namespace_object->klass = nullptr;
 
     for (const auto &public_name : module->public_members)

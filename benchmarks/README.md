@@ -255,3 +255,48 @@ Against the target on the same host, nine runs: C at 0.29 ms, CPython at
 workload, which was the revised goal. Cumulatively the loop has gone from
 138.9 ms at the start of this work to 78.3 ms, 44% less, in four changes that
 each carried their own measurement.
+
+## The runtime owns its heap values — 2026-09-18
+
+Same host, compiler and RelWithDebInfo options. Both binaries were built in the
+same session and measured back to back, nine runs each after one warm-up.
+
+| Workload | shared_ptr median (min–max), s | Intrusive median (min–max), s | Change |
+| --- | --- | --- | --- |
+| 1,000,000 integer-loop iterations | 0.079370 (0.079034–0.086145) | 0.079181 (0.078804–0.082275) | neutral |
+| 30,000 Unicode scalars | 0.005643 (0.005574–0.005902) | 0.005308 (0.005172–0.007296) | −5.9% |
+| 100,000 user-function calls | 0.032608 (0.032348–0.034366) | 0.032179 (0.031756–0.033168) | −1.3% |
+| 3,000 identity calls carrying 128 KiB text | 0.002800 (0.002622–0.002974) | 0.002570 (0.002542–0.002651) | −8.2% |
+| 200,000 typed-list appends | 0.054038 (0.052487–0.062803) | 0.050743 (0.049889–0.053285) | −6.1% |
+| 50,000 dictionary writes then reads | 0.054202 (0.051691–0.056429) | 0.052062 (0.050809–0.055441) | −4.0% |
+
+`Value` went from 32 bytes to 24. Every workload that touches a heap value is
+between 4% and 8% faster, and the integer loop is unchanged.
+
+**The model was wrong, and the way it was wrong is worth recording.** Measured in
+isolation, replacing the type-erased `shared_ptr` with an intrusive count removed
+60% of the cost of the value traffic in one loop iteration, which predicted about
+a fifth off the integer loop. In place it removed nothing there. The reason is
+plain in hindsight: the integer loop never touches a heap value, so the count is
+a null check either way, and the isolated model had stripped away the dispatch,
+frame and decode costs that dominate that loop in situ. The gains land exactly
+where heap values are actually copied. An isolated model sizes a mechanism; only
+an A/B of two real binaries sizes a change.
+
+Two smaller findings came out of the work, both measured:
+
+- 24 is not a power of two, so indexing a `std::vector<Value>` needs a multiply
+  where 32 bytes needed a shift. Padding back to 32 appeared to recover a couple
+  of milliseconds, but the effect did not survive a same-session A/B against
+  ambient drift, so the padding was not kept and the claim is not made.
+- `release()` ended in `delete this`, which is a virtual call. Inlining that into
+  every site where a value is destroyed bloated the interpreter's dispatch loop.
+  Moving the destruction out of line, leaving a decrement and a branch inline,
+  was worth roughly 3 ms on the integer loop.
+
+Leak detection is the other half of this change. The sanitizer suite has had it
+disabled throughout this project because reference cycles are not collected. That
+is still true of cycles, but everything else is now freed deterministically:
+`scripts/check-leaks` runs nine example and benchmark programs under a
+leak-detecting build and all nine are clean. A program that builds a reference
+cycle still leaks, which is the remaining part of T2 and now the only part.

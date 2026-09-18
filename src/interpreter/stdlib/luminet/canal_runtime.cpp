@@ -117,7 +117,7 @@ void run_canal_loop(IRuntime &runtime,
         {
             if (state->on_message.is_fonction())
             {
-                auto byte_list = std::make_shared<ListeData>();
+                auto byte_list = make_ref<ListeData>();
                 byte_list->elements.reserve(fragment_buffer.size());
                 for (auto byte : fragment_buffer)
                 {
@@ -130,7 +130,7 @@ void run_canal_loop(IRuntime &runtime,
             }
             if (server_dispatch_mode && server_message_callback.is_fonction())
             {
-                auto byte_list = std::make_shared<ListeData>();
+                auto byte_list = make_ref<ListeData>();
                 byte_list->elements.reserve(fragment_buffer.size());
                 for (auto byte : fragment_buffer)
                 {

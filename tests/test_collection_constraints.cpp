@@ -312,10 +312,10 @@ TEST(CollectionConstraints, ReannotationPreservesFixedLengthAndSetElementContrac
 
 TEST(CollectionConstraints, BelongToValuesRatherThanTheAnnotatingRuntime)
 {
-    auto list = std::make_shared<ListeData>();
-    auto fixed = std::make_shared<ListeFixeData>();
-    auto dictionary = std::make_shared<DictData>();
-    auto set = std::make_shared<EnsembleData>();
+    auto list = make_ref<ListeData>();
+    auto fixed = make_ref<ListeFixeData>();
+    auto dictionary = make_ref<DictData>();
+    auto set = make_ref<EnsembleData>();
     {
         TreeWalker runtime;
         runtime.annotate_value(Value::liste(list), "Liste[Entier]", {});
@@ -338,18 +338,21 @@ TEST(CollectionConstraints, BelongToValuesRatherThanTheAnnotatingRuntime)
 TEST(CollectionConstraints, ReusingAnAddressStartsWithoutAConstraint)
 {
     TreeWalker runtime;
-    std::optional<ListeData> storage(std::in_place);
-    const auto address = &*storage;
+    const ListeData *address = nullptr;
     {
-        // Borrow the object; optional owns its destruction and reconstruction.
-        auto list = std::shared_ptr<ListeData>(&*storage, [](ListeData *) {});
+        auto list = make_ref<ListeData>();
+        address = list.get();
         runtime.annotate_value(Value::liste(list), "Liste[Entier]", {});
         ASSERT_TRUE(list->constraint);
     }
-    storage.reset();
-    storage.emplace();
-    EXPECT_EQ(&*storage, address);
-    EXPECT_FALSE(storage->constraint);
+
+    // The annotated list is gone. A fresh one commonly lands on the address it
+    // freed, and must carry nothing over from it. The contract lives on the
+    // allocation, so it dies with it.
+    const auto replacement = make_ref<ListeData>();
+    EXPECT_FALSE(replacement->constraint)
+        << "a new collection inherited a dead one's contract"
+        << (replacement.get() == address ? ", at the same address" : "");
 }
 
 } // namespace lumiere
