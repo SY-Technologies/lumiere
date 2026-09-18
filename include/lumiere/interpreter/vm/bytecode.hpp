@@ -62,6 +62,7 @@ enum class Opcode : std::uint8_t
     NAMESPACE,
     LIST,
     DICTIONARY,
+    ENSEMBLE,
     ITERATION_SNAPSHOT,
     SEQUENCE_LENGTH,
     INDEX_GET,

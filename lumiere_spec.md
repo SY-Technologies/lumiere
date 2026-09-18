@@ -74,6 +74,7 @@ Supported literal forms:
 - null-like value: `rien`
 - lists: `[1, 2, 3]`
 - dictionaries: `{"nom": "Ada", "age": 36}`
+- sets: `{1, 2, 3}`
 
 An underscore separates digits and must sit between two of them: `1_000` and
 `1.5e1_0` are literals, `_1`, `1_` and `1._5` are not. A letter or underscore
@@ -649,7 +650,27 @@ Notes:
 
 ### `Ensemble`
 
-`Ensemble[T]` is a recognized type and is supported in runtime values, but this repository currently documents less surface behavior for it than for lists and dictionaries. Treat it as implemented but less mature.
+`Ensemble[T]` holds each element once. A `{` opens a dictionary when the first
+entry is followed by `:` and a set otherwise, so `{1, 2, 3}` is a set and `{}` is
+the empty dictionary; the empty set is written `[].en_ensemble()`. Duplicates
+collapse on construction, and elements keep insertion order so iteration is
+reproducible.
+
+- `taille() -> Entier`
+- `vide() -> Logique`
+- `contient(élément) -> Logique`
+- `joindre(séparateur) -> Texte`
+- `ajouter(élément) -> Logique`, true when the element was not already present
+- `retirer(élément) -> Logique`, false when it was absent
+- `en_liste() -> Liste[T]`
+- `union(autre) -> Ensemble[T]`
+- `intersection(autre) -> Ensemble[T]`
+- `différence(autre) -> Ensemble[T]`, also spelled `difference`
+- `sous_ensemble_de(autre) -> Logique`
+
+A `Liste[T]` converts with `en_ensemble()`. Elements follow the dictionary key
+rule: they are compared with `==`, and a non-number cannot be stored. Two sets
+are compared by identity, like lists and dictionaries, not by their contents.
 
 ## 14. `Texte` methods and module
 

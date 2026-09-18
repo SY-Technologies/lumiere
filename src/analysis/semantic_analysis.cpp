@@ -2235,6 +2235,32 @@ private:
             }
             return m_analysis.model.types.generic("Liste", {element_type});
         }
+        if (const auto *set = dynamic_cast<const SetExpr *>(&expression))
+        {
+            std::vector<SemanticTypeRef> element_types;
+            for (const ExprPtr &element : set->elements)
+            {
+                const auto found = m_analysis.model.m_expression_types.find(element.get());
+                if (found != m_analysis.model.m_expression_types.end() &&
+                    std::none_of(element_types.begin(), element_types.end(),
+                                 [&](const SemanticTypeRef &existing) {
+                                     return same_type(existing, found->second);
+                                 }))
+                {
+                    element_types.push_back(found->second);
+                }
+            }
+            SemanticTypeRef element_type = *m_analysis.model.find_type("Universel");
+            if (element_types.size() == 1)
+            {
+                element_type = element_types.front();
+            }
+            else if (element_types.size() > 1)
+            {
+                element_type = m_analysis.model.types.union_type(std::move(element_types));
+            }
+            return m_analysis.model.types.generic("Ensemble", {element_type});
+        }
         if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expression))
         {
             std::vector<SemanticTypeRef> key_types;
@@ -2697,6 +2723,13 @@ private:
                     binary->op,
                     "LUM-S0041",
                     "Résultat ne participe pas implicitement aux opérations logiques, numériques ou textuelles");
+            }
+        }
+        else if (const auto *set = dynamic_cast<const SetExpr *>(&expression))
+        {
+            for (const ExprPtr &element : set->elements)
+            {
+                resolve_expression(*element);
             }
         }
         else if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expression))

@@ -397,6 +397,19 @@ namespace lumiere
          * turn a member token into a bound native method when the runtime owns
          * that operation.
          */
+        /** @brief Resolves a member call on an Ensemble receiver. */
+        Value resolve_set_native_member(const std::shared_ptr<EnsembleData> &set,
+                                        const Token &member,
+                                        Value receiver) const;
+
+        /**
+         * @brief Checks that a set insertion respects the declared element type.
+         */
+        void enforce_set_element_constraint(const std::shared_ptr<EnsembleData> &set,
+                                            const Value &element,
+                                            const Token &site,
+                                            const std::string &context) const;
+
         Value resolve_dict_native_member(const std::shared_ptr<DictData> &dict,
                                         const Token &member,
                                         Value receiver) const;
@@ -767,6 +780,7 @@ namespace lumiere
          * @brief Builds a dictionary value from its key and value expressions.
          */
         void visit(DictionaryExpr &) override;
+        void visit(SetExpr &) override;
 
         /**
          * @brief Evaluates a unary operator expression and stores the result.

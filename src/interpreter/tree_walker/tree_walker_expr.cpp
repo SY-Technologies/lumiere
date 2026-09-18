@@ -476,6 +476,21 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
                         "affectation par indice impossible: la cible doit etre une Liste ou un Dictionnaire");
 }
 
+void TreeWalker::visit(SetExpr &expr)
+{
+    auto data = std::make_shared<EnsembleData>();
+    data->reserve(expr.elements.size());
+
+    for (auto &element : expr.elements)
+    {
+        Value value = evaluate(*element);
+        require_dictionary_key(value, expr.brace);
+        data->insert(std::move(value));
+    }
+
+    m_result = Value::ensemble(std::move(data));
+}
+
 void TreeWalker::visit(DictionaryExpr &expr)
 {
     auto data = std::make_shared<DictData>();

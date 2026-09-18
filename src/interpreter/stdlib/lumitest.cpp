@@ -177,7 +177,7 @@ bool value_contains(IRuntime &runtime,
 
     if (container.is_ensemble())
     {
-        for (const Value &element : container.as_ensemble()->elements)
+        for (const Value &element : container.as_ensemble()->items())
         {
             if (runtime.is_equal(element, expected))
             {

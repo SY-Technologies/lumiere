@@ -67,6 +67,63 @@ std::size_t hash_mix(const std::size_t seed, const std::size_t value)
     return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
 }
 
+/**
+ * @brief Slot holding @p key, or the empty slot where it belongs.
+ *
+ * A dictionary indexes pairs by their first element and a set indexes values by
+ * themselves, so the entry type and the way a key is read out of it are the only
+ * differences between the two tables.
+ */
+template <typename Entry, typename KeyOf>
+std::size_t probe_index(const std::vector<std::size_t> &index,
+                        const std::vector<Entry> &entries,
+                        const KeyOf &key_of,
+                        const Value &key,
+                        const std::size_t hash)
+{
+    const std::size_t mask = index.size() - 1;
+    std::size_t slot = hash & mask;
+    while (index[slot] != 0 && !(key_of(entries[index[slot] - 1]) == key))
+    {
+        slot = (slot + 1) & mask;
+    }
+    return slot;
+}
+
+template <typename Entry, typename KeyOf>
+void rebuild_positions(std::vector<std::size_t> &index,
+                       const std::vector<Entry> &entries,
+                       const KeyOf &key_of)
+{
+    if (entries.size() < kIndexThreshold)
+    {
+        index.clear();
+        return;
+    }
+
+    std::size_t capacity = 16;
+    while (capacity * 3 < (entries.size() + 1) * 4)
+    {
+        capacity *= 2;
+    }
+
+    index.assign(capacity, 0);
+    for (std::size_t position = 0; position < entries.size(); ++position)
+    {
+        const Value &key = key_of(entries[position]);
+        index[probe_index(index, entries, key_of, key, value_hash(key))] = position + 1;
+    }
+}
+
+/** @brief True when the table has grown past three quarters of its slots. */
+inline bool index_is_crowded(const std::size_t entries, const std::size_t slots)
+{
+    return (entries + 1) * 4 > slots * 3;
+}
+
+constexpr auto dict_key = [](const DictEntry &entry) -> const Value & { return entry.first; };
+constexpr auto set_key = [](const Value &element) -> const Value & { return element; };
+
 template <typename T>
 struct IsSharedPtr : std::false_type
 {
@@ -151,35 +208,12 @@ std::size_t value_hash(const Value &value)
 
 std::size_t DictData::probe(const Value &key, const std::size_t hash) const
 {
-    const std::size_t mask = m_index.size() - 1;
-    std::size_t slot = hash & mask;
-    while (m_index[slot] != 0 && !(m_entries[m_index[slot] - 1].first == key))
-    {
-        slot = (slot + 1) & mask;
-    }
-    return slot;
+    return probe_index(m_index, m_entries, dict_key, key, hash);
 }
 
 void DictData::rebuild_index()
 {
-    if (m_entries.size() < kIndexThreshold)
-    {
-        m_index.clear();
-        return;
-    }
-
-    std::size_t capacity = 16;
-    while (capacity * 3 < (m_entries.size() + 1) * 4)
-    {
-        capacity *= 2;
-    }
-
-    m_index.assign(capacity, 0);
-    for (std::size_t position = 0; position < m_entries.size(); ++position)
-    {
-        const Value &key = m_entries[position].first;
-        m_index[probe(key, value_hash(key))] = position + 1;
-    }
+    rebuild_positions(m_index, m_entries, dict_key);
 }
 
 DictEntry *DictData::find_mutable(const Value &key)
@@ -218,7 +252,7 @@ bool DictData::set(Value key, Value value)
     {
         return true;
     }
-    if (m_index.empty() || (m_entries.size() + 1) * 4 > m_index.size() * 3)
+    if (m_index.empty() || index_is_crowded(m_entries.size(), m_index.size()))
     {
         rebuild_index();
         return true;
@@ -243,6 +277,60 @@ bool DictData::erase(const Value &key, Value &removed)
     // patched. The vector erase is already linear.
     rebuild_index();
     return true;
+}
+
+bool EnsembleData::contains(const Value &element) const
+{
+    if (m_index.empty())
+    {
+        for (const Value &candidate : m_elements)
+        {
+            if (candidate == element)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return m_index[probe_index(m_index, m_elements, set_key, element, value_hash(element))] != 0;
+}
+
+bool EnsembleData::insert(Value element)
+{
+    if (contains(element))
+    {
+        return false;
+    }
+
+    m_elements.push_back(std::move(element));
+    if (m_elements.size() < kIndexThreshold)
+    {
+        return true;
+    }
+    if (m_index.empty() || index_is_crowded(m_elements.size(), m_index.size()))
+    {
+        rebuild_positions(m_index, m_elements, set_key);
+        return true;
+    }
+
+    const Value &stored = m_elements.back();
+    m_index[probe_index(m_index, m_elements, set_key, stored, value_hash(stored))] = m_elements.size();
+    return true;
+}
+
+bool EnsembleData::erase(const Value &element)
+{
+    for (auto it = m_elements.begin(); it != m_elements.end(); ++it)
+    {
+        if (*it == element)
+        {
+            m_elements.erase(it);
+            rebuild_positions(m_index, m_elements, set_key);
+            return true;
+        }
+    }
+    return false;
 }
 
 std::optional<std::string> dictionary_key_rejection(const Value &key)
@@ -354,7 +442,16 @@ std::string Value::to_string() const
         out << "}";
         break;
     case Type::ENSEMBLE:
-        out << "<ensemble>";
+        out << "{";
+        for (std::size_t i = 0; i < as_ensemble()->items().size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << ", ";
+            }
+            out << as_ensemble()->items()[i].to_string();
+        }
+        out << "}";
         break;
     case Type::OBJET:
         if (as_objet() != nullptr &&

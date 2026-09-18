@@ -1330,25 +1330,42 @@ namespace lumiere
             return std::make_unique<ListExpr>(std::move(bracket), std::move(elements));
         }
 
-        // ── Dictionary literal — {clé: valeur}
+        // ── Dictionary literal — {clé: valeur} — or set literal — {élément, ...}
+        // The first entry decides: a ':' after it means a dictionary. An empty
+        // '{}' is the empty dictionary; the empty set is written [].en_ensemble().
         if (match({TokenType::ACCOLADE_OUV}))
         {
             Token brace = previous();
-            std::vector<DictionaryEntryExpr> entries;
 
-            if (!check(TokenType::ACCOLADE_FERM))
+            if (match({TokenType::ACCOLADE_FERM}))
             {
-                do
+                return std::make_unique<DictionaryExpr>(std::move(brace), std::vector<DictionaryEntryExpr>{});
+            }
+
+            ExprPtr first = parse_expression();
+
+            if (match({TokenType::DEUX_POINTS}))
+            {
+                std::vector<DictionaryEntryExpr> entries;
+                entries.push_back(DictionaryEntryExpr{std::move(first), parse_expression()});
+                while (match({TokenType::VIRGULE}))
                 {
                     ExprPtr key = parse_expression();
                     expect(TokenType::DEUX_POINTS, "attendu ':' après la clé du dictionnaire");
-                    ExprPtr value = parse_expression();
-                    entries.push_back(DictionaryEntryExpr{std::move(key), std::move(value)});
-                } while (match({TokenType::VIRGULE}));
+                    entries.push_back(DictionaryEntryExpr{std::move(key), parse_expression()});
+                }
+                expect(TokenType::ACCOLADE_FERM, "attendu '}' après le dictionnaire");
+                return std::make_unique<DictionaryExpr>(std::move(brace), std::move(entries));
             }
 
-            expect(TokenType::ACCOLADE_FERM, "attendu '}' après le dictionnaire");
-            return std::make_unique<DictionaryExpr>(std::move(brace), std::move(entries));
+            ExprList elements;
+            elements.push_back(std::move(first));
+            while (match({TokenType::VIRGULE}))
+            {
+                elements.push_back(parse_expression());
+            }
+            expect(TokenType::ACCOLADE_FERM, "attendu '}' après l'ensemble");
+            return std::make_unique<SetExpr>(std::move(brace), std::move(elements));
         }
 
         // ── Grouped expression — (expr)

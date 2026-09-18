@@ -525,11 +525,11 @@ so parallel CTest runs cannot overwrite each other's results.
    Implement
    cycle collection with explicit roots and allocation accounting, then enable
    leak checks. Long-running applications need bounded memory behavior.
-2. **Set semantics and construction.** Dictionaries are specified and indexed.
-   `Ensemble` is not: it has a type, a runtime representation and constraint
-   handling, but nothing constructs one, so no program can hold a set. Decide
-   whether to give it a literal and the same key contract as a dictionary, or
-   to withdraw the type until it exists.
+2. **Builtin member types in the analyzer.** The analyzer types `taille` on a
+   builtin collection and nothing else, so `notes.en_liste_fixe(3)` and every
+   other collection member call is `Universel` and cannot initialize a declared
+   collection type. The runtime already carries these types; the analyzer needs
+   the matching signatures.
 3. **One conformance corpus.** Run language and stdlib fixtures under both
    engines, comparing values, errors, evaluation order, and side effects.
    Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.

@@ -80,7 +80,7 @@ namespace lumiere
         }
         if (type.name == "Ensemble" && type.children.size() == 1 && value.is_ensemble())
         {
-            for (const Value &element : value.as_ensemble()->elements)
+            for (const Value &element : value.as_ensemble()->items())
             {
                 if (!matches_type_name(element, type.children[0]))
                 {
@@ -305,7 +305,7 @@ namespace lumiere
                 return false;
             }
 
-            for (const Value &element : value.as_ensemble()->elements)
+            for (const Value &element : value.as_ensemble()->items())
             {
                 if (!matches_type_name(element, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)))
                 {
@@ -479,7 +479,7 @@ namespace lumiere
         {
             if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{generic_args[0]}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
-            for (const Value &element : value.as_ensemble()->elements)
+            for (const Value &element : value.as_ensemble()->items())
             {
                 register_value_annotation(element, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
             }
@@ -523,6 +523,20 @@ namespace lumiere
         }
 
         const Token annotation(TokenType::IDENT, list->constraint->element_type, site.line, site.column);
+        ensure_value_matches_annotation(element, annotation, site, context);
+    }
+
+    void TreeWalker::enforce_set_element_constraint(const std::shared_ptr<EnsembleData> &set,
+                                                    const Value &element,
+                                                    const Token &site,
+                                                    const std::string &context) const
+    {
+        if (set == nullptr || !set->constraint)
+        {
+            return;
+        }
+
+        const Token annotation(TokenType::IDENT, set->constraint->element_type, site.line, site.column);
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 

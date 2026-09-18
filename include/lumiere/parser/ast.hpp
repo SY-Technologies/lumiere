@@ -42,6 +42,7 @@ namespace lumiere
     struct IdentifierExpr;
     struct BinaryExpr;
     struct DictionaryExpr;
+    struct SetExpr;
     struct UnaryExpr;
     struct CastExpr;
     struct TypeCheckExpr;
@@ -79,6 +80,7 @@ namespace lumiere
         virtual void visit(IdentifierExpr &) = 0;
         virtual void visit(BinaryExpr &) = 0;
         virtual void visit(DictionaryExpr &) = 0;
+        virtual void visit(SetExpr &) = 0;
         virtual void visit(UnaryExpr &) = 0;
         virtual void visit(CastExpr &) = 0;
         virtual void visit(TypeCheckExpr &) = 0;
@@ -173,6 +175,18 @@ namespace lumiere
 
         DictionaryExpr(Token brace, std::vector<DictionaryEntryExpr> entries)
             : brace(std::move(brace)), entries(std::move(entries)) {}
+
+        void accept(ExprVisitor &v) override { v.visit(*this); }
+    };
+
+    /** @brief A set literal, `{a, b, c}`. An empty `{}` is a dictionary. */
+    struct SetExpr : Expr
+    {
+        Token brace; // the '{' token for error reporting
+        ExprList elements;
+
+        SetExpr(Token brace, ExprList elements)
+            : brace(std::move(brace)), elements(std::move(elements)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
     };

@@ -154,6 +154,13 @@ void collect_imports_from_expr(Expr &expr, std::vector<CollectedImport> &imports
         collect_imports_from_expr(*binary->left, imports);
         collect_imports_from_expr(*binary->right, imports);
     }
+    else if (auto *set = dynamic_cast<SetExpr *>(&expr))
+    {
+        for (ExprPtr &element : set->elements)
+        {
+            collect_imports_from_expr(*element, imports);
+        }
+    }
     else if (auto *dictionary = dynamic_cast<DictionaryExpr *>(&expr))
     {
         for (DictionaryEntryExpr &entry : dictionary->entries)

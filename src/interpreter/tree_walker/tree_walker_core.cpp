@@ -676,7 +676,7 @@ namespace lumiere
         }
         if (value.is_ensemble())
         {
-            return &value.as_ensemble()->elements;
+            return &value.as_ensemble()->items();
         }
 
         return nullptr;

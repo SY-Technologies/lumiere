@@ -381,6 +381,23 @@ public:
         operands.push_back(lower_expr(*expr.right));
         m_last_value = emit_value(opcode, std::move(operands), lir_loc(expr.op));
     }
+    void visit(SetExpr &expr) override
+    {
+        if (expr.elements.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
+        {
+            throw VmCompileError("VM: trop d'elements dans un litteral d'ensemble");
+        }
+
+        std::vector<LirOperand> operands;
+        operands.reserve(expr.elements.size());
+        for (auto &element : expr.elements)
+        {
+            operands.push_back(lower_expr(*element));
+        }
+
+        m_last_value = emit_value(LirOpcode::IR_OP_ENSEMBLE, std::move(operands), lir_loc(expr.brace));
+    }
+
     void visit(DictionaryExpr &expr) override
     {
         if (expr.entries.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))

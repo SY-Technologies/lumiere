@@ -3799,4 +3799,72 @@ fonction principal() {
     std::filesystem::remove_all(root);
 }
 
+TEST(CliIntegration, BothBackendsBuildAndCombineSets)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_sets";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction principal() {
+    soit e = {1, 2, 2, 3}
+    afficher(e)
+    afficher(e.taille())
+    afficher(e.contient(2))
+    afficher(e.ajouter(3))
+    afficher(e.ajouter(4))
+    afficher(e.retirer(1))
+    afficher(e.retirer(1))
+    afficher(e)
+
+    soit f = [3, 4, 5, 5].en_ensemble()
+    afficher(f)
+    afficher(e.union(f))
+    afficher(e.intersection(f))
+    afficher(e.difference(f))
+    afficher(e.différence(f))
+    afficher(e.sous_ensemble_de(f))
+    afficher({3, 4}.sous_ensemble_de(f))
+
+    pour chaque x dans f { afficher(x) }
+    afficher(f.en_liste().joindre("-"))
+    afficher({}.taille())
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        // Duplicates collapse on construction, elements keep insertion order, and an
+        // empty {} is still the empty dictionary.
+        EXPECT_EQ(result.stdout_text,
+                  "{1, 2, 3}\n3\nvrai\nfaux\nvrai\nvrai\nfaux\n{2, 3, 4}\n"
+                  "{3, 4, 5}\n{2, 3, 4, 5}\n{3, 4}\n{2}\n{2}\nfaux\nvrai\n"
+                  "3\n4\n5\n3-4-5\n0\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsTypeSetLiterals)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_set_types";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction principal() {
+    soit e: Ensemble[Entier] = {1, 2, 3}
+    e.ajouter(4)
+    afficher(e.taille())
+    e.ajouter("oups")
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_NE(result.exit_code, 0);
+        EXPECT_NE(result.stdout_text.find("4\n"), std::string::npos) << result.stdout_text;
+        EXPECT_NE(result.stderr_text.find("Entier"), std::string::npos) << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
 } // namespace

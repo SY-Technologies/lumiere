@@ -97,6 +97,7 @@ void disassemble_instruction(std::ostringstream &out, const ModuleBytecode &modu
     case Opcode::SET_CAPTURE:
     case Opcode::LIST:
     case Opcode::DICTIONARY:
+    case Opcode::ENSEMBLE:
         out << ' ' << read_byte(chunk, offset);
         break;
     case Opcode::CLOSURE:

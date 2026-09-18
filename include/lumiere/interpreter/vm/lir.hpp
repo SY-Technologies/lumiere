@@ -107,6 +107,7 @@ enum class LirOpcode : std::uint8_t
     IR_OP_CLOSURE,
     IR_OP_LIST,
     IR_OP_DICTIONARY,
+    IR_OP_ENSEMBLE,
     IR_OP_ITERATION_SNAPSHOT,
     IR_OP_SEQUENCE_LENGTH,
     IR_OP_INDEX_GET,

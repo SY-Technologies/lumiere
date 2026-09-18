@@ -98,6 +98,7 @@ std::size_t instr_size(const LirModule &module,
         return 3;
     case LirOpcode::IR_OP_LIST:
     case LirOpcode::IR_OP_DICTIONARY:
+    case LirOpcode::IR_OP_ENSEMBLE:
         return 2;
     case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
@@ -383,6 +384,10 @@ void emit_instr(const LirModule &module,
     case LirOpcode::IR_OP_DICTIONARY:
         chunk.write_opcode(Opcode::DICTIONARY, bc_loc(instruction.source));
         chunk.write_byte(static_cast<std::uint8_t>(instruction.operands.size() / 2), bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_ENSEMBLE:
+        chunk.write_opcode(Opcode::ENSEMBLE, bc_loc(instruction.source));
+        chunk.write_byte(static_cast<std::uint8_t>(instruction.operands.size()), bc_loc(instruction.source));
         return;
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
         chunk.write_opcode(Opcode::SEQUENCE_LENGTH, bc_loc(instruction.source));

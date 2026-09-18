@@ -149,6 +149,9 @@ public:
     void enforce_list_element(const std::shared_ptr<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
+    void enforce_set_element(const std::shared_ptr<EnsembleData> &set,
+                             const Value &value,
+                             const std::string &context) const;
     void enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
                                   const Value &key,
                                   const Value &value,
@@ -156,6 +159,7 @@ public:
 
     [[nodiscard]] std::optional<std::string> list_element_type(const std::shared_ptr<ListeData> &list) const;
     [[nodiscard]] std::optional<std::string> fixed_list_element_type(const std::shared_ptr<ListeFixeData> &list) const;
+    [[nodiscard]] std::optional<std::string> set_element_type(const std::shared_ptr<EnsembleData> &set) const;
     [[nodiscard]] std::optional<std::pair<std::string, std::string>> dictionary_types(
         const std::shared_ptr<DictData> &dictionary) const;
 
@@ -399,7 +403,7 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        for (const Value &element : value.as_ensemble()->elements)
+        for (const Value &element : value.as_ensemble()->items())
         {
             if (!matches_type_name(element, arguments[0]))
             {
@@ -472,7 +476,7 @@ void VmRuntimeServices::annotate_value(const Value &value,
     {
         if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{std::string(arguments[0])}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &element : value.as_ensemble()->elements)
+        for (const auto &element : value.as_ensemble()->items())
             annotate_value(element, arguments[0], site);
     }
 }
@@ -488,6 +492,19 @@ void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &l
     }
     if (list->constraint)
         annotate_value(value, list->constraint->element_type, {});
+}
+
+void VmRuntimeServices::enforce_set_element(const std::shared_ptr<EnsembleData> &set,
+                                            const Value &value,
+                                            const std::string &context) const
+{
+    if (const auto &constraint = set->constraint;
+        constraint && !matches_type_name(value, constraint->element_type))
+    {
+        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
+    }
+    if (set->constraint)
+        annotate_value(value, set->constraint->element_type, {});
 }
 
 void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
@@ -518,6 +535,11 @@ std::optional<std::string> VmRuntimeServices::fixed_list_element_type(
     const std::shared_ptr<ListeFixeData> &list) const
 {
     return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
+}
+
+std::optional<std::string> VmRuntimeServices::set_element_type(const std::shared_ptr<EnsembleData> &set) const
+{
+    return set->constraint ? std::optional<std::string>(set->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
@@ -890,6 +912,27 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
     stack.push_back(Value::dictionnaire(std::move(data)));
 }
 
+void execute_ensemble(std::vector<Value> &stack, const std::size_t element_count)
+{
+    if (stack.size() < element_count)
+    {
+        throw VmRuntimeError("VM: pile insuffisante pour construire un ensemble");
+    }
+
+    auto data = std::make_shared<EnsembleData>();
+    data->reserve(element_count);
+
+    const std::size_t start = stack.size() - element_count;
+    for (std::size_t i = start; i < stack.size(); ++i)
+    {
+        require_dictionary_key(stack[i]);
+        data->insert(std::move(stack[i]));
+    }
+
+    stack.resize(start);
+    stack.push_back(Value::ensemble(std::move(data)));
+}
+
 void execute_iteration_snapshot(std::vector<Value> &stack)
 {
     const Value iterable = pop_value(stack);
@@ -900,7 +943,7 @@ void execute_iteration_snapshot(std::vector<Value> &stack)
     else if (iterable.is_liste_fixe())
         snapshot->elements = iterable.as_liste_fixe()->elements;
     else if (iterable.is_ensemble())
-        snapshot->elements = iterable.as_ensemble()->elements;
+        snapshot->elements = iterable.as_ensemble()->items();
     else if (iterable.is_dictionnaire())
     {
         // Walking a dictionary walks its keys, matching the tree walker.
@@ -1188,6 +1231,23 @@ Value execute_member_call(const Value &receiver,
             list->elements.erase(list->elements.begin() + position);
             return removed;
         }
+        if (member == "en_ensemble")
+        {
+            require_member_arity("Liste.en_ensemble", args, 0);
+            auto set = std::make_shared<EnsembleData>();
+            set->reserve(list->elements.size());
+            for (const Value &element : list->elements)
+            {
+                require_dictionary_key(element);
+                set->insert(element);
+            }
+            Value result = Value::ensemble(std::move(set));
+            if (const auto type = runtime.list_element_type(list); type.has_value())
+            {
+                runtime.annotate_value(result, "Ensemble[" + *type + "]", site);
+            }
+            return result;
+        }
         if (member == "en_liste_fixe")
         {
             require_member_arity("Liste.en_liste_fixe", args, 1);
@@ -1228,6 +1288,98 @@ Value execute_member_call(const Value &receiver,
                 runtime.annotate_value(result, "Liste[" + *type + "]", site);
             }
             return result;
+        }
+    }
+
+    if (receiver.is_ensemble())
+    {
+        auto set = receiver.as_ensemble();
+        const auto annotate_like_this_set = [&](Value result) {
+            if (const auto type = runtime.set_element_type(set); type.has_value())
+            {
+                runtime.annotate_value(result, "Ensemble[" + *type + "]", site);
+            }
+            return result;
+        };
+        const auto other_set = [&](const std::string &operation) {
+            if (args.empty() || !args[0].is_ensemble())
+            {
+                throw VmRuntimeError("VM: Ensemble." + operation + " attend un Ensemble");
+            }
+            return args[0].as_ensemble();
+        };
+
+        if (member == "contient")
+        {
+            // Indexed, unlike the shared sequence member, which scans.
+            require_member_arity("Ensemble.contient", args, 1);
+            return Value::logique(set->contains(args[0]));
+        }
+        const Value common = execute_sequence_member(set->items(), "Ensemble", member, args);
+        if (!common.is_rien())
+        {
+            return common;
+        }
+        if (member == "ajouter")
+        {
+            require_member_arity("Ensemble.ajouter", args, 1);
+            runtime.enforce_set_element(set, args[0], "l'ajout a un ensemble");
+            require_dictionary_key(args[0]);
+            return Value::logique(set->insert(args[0]));
+        }
+        if (member == "retirer")
+        {
+            require_member_arity("Ensemble.retirer", args, 1);
+            return Value::logique(set->erase(args[0]));
+        }
+        if (member == "en_liste")
+        {
+            require_member_arity("Ensemble.en_liste", args, 0);
+            auto list = std::make_shared<ListeData>();
+            list->elements = set->items();
+            Value result = Value::liste(std::move(list));
+            if (const auto type = runtime.set_element_type(set); type.has_value())
+            {
+                runtime.annotate_value(result, "Liste[" + *type + "]", site);
+            }
+            return result;
+        }
+        if (member == "union" || member == "intersection" || member == "difference" || member == "différence")
+        {
+            require_member_arity("Ensemble." + member, args, 1);
+            const auto other = other_set(member);
+            auto result = std::make_shared<EnsembleData>();
+            result->constraint = set->constraint;
+            if (member == "union")
+            {
+                for (const Value &element : set->items())
+                    result->insert(element);
+                for (const Value &element : other->items())
+                    result->insert(element);
+            }
+            else
+            {
+                const bool keep_present = member == "intersection";
+                for (const Value &element : set->items())
+                {
+                    if (other->contains(element) == keep_present)
+                        result->insert(element);
+                }
+            }
+            return annotate_like_this_set(Value::ensemble(std::move(result)));
+        }
+        if (member == "sous_ensemble_de")
+        {
+            require_member_arity("Ensemble.sous_ensemble_de", args, 1);
+            const auto other = other_set(member);
+            for (const Value &element : set->items())
+            {
+                if (!other->contains(element))
+                {
+                    return Value::logique(false);
+                }
+            }
+            return Value::logique(true);
         }
     }
 
@@ -2506,6 +2658,9 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::DICTIONARY:
             execute_dictionary(stack, read_byte(chunk, ip));
+            break;
+        case Opcode::ENSEMBLE:
+            execute_ensemble(stack, read_byte(chunk, ip));
             break;
         case Opcode::ITERATION_SNAPSHOT:
             execute_iteration_snapshot(stack);

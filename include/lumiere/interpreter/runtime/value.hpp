@@ -47,10 +47,33 @@ struct ListeFixeData
     std::vector<Value> elements;
     std::optional<FixedListConstraint> constraint;
 };
+/**
+ * @brief Unordered-by-contract collection holding each element once.
+ *
+ * Elements keep insertion order so iteration is reproducible, and membership
+ * uses the same index and the same key rule as a dictionary: an element must
+ * stay equal to itself while it is stored.
+ */
 struct EnsembleData
 {
-    std::vector<Value> elements;
     std::optional<SetConstraint> constraint;
+
+    /** @brief The elements, in insertion order. */
+    [[nodiscard]] const std::vector<Value> &items() const { return m_elements; }
+    [[nodiscard]] std::size_t size() const { return m_elements.size(); }
+    [[nodiscard]] bool empty() const { return m_elements.empty(); }
+    void reserve(const std::size_t count) { m_elements.reserve(count); }
+
+    [[nodiscard]] bool contains(const Value &element) const;
+    /** @brief Adds @p element. Returns true when it was not already present. */
+    bool insert(Value element);
+    /** @brief Removes @p element. Returns false when it was absent. */
+    bool erase(const Value &element);
+
+private:
+    std::vector<Value> m_elements;
+    /** Positions into m_elements, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
 };
 using DictEntry = std::pair<Value, Value>;
 
