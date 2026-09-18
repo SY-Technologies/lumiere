@@ -51,6 +51,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/tree_walker/tree_walker_stmt.cpp
     src/interpreter/tree_walker/tree_walker_types.cpp
     src/interpreter/runtime/value.cpp
+    src/interpreter/runtime/cycles.cpp
     src/interpreter/vm/lir.cpp
     src/interpreter/vm/ast_to_lir.cpp
     src/interpreter/vm/bytecode.cpp
@@ -221,6 +222,7 @@ if(BUILD_TESTING)
         tests/test_numeric.cpp
         tests/test_collection_constraints.cpp
         tests/test_value_hash.cpp
+        tests/test_cycles.cpp
         tests/test_analysis.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp

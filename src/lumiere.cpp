@@ -14,6 +14,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/interpreter/vm/vm.hpp"
+#include "lumiere/interpreter/runtime/cycles.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -787,8 +788,14 @@ int main(int argc, char *argv[])
 
         if (options.execute)
         {
-            auto backend = make_backend(options.backend);
-            backend->execute(*program);
+            {
+                auto backend = make_backend(options.backend);
+                backend->execute(*program);
+            }
+            // The backend is gone, so whatever it held in a cycle is now
+            // unreachable. The tree walker keeps its environments alive for as
+            // long as it lives, so this has to happen after it is destroyed.
+            lumiere::collect_cycles();
         }
 
         return 0;

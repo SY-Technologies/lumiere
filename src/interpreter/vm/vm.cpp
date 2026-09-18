@@ -2,6 +2,7 @@
 
 #include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/interpreter/vm/verifier.hpp"
+#include "lumiere/interpreter/runtime/cycles.hpp"
 #include "native_globals.hpp"
 #include "vm_error.hpp"
 #include "lumiere/interpreter/runtime/iruntime.hpp"
@@ -2171,6 +2172,12 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: cible de saut invalide");
             }
+            if (target < ip)
+            {
+                // A loop's back edge: a safe point, and the only one a program
+                // that never calls anything will reach.
+                collect_cycles_if_due();
+            }
             ip = target;
             break;
         }
@@ -2821,6 +2828,7 @@ Value run_frames(VmExecutionState &execution,
         }
         case Opcode::RETURN:
         {
+            collect_cycles_if_due();
             Value result = stack.size() > frame.stack_base ? std::move(stack.back()) : Value::rien();
             if (result.is_resultat() && !result.as_resultat()->success)
             {
@@ -2863,6 +2871,9 @@ void VM::execute(Program &program)
         throw VmCompileError("VM: bytecode invalide — " + *problem);
     }
     const Value result = run(module);
+    // The entry frame is gone, so anything the program left in a cycle is now
+    // unreachable and this is the last chance to say so.
+    collect_cycles();
     if (result.is_resultat() && !result.as_resultat()->success)
     {
         const std::optional<RuntimeSite> &origin =

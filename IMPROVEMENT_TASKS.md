@@ -17,20 +17,30 @@ equal-spelling declarations from different owners remain incompatible.
 
 ## T2 — Bound runtime memory with cycle collection
 
-Status: ownership landed — 2026-09-18; cycle collection outstanding
+Status: collecting — 2026-09-18; tree-walker environments outstanding
 
 - [x] Give the runtime its own ownership: heap values carry an intrusive,
       non-atomic reference count instead of being held by `shared_ptr`.
 - [x] Verify that everything except cycles is freed: `scripts/check-leaks` runs
       nine programs under a leak-detecting build and all are clean.
-- [ ] Define explicit roots for globals, frames, callbacks, and native handles.
-- [ ] Add allocation accounting and a deterministic collection trigger.
-- [ ] Collect closure, environment, object, class, and collection cycles safely.
-- [ ] Enable leak detection across the whole sanitizer suite.
+- [x] Roots are not needed: Bacon-Rajan collection works from the counts, so a
+      value held only in a C++ local during a native call is accounted for.
+- [x] Add allocation accounting (`RefCounted::live_count`) and a deterministic
+      trigger (candidate buffer over a threshold, checked at loop back edges and
+      function returns).
+- [x] Collect object, class, and collection cycles safely. A cyclic stress
+      program went from 129 MB to 5.9 MB of peak resident memory.
+- [x] Enable leak detection for the VM: `scripts/check-leaks` is clean on nine
+      programs, cycles included.
+- [ ] Make the tree walker's environments and function bodies counted objects,
+      so their cycles come within the collector's reach. An `Environment` owns
+      its parent by `shared_ptr` and a function's closure owner is the
+      environment holding it, so every program leaks that pair today.
+- [ ] Decide what to do about captures inside a native handler's `std::function`,
+      which cannot be enumerated and so cannot be traced.
 
-Acceptance: cyclic stress programs have bounded retained memory and the complete
-suite passes with leak detection enabled. Cycles are now the only thing standing
-between here and that, which also means the collector can be tested on its own.
+Acceptance: met for the VM. The complete suite passes with leak detection
+enabled once the tree walker's environments are counted.
 
 ## T3 — Specify and optimize dictionary/set semantics
 

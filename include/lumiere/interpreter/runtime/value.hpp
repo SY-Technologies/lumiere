@@ -45,11 +45,17 @@ struct ListeData : RefCounted
 {
     std::vector<Value> elements;
     std::optional<ListConstraint> constraint;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
 };
 struct ListeFixeData : RefCounted
 {
     std::vector<Value> elements;
     std::optional<FixedListConstraint> constraint;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
 };
 /**
  * @brief Unordered-by-contract collection holding each element once.
@@ -73,6 +79,10 @@ struct EnsembleData : RefCounted
     bool insert(Value element);
     /** @brief Removes @p element. Returns false when it was absent. */
     bool erase(const Value &element);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 
 private:
     std::vector<Value> m_elements;
@@ -109,6 +119,10 @@ struct DictData : RefCounted
 
     /** @brief Removes @p key, writing its value to @p removed. Returns false if absent. */
     bool erase(const Value &key, Value &removed);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 
 private:
     std::vector<DictEntry> m_entries;
@@ -155,7 +169,11 @@ struct TexteData : RefCounted
 {
     std::string text;
 
-    explicit TexteData(std::string value) : text(std::move(value)) {}
+    explicit TexteData(std::string value) : text(std::move(value)) { mark_acyclic(); }
+
+    // Text holds no references, so it can never take part in a cycle.
+    void trace_references(RefVisitor &) const override {}
+    void clear_references() override {}
 };
 
 using TexteRef = Ref<TexteData>;
@@ -349,6 +367,9 @@ struct Value
     /** @brief Address of the shared object, for identity comparison and hashing. */
     const void *ref_identity() const { return m_ref.get(); }
 
+    /** @brief The counted object this value holds, or nullptr for a scalar. */
+    RefCounted *ref() const noexcept { return m_ref.get(); }
+
     //type checks
 
     bool is_rien()        const { return type == Type::RIEN; }
@@ -425,6 +446,10 @@ struct ResultData : RefCounted
         : success(success), payload(std::move(payload)), origin(std::move(origin)), trace(std::move(trace))
     {
     }
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 //  LumiereFunction
@@ -463,6 +488,10 @@ struct LumiereFunction : RefCounted
     // - `fonction principal() { ... }`
     // - `soit doubler = fonction(x: Entier) -> Entier { retourne x * 2 }`
     bool is_native() const { return static_cast<bool>(native_handler); }
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 struct RuntimeClassBody
@@ -482,6 +511,10 @@ struct LumiereClass : RefCounted
     std::shared_ptr<RuntimeClassBody> body;
     Ref<LumiereClass> parent;
     std::unordered_map<std::string, Ref<LumiereInterface>> interfaces;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 struct LumiereInterface : RefCounted
@@ -489,6 +522,10 @@ struct LumiereInterface : RefCounted
     std::string name;
     std::string type_identity;
     std::shared_ptr<RuntimeInterfaceBody> body;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 //  LumiereObject
@@ -498,6 +535,10 @@ struct LumiereObject : RefCounted
     Ref<LumiereClass>           klass;
     std::shared_ptr<void>                   native_state;
     std::unordered_map<std::string, Value> fields;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 struct RuntimeModuleState

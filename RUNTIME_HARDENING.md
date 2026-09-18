@@ -666,6 +666,63 @@ now the *only* remaining source of retained memory rather than one of several.
 That also makes the cycle collector testable: anything the collector fails to
 reclaim will now show up on its own rather than in a crowd of ordinary leaks.
 
+### Cycle collection — 2026-09-18
+
+Reference counting frees everything whose last reference goes, and nothing whose
+references only point at each other. A cyclic stress program — 200,000 pairs of
+objects, each holding the other, all discarded — grew to 129 MB of resident
+memory. It now peaks at 5.9 MB.
+
+The collector is Bacon and Rajan's synchronous cycle collection. It suits a
+counted runtime for a reason worth stating: it never needs to know where the
+roots are. A tracing collector must enumerate every root, including values held
+only in a C++ local during a native call, and the tree walker keeps values in
+C++ locals everywhere. This one works from the counts instead, so an unknown
+reference is simply a reference like any other, and the tree walker needs no
+shadow stack.
+
+The contract sits on `RefCounted::trace_references`, which must report every
+reference an object holds, exactly once. The asymmetry matters: reporting too
+few leaves a cycle uncollected, which is only a leak, while reporting an edge
+that is not held can free something still in use. That is what makes the
+collector safe to grow one type at a time.
+
+Two edges are deliberately unreported, and both are visible in what still leaks:
+the captures inside a native handler's `std::function`, which C++ gives no way
+to enumerate, and the tree walker's environments and function bodies, which are
+not counted objects yet.
+
+Collection runs at a loop's back edge and at a function return — points where no
+object is part-way through being updated — and once more after the backend is
+destroyed, which is the first moment a program's own globals are gone. The check
+for whether a collection is due is inline, two loads and a comparison, because a
+call there would have cost more than the collection saves.
+
+Three bugs were found by the tests rather than by reading:
+
+- The sweep subtracted each cycle edge twice. `mark_grey` had already removed
+  the internal references from the counts, so clearing the real references
+  removed them again and freed an object the sweep still held a pointer to. The
+  counts are now restored before the links are broken.
+- An object that lost its last reference while buffered as a cycle candidate was
+  left for the next collection rather than freed, because removing it from the
+  buffer was a linear scan. It now remembers its slot and leaves in constant
+  time.
+- Buffering every surviving decrement cost 16.7% on dictionary workloads, almost
+  all of it text: a value that holds no references can never be in a cycle, so
+  text is marked acyclic and skips the candidate buffer entirely. That brought
+  the collector's whole cost to between nothing and 5%, mostly 1% to 3%.
+
+**Leak detection is on for the VM.** `scripts/check-leaks` runs nine programs
+under both engines; the VM is clean on all of them, cycles included. The tree
+walker still retains its environments on every program, including the smallest:
+an `Environment` owns its parent by `shared_ptr`, and a function's closure owner
+is the environment holding that function, so the global environment and
+`principal` are a two-node cycle in any program at all. That is pre-existing —
+leak detection being disabled is what kept it invisible — and it is the next
+piece of T2: making environments and function bodies counted objects would bring
+them within reach of the collector.
+
 ## Verification and measurement
 
 ```sh

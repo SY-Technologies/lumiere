@@ -40,23 +40,43 @@ programs=(
 )
 
 failures=0
+walker_leaks=0
 for program in "${programs[@]}"; do
     printf '%-42s ' "$program"
-    output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --vm "$root/$program" 2>&1)
-    if printf '%s' "$output" | grep -q 'leak of'; then
-        echo "FUITE"
-        printf '%s\n' "$output" | grep -E 'SUMMARY|leak of' | head -3
+
+    vm_output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --vm "$root/$program" 2>&1)
+    if printf '%s' "$vm_output" | grep -q 'leak of'; then
+        printf 'vm=FUITE  '
+        printf '%s\n' "$vm_output" | grep -E 'SUMMARY|leak of' | head -2
         failures=$((failures + 1))
     else
-        echo "aucune fuite"
+        printf 'vm=propre  '
+    fi
+
+    tw_output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --tw "$root/$program" 2>&1)
+    if printf '%s' "$tw_output" | grep -q 'leak of'; then
+        echo "tw=fuite (connu)"
+        walker_leaks=$((walker_leaks + 1))
+    else
+        echo "tw=propre"
     fi
 done
 
+echo
+if [ "$walker_leaks" -ne 0 ]; then
+    cat <<'NOTE'
+Le tree-walker retient encore ses environnements. Un Environment détient son
+parent par shared_ptr, et le propriétaire de fermeture d'une fonction est
+l'environnement qui contient cette fonction : l'environnement global et
+'principal' forment donc un cycle sur tout programme. Ni Environment ni les
+corps de fonction ne sont encore des objets comptés, donc le collecteur ne peut
+pas les voir. C'est la suite de T2.
+NOTE
+fi
+
 if [ "$failures" -ne 0 ]; then
-    echo
-    echo "$failures programme(s) retiennent de la mémoire."
+    echo "$failures programme(s) retiennent de la mémoire sous la VM."
     exit 1
 fi
 
-echo
-echo "Aucune fuite. Les cycles de références restent non collectés : voir T2."
+echo "VM : aucune fuite, cycles compris."

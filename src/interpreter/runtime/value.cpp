@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/runtime/value.hpp"
+#include "lumiere/interpreter/runtime/cycles.hpp"
 #include "lumiere/parser/utf8.hpp"
 
 #include <cmath>
@@ -10,11 +11,6 @@
 
 namespace lumiere
 {
-
-void RefCounted::destroy() const noexcept
-{
-    delete this;
-}
 
 Value Value::resultat(
     const bool success,
@@ -532,6 +528,139 @@ std::string Value::type_name() const
     }
 
     return "Inconnu";
+}
+
+
+// ── Cycle tracing ────────────────────────────────────────────────────────────
+//
+// Each object reports the references it holds so the collector can subtract the
+// cycle's own edges from the counts. An edge must be reported exactly once, and
+// only when it is genuinely held.
+//
+// Two kinds of reference are deliberately not reported, and both are recorded in
+// the hardening notes: the captures inside a native handler's std::function,
+// which C++ gives no way to enumerate, and the tree-walker's environments and
+// bodies, which are not counted objects yet. Leaving an edge out only means a
+// cycle through it is kept alive, never that something live is freed.
+
+namespace
+{
+
+void trace_value(const Value &value, RefVisitor &visitor)
+{
+    if (RefCounted *held = value.ref())
+    {
+        visitor.visit(held);
+    }
+}
+
+} // namespace
+
+void ListeData::trace_references(RefVisitor &visitor) const
+{
+    for (const Value &element : elements)
+    {
+        trace_value(element, visitor);
+    }
+}
+
+void ListeData::clear_references() { elements.clear(); }
+
+void ListeFixeData::trace_references(RefVisitor &visitor) const
+{
+    for (const Value &element : elements)
+    {
+        trace_value(element, visitor);
+    }
+}
+
+void ListeFixeData::clear_references() { elements.clear(); }
+
+void EnsembleData::trace_references(RefVisitor &visitor) const
+{
+    for (const Value &element : m_elements)
+    {
+        trace_value(element, visitor);
+    }
+}
+
+void EnsembleData::clear_references()
+{
+    m_elements.clear();
+    m_index.clear();
+}
+
+void DictData::trace_references(RefVisitor &visitor) const
+{
+    for (const DictEntry &entry : m_entries)
+    {
+        trace_value(entry.first, visitor);
+        trace_value(entry.second, visitor);
+    }
+}
+
+void DictData::clear_references()
+{
+    m_entries.clear();
+    m_index.clear();
+}
+
+void ResultData::trace_references(RefVisitor &visitor) const { trace_value(payload, visitor); }
+
+void ResultData::clear_references() { payload = Value::rien(); }
+
+void LumiereFunction::trace_references(RefVisitor &visitor) const { trace_value(receiver, visitor); }
+
+void LumiereFunction::clear_references()
+{
+    receiver = Value::rien();
+    native_handler = nullptr;
+    body.reset();
+}
+
+void LumiereClass::trace_references(RefVisitor &visitor) const
+{
+    if (parent)
+    {
+        visitor.visit(parent.get());
+    }
+    for (const auto &[name, interface] : interfaces)
+    {
+        if (interface)
+        {
+            visitor.visit(interface.get());
+        }
+    }
+}
+
+void LumiereClass::clear_references()
+{
+    parent.reset();
+    interfaces.clear();
+    body.reset();
+}
+
+void LumiereInterface::trace_references(RefVisitor &) const {}
+
+void LumiereInterface::clear_references() { body.reset(); }
+
+void LumiereObject::trace_references(RefVisitor &visitor) const
+{
+    if (klass)
+    {
+        visitor.visit(klass.get());
+    }
+    for (const auto &[name, field] : fields)
+    {
+        trace_value(field, visitor);
+    }
+}
+
+void LumiereObject::clear_references()
+{
+    klass.reset();
+    fields.clear();
+    native_state.reset();
 }
 
 } // namespace lumiere
