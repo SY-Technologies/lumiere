@@ -4,6 +4,7 @@
 #include <limits>
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 namespace lumiere
 {
@@ -76,11 +77,14 @@ namespace lumiere
         // because the environment-walking code wants direct pointer access;
         // closure_owner exists so that raw pointer never dangles.
         std::shared_ptr<Environment> closure_owner;
+        std::string source_identity;
     };
 
     struct TreeWalker::TreeWalkerClassBody : RuntimeClassBody
     {
         ClassDeclStmt *decl = nullptr;
+        std::shared_ptr<Environment> closure_owner;
+        std::string source_identity;
     };
 
     struct TreeWalker::TreeWalkerInterfaceBody : RuntimeInterfaceBody
@@ -100,6 +104,11 @@ namespace lumiere
     {
         m_env_owner = std::make_shared<Environment>();
         m_env = m_env_owner.get();
+        m_env->set_source_path(program.source_path);
+        m_env->set_source_identity(
+            program.source_path.empty()
+                ? "#anonymous:" + std::to_string(++m_incremental_unit)
+                : program.source_path);
         auto error_interface = std::make_shared<LumiereInterface>();
         error_interface->name = "Erreur";
         m_env->define_fixe(
@@ -184,6 +193,9 @@ namespace lumiere
 
         m_result = Value::rien();
         m_current_source_path = program.source_path;
+        m_env->set_source_path(program.source_path);
+        m_env->set_source_identity(
+            program.source_path + "#incremental:" + std::to_string(++m_incremental_unit));
         m_current_source_text = program.source_text;
         m_stack_trace.clear();
         const bool returns_value = !program.statements.empty() &&
@@ -338,16 +350,18 @@ namespace lumiere
 
     std::shared_ptr<LumiereFunction> TreeWalker::make_declared_function(FunctionDeclStmt &decl,
                                                                         Value receiver,
-                                                                        Environment *closure) const
+                                                                        std::shared_ptr<Environment> closure,
+                                                                        std::string source_identity) const
     {
         auto function = std::make_shared<LumiereFunction>();
         function->name = decl.name.lexeme;
         auto body = std::make_shared<TreeWalkerFunctionBody>();
         body->decl = &decl;
-        body->closure = closure;
+        body->closure = closure.get();
+        body->source_identity = source_identity.empty() ? closure->source_identity() : std::move(source_identity);
         // Keep the environment chain alive after the declaring scope exits so
         // later calls can still resolve captured names.
-        body->closure_owner = m_env_owner;
+        body->closure_owner = std::move(closure);
         function->body = std::move(body);
         function->receiver = std::move(receiver);
         function->min_arity = required_parameter_count(decl.params);
@@ -357,16 +371,18 @@ namespace lumiere
 
     std::shared_ptr<LumiereFunction> TreeWalker::make_declared_function(FunctionExpr &expr,
                                                                         Value receiver,
-                                                                        Environment *closure) const
+                                                                        std::shared_ptr<Environment> closure,
+                                                                        std::string source_identity) const
     {
         auto function = std::make_shared<LumiereFunction>();
         function->name = "<anonyme>";
         auto body = std::make_shared<TreeWalkerFunctionBody>();
         body->expr = &expr;
-        body->closure = closure;
+        body->closure = closure.get();
+        body->source_identity = source_identity.empty() ? closure->source_identity() : std::move(source_identity);
         // Same lifetime rule as named functions: the closure may outlive the
         // scope that created this anonymous function value.
-        body->closure_owner = m_env_owner;
+        body->closure_owner = std::move(closure);
         function->body = std::move(body);
         function->receiver = std::move(receiver);
         function->min_arity = required_parameter_count(expr.params);
@@ -378,8 +394,11 @@ namespace lumiere
     {
         auto klass = std::make_shared<LumiereClass>();
         klass->name = decl.name.lexeme;
+        klass->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
         auto body = std::make_shared<TreeWalkerClassBody>();
         body->decl = &decl;
+        body->closure_owner = m_env_owner;
+        body->source_identity = m_env->source_identity();
         klass->body = std::move(body);
 
         if (!decl.parent.empty() && m_env != nullptr && m_env->contains(decl.parent.to_string()))
@@ -395,30 +414,8 @@ namespace lumiere
         {
             for (const TypeExpr &interface_name : decl.interfaces)
             {
-                std::string name = interface_name.to_string();
-                std::unordered_set<std::string> visited;
-                while (visited.insert(name).second)
-                {
-                    const auto alias =
-                        m_type_aliases.find(name);
-                    if (alias == m_type_aliases.end() ||
-                        alias->second.kind !=
-                            TypeExprKind::NAMED)
-                    {
-                        break;
-                    }
-                    name = alias->second.name;
-                }
-                if (!m_env->contains(name))
-                {
-                    continue;
-                }
-
-                const Value interface_value = m_env->get(name);
-                if (interface_value.is_interface())
-                {
-                    klass->interfaces[name] = interface_value.as_interface();
-                }
+                const auto interface = resolve_interface_value(interface_name);
+                klass->interfaces[interface->type_identity.empty() ? interface->name : interface->type_identity] = interface;
             }
         }
 
@@ -429,6 +426,7 @@ namespace lumiere
     {
         auto iface = std::make_shared<LumiereInterface>();
         iface->name = decl.name.lexeme;
+        iface->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
         auto body = std::make_shared<TreeWalkerInterfaceBody>();
         body->decl = &decl;
         iface->body = std::move(body);
@@ -457,6 +455,41 @@ namespace lumiere
     {
         auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
         return body ? body->closure_owner : nullptr;
+    }
+
+    const std::string &TreeWalker::function_source_identity(const LumiereFunction &function) const
+    {
+        const auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        static const std::string empty;
+        return body ? body->source_identity : empty;
+    }
+
+    std::shared_ptr<Environment> TreeWalker::class_closure_owner(const std::shared_ptr<LumiereClass> &klass) const
+    {
+        const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
+        return body ? body->closure_owner : nullptr;
+    }
+
+    const std::string &TreeWalker::class_source_identity(const std::shared_ptr<LumiereClass> &klass) const
+    {
+        const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
+        static const std::string empty;
+        return body ? body->source_identity : empty;
+    }
+
+    Token TreeWalker::class_annotation(const std::shared_ptr<LumiereClass> &klass, const TypeExpr &type) const
+    {
+        Token annotation = type.as_token();
+        try
+        {
+            if (const auto closure = class_closure_owner(klass))
+                annotation.lexeme = closure->resolve_type_aliases(type).to_string();
+        }
+        catch (const std::invalid_argument &error)
+        {
+            throw_runtime_error(type.source, error.what());
+        }
+        return annotation;
     }
 
     ClassDeclStmt *TreeWalker::class_decl(const std::shared_ptr<LumiereClass> &klass) const
@@ -676,36 +709,36 @@ namespace lumiere
     {
         if (value.is_liste())
         {
-            if (const auto it = m_list_constraints.find(value.as_liste().get()); it != m_list_constraints.end())
+            if (const auto &constraint = value.as_liste()->constraint; constraint)
             {
-                return "Liste[" + it->second.element_type + "]";
+                return "Liste[" + display_runtime_type(constraint->element_type) + "]";
             }
             return "Liste";
         }
 
         if (value.is_liste_fixe())
         {
-            if (const auto it = m_fixed_list_constraints.find(value.as_liste_fixe().get()); it != m_fixed_list_constraints.end())
+            if (const auto &constraint = value.as_liste_fixe()->constraint; constraint)
             {
-                return "ListeFixe[" + it->second.element_type + ", " + std::to_string(it->second.length) + "]";
+                return "ListeFixe[" + display_runtime_type(constraint->element_type) + ", " + std::to_string(constraint->length) + "]";
             }
             return "ListeFixe";
         }
 
         if (value.is_dictionnaire())
         {
-            if (const auto it = m_dict_constraints.find(value.as_dictionnaire().get()); it != m_dict_constraints.end())
+            if (const auto &constraint = value.as_dictionnaire()->constraint; constraint)
             {
-                return "Dictionnaire[" + it->second.key_type + ", " + it->second.value_type + "]";
+                return "Dictionnaire[" + display_runtime_type(constraint->key_type) + ", " + display_runtime_type(constraint->value_type) + "]";
             }
             return "Dictionnaire";
         }
 
         if (value.is_ensemble())
         {
-            if (const auto it = m_set_constraints.find(value.as_ensemble().get()); it != m_set_constraints.end())
+            if (const auto &constraint = value.as_ensemble()->constraint; constraint)
             {
-                return "Ensemble[" + it->second.element_type + "]";
+                return "Ensemble[" + display_runtime_type(constraint->element_type) + "]";
             }
             return "Ensemble";
         }

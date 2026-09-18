@@ -2933,14 +2933,16 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
     socklen_t bound_len = sizeof(bound);
     ASSERT_EQ(::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
     const int port = ntohs(bound.sin_port);
-    test_close_socket(probe_fd);
 
+    // Keep the native endpoint bound. The language endpoint asks the OS for
+    // its own port and announces readiness before we send the test packet.
     const std::string receiver_source =
         "importer LumiNet\n"
         "importer Temps\n"
         "fonction principal() {\n"
-        "  soit socket = LumiNet.UDP.ouvrir(" + std::to_string(port) + ") ou propager\n"
+        "  soit socket = LumiNet.UDP.ouvrir(0) ou propager\n"
         "  socket.définir_délai(Temps.secondes(2))\n"
+        "  socket.envoyer(\"pret\", \"127.0.0.1\", " + std::to_string(port) + ") ou propager\n"
         "  soit paquet = socket.recevoir() ou propager\n"
         "  afficher(paquet.données)\n"
         "  afficher(paquet.adresse != \"\")\n"
@@ -2952,30 +2954,28 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
         return execute_program_with_error(receiver_source);
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    const TestSocket sender_fd = test_open_socket(AF_INET, SOCK_DGRAM, 0);
-    ASSERT_TRUE(test_socket_valid(sender_fd));
-    sockaddr_in sender_addr{};
-    sender_addr.sin_family = AF_INET;
-    sender_addr.sin_port = htons(static_cast<uint16_t>(port));
-    sender_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    const std::string payload = "salut";
-    for (int attempt = 0; attempt < 20; ++attempt)
+    const bool ready = test_wait_until_readable(probe_fd, std::chrono::seconds(2));
+    if (ready)
     {
-        ASSERT_GT(::sendto(sender_fd,
-                           payload.data(),
-                           static_cast<int>(payload.size()),
+        char announcement[4]{};
+        sockaddr_in receiver_addr{};
+        socklen_t receiver_len = sizeof(receiver_addr);
+        const auto received = ::recvfrom(probe_fd, announcement, sizeof(announcement), 0,
+                                         reinterpret_cast<sockaddr *>(&receiver_addr), &receiver_len);
+        EXPECT_EQ(received, 4);
+        EXPECT_EQ(std::string(announcement, sizeof(announcement)), "pret");
+        const std::string payload = "salut";
+        EXPECT_GT(::sendto(probe_fd, payload.data(), static_cast<int>(payload.size()),
                            0,
-                           reinterpret_cast<const sockaddr *>(&sender_addr),
-                           sizeof(sender_addr)),
+                           reinterpret_cast<const sockaddr *>(&receiver_addr),
+                           receiver_len),
                   0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    test_close_socket(sender_fd);
+    test_close_socket(probe_fd);
 
     const auto [receiver_output, receiver_completed, receiver_error] = future.get();
 
+    EXPECT_TRUE(ready) << receiver_error;
     EXPECT_TRUE(receiver_completed) << receiver_error;
     EXPECT_EQ(receiver_output, "salut\nvrai\nvrai\n");
 }

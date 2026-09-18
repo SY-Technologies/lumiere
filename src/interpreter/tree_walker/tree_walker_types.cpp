@@ -1,4 +1,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/interpreter/runtime/collection_constraints.hpp"
+#include "lumiere/interpreter/runtime/type_aliases.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 namespace lumiere
 {
@@ -22,10 +25,11 @@ namespace lumiere
         }
         if (type.kind == TypeExprKind::NAMED)
         {
-            if (const auto alias = m_type_aliases.find(type.name);
-                alias != m_type_aliases.end())
+            if (m_env && m_env->find_type_alias(type.name))
             {
-                return matches_type_name(value, alias->second);
+                Token resolved = type.as_token();
+                resolved.lexeme = resolved_annotation_name(type);
+                return matches_type_name(value, resolved);
             }
             return matches_type_name(value, type.as_token());
         }
@@ -326,8 +330,11 @@ namespace lumiere
                    object->klass != nullptr &&
                    ([&]()
                     {
-                        return class_derives_from(object->klass, type_name) ||
-                               class_implements_interface(object->klass, type_name);
+                        const std::string identity = m_env
+                            ? m_env->resolve_type_aliases(TypeExpr::named(type_token)).to_string()
+                            : type_name;
+                        return class_derives_from(object->klass, identity) ||
+                               class_implements_interface(object->klass, identity);
                     })();
         }
 
@@ -383,12 +390,29 @@ namespace lumiere
 
     void TreeWalker::register_value_annotation(const Value &value, const Token &annotation) const
     {
+        if (!value.is_liste() && !value.is_liste_fixe() && !value.is_dictionnaire() && !value.is_ensemble() && !value.is_resultat())
+            return;
         if (annotation.lexeme.empty())
         {
             return;
         }
 
         const std::string &full_type_name = annotation.lexeme;
+        if (const auto separator = find_collection_type_union(full_type_name); separator != std::string::npos)
+        {
+            Token alternative = annotation;
+            alternative.lexeme = full_type_name.substr(0, separator);
+            const auto trim = [](std::string text) {
+                const auto begin = text.find_first_not_of(" \t\r\n");
+                return begin == std::string::npos ? std::string{} :
+                    text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
+            };
+            alternative.lexeme = trim(alternative.lexeme);
+            if (!matches_type_name(value, alternative))
+                alternative.lexeme = trim(full_type_name.substr(separator + 1));
+            register_value_annotation(value, alternative);
+            return;
+        }
         const std::string::size_type generic_start = full_type_name.find('[');
         if (generic_start == std::string::npos)
         {
@@ -399,9 +423,18 @@ namespace lumiere
         const std::string generic_spec = full_type_name.substr(generic_start + 1, full_type_name.size() - generic_start - 2);
         const std::vector<std::string> generic_args = split_generic_arguments(generic_spec);
 
+        if (type_name == "Résultat" && value.is_resultat() && generic_args.size() == 2)
+        {
+            const auto result = value.as_resultat();
+            register_value_annotation(result->payload,
+                Token(TokenType::IDENT, generic_args[result->success ? 0 : 1], annotation.line, annotation.column));
+            return;
+        }
+
         if (type_name == "Liste" && value.is_liste() && generic_args.size() == 1)
         {
-            m_list_constraints[value.as_liste().get()] = ListConstraint{generic_args[0]};
+            if (!merge_collection_constraint(value.as_liste()->constraint, ListConstraint{generic_args[0]}))
+                throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_liste()->elements)
             {
                 register_value_annotation(element, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
@@ -421,7 +454,8 @@ namespace lumiere
                 return;
             }
 
-            m_fixed_list_constraints[value.as_liste_fixe().get()] = FixedListConstraint{generic_args[0], expected_length};
+            if (!merge_collection_constraint(value.as_liste_fixe()->constraint, FixedListConstraint{generic_args[0], expected_length}))
+                throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_liste_fixe()->elements)
             {
                 register_value_annotation(element, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
@@ -431,7 +465,8 @@ namespace lumiere
 
         if (type_name == "Dictionnaire" && value.is_dictionnaire() && generic_args.size() == 2)
         {
-            m_dict_constraints[value.as_dictionnaire().get()] = DictConstraint{generic_args[0], generic_args[1]};
+            if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{generic_args[0], generic_args[1]}))
+                throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
             {
                 register_value_annotation(key, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
@@ -442,7 +477,8 @@ namespace lumiere
 
         if (type_name == "Ensemble" && value.is_ensemble() && generic_args.size() == 1)
         {
-            m_set_constraints[value.as_ensemble().get()] = SetConstraint{generic_args[0]};
+            if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{generic_args[0]}))
+                throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_ensemble()->elements)
             {
                 register_value_annotation(element, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
@@ -450,56 +486,25 @@ namespace lumiere
         }
     }
 
+    std::string TreeWalker::resolved_annotation_name(const TypeExpr &annotation) const
+    {
+        try
+        {
+            return m_env ? m_env->resolve_type_aliases(annotation).to_string() : annotation.to_string();
+        }
+        catch (const std::invalid_argument &error)
+        {
+            throw_runtime_error(annotation.source, error.what());
+        }
+    }
+
     void TreeWalker::register_value_annotation(const Value &value, const TypeExpr &annotation) const
     {
-        if (annotation.kind != TypeExprKind::GENERIC)
-        {
+        if (!value.is_liste() && !value.is_liste_fixe() && !value.is_dictionnaire() && !value.is_ensemble() && !value.is_resultat())
             return;
-        }
-
-        if (annotation.name == "Liste" && annotation.children.size() == 1 && value.is_liste())
-        {
-            const TypeExpr &element_type = annotation.children[0];
-            m_list_constraints[value.as_liste().get()] = ListConstraint{element_type.to_string()};
-            for (const Value &element : value.as_liste()->elements)
-            {
-                register_value_annotation(element, element_type);
-            }
-            return;
-        }
-        if (annotation.name == "ListeFixe" && annotation.children.size() == 2 &&
-            annotation.children[1].kind == TypeExprKind::INTEGER_ARGUMENT && value.is_liste_fixe())
-        {
-            const TypeExpr &element_type = annotation.children[0];
-            m_fixed_list_constraints[value.as_liste_fixe().get()] = {
-                element_type.to_string(), static_cast<std::size_t>(annotation.children[1].integer)};
-            for (const Value &element : value.as_liste_fixe()->elements)
-            {
-                register_value_annotation(element, element_type);
-            }
-            return;
-        }
-        if (annotation.name == "Dictionnaire" && annotation.children.size() == 2 && value.is_dictionnaire())
-        {
-            const TypeExpr &key_type = annotation.children[0];
-            const TypeExpr &value_type = annotation.children[1];
-            m_dict_constraints[value.as_dictionnaire().get()] = {key_type.to_string(), value_type.to_string()};
-            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
-            {
-                register_value_annotation(key, key_type);
-                register_value_annotation(entry_value, value_type);
-            }
-            return;
-        }
-        if (annotation.name == "Ensemble" && annotation.children.size() == 1 && value.is_ensemble())
-        {
-            const TypeExpr &element_type = annotation.children[0];
-            m_set_constraints[value.as_ensemble().get()] = SetConstraint{element_type.to_string()};
-            for (const Value &element : value.as_ensemble()->elements)
-            {
-                register_value_annotation(element, element_type);
-            }
-        }
+        Token resolved = annotation.as_token();
+        resolved.lexeme = resolved_annotation_name(annotation);
+        register_value_annotation(value, resolved);
     }
 
     void TreeWalker::enforce_list_element_constraint(const std::shared_ptr<ListeData> &list,
@@ -512,13 +517,12 @@ namespace lumiere
             return;
         }
 
-        const auto it = m_list_constraints.find(list.get());
-        if (it == m_list_constraints.end())
+        if (!list->constraint)
         {
             return;
         }
 
-        const Token annotation(TokenType::IDENT, it->second.element_type, site.line, site.column);
+        const Token annotation(TokenType::IDENT, list->constraint->element_type, site.line, site.column);
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 
@@ -532,13 +536,12 @@ namespace lumiere
             return;
         }
 
-        const auto it = m_fixed_list_constraints.find(list.get());
-        if (it == m_fixed_list_constraints.end())
+        if (!list->constraint)
         {
             return;
         }
 
-        const Token annotation(TokenType::IDENT, it->second.element_type, site.line, site.column);
+        const Token annotation(TokenType::IDENT, list->constraint->element_type, site.line, site.column);
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 
@@ -553,14 +556,13 @@ namespace lumiere
             return;
         }
 
-        const auto it = m_dict_constraints.find(dict.get());
-        if (it == m_dict_constraints.end())
+        if (!dict->constraint)
         {
             return;
         }
 
-        const Token key_annotation(TokenType::IDENT, it->second.key_type, site.line, site.column);
-        const Token value_annotation(TokenType::IDENT, it->second.value_type, site.line, site.column);
+        const Token key_annotation(TokenType::IDENT, dict->constraint->key_type, site.line, site.column);
+        const Token value_annotation(TokenType::IDENT, dict->constraint->value_type, site.line, site.column);
         ensure_value_matches_annotation(key, key_annotation, site, context + " (cle)");
         ensure_value_matches_annotation(entry_value, value_annotation, site, context + " (valeur)");
     }
@@ -570,7 +572,7 @@ namespace lumiere
     {
         for (std::shared_ptr<LumiereClass> current = klass; current != nullptr; current = parent_class(current))
         {
-            if (current->name == ancestor_name)
+            if ((current->type_identity.empty() ? current->name : current->type_identity) == ancestor_name)
             {
                 return true;
             }
@@ -611,7 +613,7 @@ namespace lumiere
 
         throw_runtime_error(
             site,
-            context + " attend une valeur de type " + annotation.lexeme +
+            context + " attend une valeur de type " + display_runtime_type(annotation.lexeme) +
                 "; type recu: " + value.type_name());
     }
 
@@ -632,7 +634,7 @@ namespace lumiere
 
         throw_runtime_error(
             site,
-            context + " attend une valeur de type " + annotation.to_string() +
+            context + " attend une valeur de type " + display_runtime_type(annotation.to_string()) +
                 "; type recu: " + value.type_name());
     }
 

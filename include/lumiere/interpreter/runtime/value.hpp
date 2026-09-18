@@ -31,12 +31,33 @@ struct FunctionDeclStmt;
 struct ClassDeclStmt;
 struct InterfaceDeclStmt;
 
-// type aliases for collection types
-struct ListeData      { std::vector<Value> elements; };
-struct ListeFixeData  { std::vector<Value> elements; };
-struct EnsembleData   { std::vector<Value> elements; };
+// Constraints belong to the allocation, never to a runtime's address registry.
+struct ListConstraint { std::string element_type; };
+struct FixedListConstraint { std::string element_type; std::size_t length = 0; };
+struct DictConstraint { std::string key_type; std::string value_type; };
+struct SetConstraint { std::string element_type; };
+
+struct ListeData
+{
+    std::vector<Value> elements;
+    std::optional<ListConstraint> constraint;
+};
+struct ListeFixeData
+{
+    std::vector<Value> elements;
+    std::optional<FixedListConstraint> constraint;
+};
+struct EnsembleData
+{
+    std::vector<Value> elements;
+    std::optional<SetConstraint> constraint;
+};
 using DictEntry = std::pair<Value, Value>;
-struct DictData       { std::vector<DictEntry> entries; };
+struct DictData
+{
+    std::vector<DictEntry> entries;
+    std::optional<DictConstraint> constraint;
+};
 struct ResultData;
 
 struct Value
@@ -359,6 +380,7 @@ struct RuntimeInterfaceBody
 struct LumiereClass
 {
     std::string name;
+    std::string type_identity;
     std::shared_ptr<RuntimeClassBody> body;
     std::shared_ptr<LumiereClass> parent;
     std::unordered_map<std::string, std::shared_ptr<LumiereInterface>> interfaces;
@@ -367,6 +389,7 @@ struct LumiereClass
 struct LumiereInterface
 {
     std::string name;
+    std::string type_identity;
     std::shared_ptr<RuntimeInterfaceBody> body;
 };
 
@@ -391,6 +414,7 @@ struct Module {
     std::unordered_set<std::string> public_members;
     std::unordered_map<std::string, TypeExpr> type_aliases;
     std::unordered_set<std::string> public_type_aliases;
+    std::unordered_map<std::string, Value> public_type_values;
 };
 
 } // namespace lumiere

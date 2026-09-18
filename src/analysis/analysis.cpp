@@ -224,7 +224,7 @@ SemanticImportEnvironment build_import_environment(
             path.string());
 
         SemanticModuleExports exports =
-            collect_semantic_exports(module_statements);
+            collect_semantic_exports(module_statements, module_analysis.model);
         module_cache.emplace(module_key, exports);
         environment.emplace(import->module_name.lexeme,
                             std::move(exports));

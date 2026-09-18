@@ -412,6 +412,8 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_LIST";
     case LirOpcode::IR_OP_DICTIONARY:
         return "IR_OP_DICTIONARY";
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
+        return "IR_OP_ITERATION_SNAPSHOT";
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
         return "IR_OP_SEQUENCE_LENGTH";
     case LirOpcode::IR_OP_INDEX_GET:

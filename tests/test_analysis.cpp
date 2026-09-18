@@ -500,6 +500,42 @@ TEST(SemanticResultConstructors, RequireACompleteResultContext)
     EXPECT_TRUE(has_diagnostic(erased_contexts, "LUM-S0050"));
 }
 
+TEST(SemanticNatives, InfersTextMethodsWithoutRequiringAModuleImport)
+{
+    for (const auto *prefix : {"", "importer Texte\n"})
+    {
+        const auto result = analyze_source(std::string(prefix) + R"lum(
+fonction identite(t: Texte) -> Texte { retourne t }
+fonction principal() {
+    soit t: Texte = "é".repeter(3).inverser()
+    soit copie: Texte = identite(t.majuscules())
+    soit morceaux: Liste[Texte] = t.separer("é")
+    soit longueur: Entier = t.taille()
+    soit vide: Logique = t.est_vide()
+    soit suite: Texte = t.sous_texte(1)
+    soit repeter = t.repeter
+    soit repetition: Texte = repeter(2)
+    ignorer "42".en_entier()
+}
+)lum", "text_methods.lum");
+        EXPECT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "text_methods.lum");
+    }
+}
+
+TEST(SemanticNatives, ChecksTextMethodArgumentsFromTheSharedManifest)
+{
+    for (const auto &[expression, code] : {
+             std::pair{"\"x\".repeter()", "LUM-S0017"},
+             std::pair{"\"x\".repeter(\"incorrect\")", "LUM-S0019"},
+             std::pair{"\"x\".repeter(nombre: 2)", "LUM-S0018"},
+             std::pair{"\"x\".sous_texte(0, 1, 2)", "LUM-S0015"}})
+    {
+        SCOPED_TRACE(expression);
+        const auto result = analyze_source("fonction principal() { " + std::string(expression) + " }\n", "invalid_text_method.lum");
+        EXPECT_TRUE(has_diagnostic(result, code));
+    }
+}
+
 TEST(SemanticNatives, HttpManifestMatchesCanonicalRuntimeContract)
 {
     const AnalysisResult all_options = analyze_source(

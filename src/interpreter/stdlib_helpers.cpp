@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 namespace lumiere
 {
@@ -140,10 +141,12 @@ Value stdlib_error_value(
     std::string path)
 {
     auto klass = std::make_shared<LumiereClass>();
-    klass->name = std::move(type_name);
+    klass->name = type_name;
+    klass->type_identity = native_nominal_type_identity(type_name);
     auto error_interface =
         std::make_shared<LumiereInterface>();
     error_interface->name = "Erreur";
+    error_interface->type_identity = "Erreur";
     klass->interfaces.emplace(
         "Erreur",
         std::move(error_interface));
@@ -178,10 +181,30 @@ Value stdlib_failure(Value error, const RuntimeSite &origin)
         origin);
 }
 
+void stdlib_bind_public_type(Module &module, const std::string &name)
+{
+    Token identity(TokenType::IDENT, native_nominal_type_identity(module.name, name), 0, 0);
+    module.type_aliases.insert_or_assign(name, TypeExpr::named(std::move(identity)));
+    module.public_type_aliases.insert(name);
+}
+
 void stdlib_bind_public_value(Module &module, const std::string &name, const Value &value)
 {
     module.members[name] = value;
     module.public_members.insert(name);
+    if (value.is_classe() || value.is_interface())
+    {
+        const std::string identity = native_nominal_type_identity(module.name, name);
+        if (value.is_classe())
+        {
+            if (value.as_classe()->type_identity.empty())
+                value.as_classe()->type_identity = identity;
+        }
+        else if (value.as_interface()->type_identity.empty())
+            value.as_interface()->type_identity = identity;
+        stdlib_bind_public_type(module, name);
+        module.public_type_values.insert_or_assign(name, value);
+    }
 }
 
 void stdlib_bind_public_function(Module &module,

@@ -4,6 +4,7 @@
 #include "lumiere/lexer/token.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -19,54 +20,18 @@ namespace lumiere
 namespace
 {
 
-using TypeAliasTable = std::unordered_map<std::string, const TypeExpr *>;
-
 std::string runtime_type_name(const TypeExpr &type,
                               const TypeAliasTable &aliases,
-                              std::unordered_set<std::string> resolving = {})
+                              bool resolve_nominal = true)
 {
-    if (type.empty() || type.kind == TypeExprKind::INTEGER_ARGUMENT)
+    try
     {
-        return type.to_string();
+        return resolve_type_aliases(type, aliases, {}, resolve_nominal).to_string();
     }
-    if (type.kind == TypeExprKind::NAMED)
+    catch (const std::invalid_argument &error)
     {
-        const auto alias = aliases.find(type.name);
-        if (alias == aliases.end())
-        {
-            return type.name;
-        }
-        if (!resolving.insert(type.name).second)
-        {
-            throw VmCompileError("VM: cycle d'alias de type impliquant '" +
-                                 type.name + "'");
-        }
-        return runtime_type_name(*alias->second, aliases, std::move(resolving));
+        throw VmCompileError("VM: " + std::string(error.what()));
     }
-    if (type.kind == TypeExprKind::UNION)
-    {
-        std::string result;
-        for (const TypeExpr &child : type.children)
-        {
-            if (!result.empty())
-            {
-                result += " | ";
-            }
-            result += runtime_type_name(child, aliases, resolving);
-        }
-        return result;
-    }
-
-    std::string result = type.name + '[';
-    for (std::size_t i = 0; i < type.children.size(); ++i)
-    {
-        if (i > 0)
-        {
-            result += ',';
-        }
-        result += runtime_type_name(type.children[i], aliases, resolving);
-    }
-    return result + ']';
 }
 
 // Maps source tokens into LIR source coordinates.
@@ -137,6 +102,7 @@ class FunctionLowerer final : public ExprVisitor, public StmtVisitor
 public:
     using FunctionTable = std::unordered_map<std::string, FunctionDeclStmt *>;
     using GlobalTypeTable = std::unordered_map<std::string, std::string>;
+    using NominalValueTable = std::unordered_map<std::string, std::string>;
 
     FunctionLowerer(LirModule &module,
                     LirFunction &function,
@@ -149,7 +115,8 @@ public:
                     bool module_scope = false,
                     std::size_t parameter_offset = 0,
                     const ResolvedVmImports *imports = nullptr,
-                    const TypeAliasTable *type_aliases = nullptr)
+                    const TypeAliasTable *type_aliases = nullptr,
+                    const NominalValueTable *nominal_type_values = nullptr)
         : m_module(module),
           m_function(function),
           m_functions(functions),
@@ -162,7 +129,10 @@ public:
           m_module_scope(module_scope),
           m_parameter_offset(parameter_offset),
           m_imports(imports),
-          m_type_aliases(type_aliases)
+          m_type_aliases(type_aliases == nullptr ? TypeAliasTable{} : *type_aliases),
+          m_nominal_type_values(nominal_type_values == nullptr
+                                    ? NominalValueTable{}
+                                    : *nominal_type_values)
     {
         m_function.return_type = m_return_type;
         m_current_block = m_function.append_block().index;
@@ -540,21 +510,8 @@ public:
                                       lir_loc(member->member));
             return;
         }
-        if (callee != nullptr && lookup_local(callee->name.lexeme).has_value())
-        {
-            std::vector<LirOperand> operands{lower_expr(*expr.callee)};
-            for (const Argument &arg : expr.args)
-            {
-                append_call_argument(operands, arg.name, lower_expr(*arg.value));
-            }
-            if (expr.args.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
-            {
-                throw VmCompileError("VM: trop d'arguments dans un appel");
-            }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL, std::move(operands), lir_loc(expr.paren));
-            return;
-        }
-        if (callee == nullptr)
+        if (callee == nullptr || lookup_local(callee->name.lexeme).has_value() ||
+            resolve_capture(callee->name.lexeme).has_value())
         {
             std::vector<LirOperand> operands{lower_expr(*expr.callee)};
             for (const Argument &arg : expr.args)
@@ -804,6 +761,10 @@ public:
 
         LirClassDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
+        descriptor.type_identity = nominal_type_identity(m_function.source_path, stmt.name);
+        Token identity = stmt.name;
+        identity.lexeme = descriptor.type_identity;
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, TypeExpr::named(identity));
         descriptor.parent = type_name(stmt.parent);
         for (const TypeExpr &interface : stmt.interfaces)
         {
@@ -856,6 +817,10 @@ public:
         }
         LirInterfaceDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
+        descriptor.type_identity = nominal_type_identity(m_function.source_path, stmt.name);
+        Token identity = stmt.name;
+        identity.lexeme = descriptor.type_identity;
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, TypeExpr::named(identity));
         for (auto &member : stmt.methods)
         {
             auto *method = dynamic_cast<FunctionDeclStmt *>(member.get());
@@ -885,9 +850,21 @@ public:
                     {LirOperand::local(local), value},
                     lir_loc(stmt.name));
     }
-    void visit(TypeAliasDeclStmt &) override
+    void visit(TypeAliasDeclStmt &stmt) override
     {
-        // Type aliases are erased before lowering.
+        const TypeExpr resolved = resolve_type_aliases(stmt.target, m_type_aliases);
+        if (resolved.kind == TypeExprKind::NAMED &&
+            resolved.name.find('@') != std::string::npos)
+        {
+            std::string value_name = runtime_type_name(stmt.target, m_type_aliases, false);
+            for (auto value = m_nominal_type_values.find(value_name);
+                 value != m_nominal_type_values.end();
+                 value = m_nominal_type_values.find(value_name))
+                value_name = value->second;
+            m_nominal_type_values.insert_or_assign(stmt.name.lexeme,
+                                                   std::move(value_name));
+        }
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, resolved);
     }
     void visit(ImportStmt &stmt) override
     {
@@ -921,14 +898,26 @@ public:
         {
             for (const ImportStmt::ImportedMember &member : stmt.imported_members)
             {
-                const auto symbol = resolved.export_symbols.find(member.name.lexeme);
-                if (symbol == resolved.export_symbols.end())
+                if (const auto type = resolved.export_types.find(member.name.lexeme); type != resolved.export_types.end())
+                {
+                    m_type_aliases.insert_or_assign(member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme,
+                                                  type->second);
+                    if (!resolved.export_symbols.contains(member.name.lexeme) &&
+                        !resolved.export_type_symbols.contains(member.name.lexeme))
+                        continue;
+                }
+                auto symbol = resolved.export_symbols.find(member.name.lexeme);
+                const auto type_symbol = resolved.export_type_symbols.find(member.name.lexeme);
+                const std::string *symbol_name = symbol == resolved.export_symbols.end()
+                    ? (type_symbol == resolved.export_type_symbols.end() ? nullptr : &type_symbol->second)
+                    : &symbol->second;
+                if (symbol_name == nullptr)
                 {
                     throw VmCompileError("VM: membre non exporte ou introuvable dans le module: " + member.name.lexeme);
                 }
                 const LirOperand value = emit_value(
                     LirOpcode::IR_OP_LOAD_GLOBAL,
-                    {LirOperand::global(m_module.add_global(symbol->second))},
+                    {LirOperand::global(m_module.add_global(*symbol_name))},
                     lir_loc(member.name));
                 bind_local(member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme,
                            value,
@@ -942,6 +931,11 @@ public:
         {
             descriptor.members.push_back({name, m_module.add_global(symbol)});
         }
+        for (const auto &[name, symbol] : resolved.export_type_symbols)
+        {
+            if (!resolved.export_symbols.contains(name))
+                descriptor.members.push_back({name, m_module.add_global(symbol)});
+        }
         const std::size_t descriptor_index = m_module.namespaces.size();
         m_module.namespaces.push_back(std::move(descriptor));
         const LirOperand value = emit_value(LirOpcode::IR_OP_NAMESPACE,
@@ -951,6 +945,8 @@ public:
                                       ? stmt.module_name.lexeme.substr(stmt.module_name.lexeme.rfind('.') + 1)
                                       : stmt.alias.lexeme;
         bind_local(alias, value, stmt.alias.lexeme.empty() ? stmt.module_name : stmt.alias);
+        for (const auto &[name, type] : resolved.export_types)
+            m_type_aliases.insert_or_assign(alias + '.' + name, type);
     }
     void visit(IfStmt &stmt) override
     {
@@ -986,12 +982,15 @@ public:
     void visit(ForStmt &stmt) override
     {
         const LirOperand iterable = lower_expr(*stmt.iterable);
+        const LirOperand snapshot = emit_value(LirOpcode::IR_OP_ITERATION_SNAPSHOT,
+                                               {iterable},
+                                               lir_loc(stmt.variable));
         const std::size_t iterable_local = allocate_hidden_local("$iter");
         const std::size_t index_local = allocate_hidden_local("$index");
         const std::size_t item_local = m_next_local_index++;
 
         emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
-                    {LirOperand::local(iterable_local), iterable},
+                    {LirOperand::local(iterable_local), snapshot},
                     lir_loc(stmt.variable));
 
         const std::size_t zero_constant = m_module.add_constant(Value::entier(0), "0");
@@ -1336,7 +1335,10 @@ private:
     bool m_module_scope = false;
     std::size_t m_parameter_offset = 0;
     const ResolvedVmImports *m_imports = nullptr;
-    const TypeAliasTable *m_type_aliases = nullptr;
+    TypeAliasTable m_type_aliases;
+    std::vector<TypeAliasTable> m_type_alias_scopes;
+    NominalValueTable m_nominal_type_values;
+    std::vector<NominalValueTable> m_nominal_type_value_scopes;
     LirOperand m_last_value = LirOperand::temp(0);
     std::size_t m_next_temp = 0;
     std::size_t m_current_block = 0;
@@ -1364,8 +1366,18 @@ private:
 
     [[nodiscard]] LirOperand load_named_value(const Token &name)
     {
-        IdentifierExpr identifier(name);
-        return lower_expr(identifier);
+        Token part = name;
+        auto dot = name.lexeme.find('.');
+        part.lexeme = name.lexeme.substr(0, dot);
+        ExprPtr expression = std::make_unique<IdentifierExpr>(part);
+        while (dot != std::string::npos)
+        {
+            const auto end = name.lexeme.find('.', dot + 1);
+            part.lexeme = name.lexeme.substr(dot + 1, end == std::string::npos ? end : end - dot - 1);
+            expression = std::make_unique<MemberAccessExpr>(std::move(expression), name, part);
+            dot = end;
+        }
+        return lower_expr(*expression);
     }
 
     [[nodiscard]] LirOperand emit_class_value(const std::size_t descriptor_index,
@@ -1379,7 +1391,11 @@ private:
         for (const TypeExpr &interface : stmt.interfaces)
         {
             Token resolved = interface.as_token();
-            resolved.lexeme = type_name(interface);
+            resolved.lexeme = runtime_type_name(interface, m_type_aliases, false);
+            for (auto value = m_nominal_type_values.find(resolved.lexeme);
+                 value != m_nominal_type_values.end();
+                 value = m_nominal_type_values.find(resolved.lexeme))
+                resolved.lexeme = value->second;
             operands.push_back(load_named_value(resolved));
         }
         return emit_value(LirOpcode::IR_OP_CLASS, std::move(operands), lir_loc(stmt.name));
@@ -1419,7 +1435,8 @@ private:
                                 false,
                                 1,
                                 m_imports,
-                                m_type_aliases);
+                                &m_type_aliases,
+                                &m_nominal_type_values);
         lowerer.lower(*method.body, method.params);
 
         LirMethodDescriptor descriptor;
@@ -1522,6 +1539,8 @@ private:
     void begin_scope()
     {
         m_scope_stack.emplace_back();
+        m_type_alias_scopes.push_back(m_type_aliases);
+        m_nominal_type_value_scopes.push_back(m_nominal_type_values);
     }
 
     void leave_scope()
@@ -1541,6 +1560,10 @@ private:
             }
         }
         m_scope_stack.pop_back();
+        m_type_aliases = std::move(m_type_alias_scopes.back());
+        m_type_alias_scopes.pop_back();
+        m_nominal_type_values = std::move(m_nominal_type_value_scopes.back());
+        m_nominal_type_value_scopes.pop_back();
     }
 
     void declare_binding(const std::string &name, const std::size_t local_index)
@@ -1655,7 +1678,8 @@ private:
                                 false,
                                 0,
                                 m_imports,
-                                m_type_aliases);
+                                &m_type_aliases,
+                                &m_nominal_type_values);
         lowerer.lower(body, params);
 
         std::vector<LirOperand> operands{LirOperand::function(function_index)};
@@ -1771,21 +1795,36 @@ private:
 
     [[nodiscard]] std::string type_name(const TypeExpr &type) const
     {
-        return m_type_aliases == nullptr
-                   ? type.to_string()
-                   : runtime_type_name(type, *m_type_aliases);
+        return runtime_type_name(type, m_type_aliases);
     }
 };
 
 } // namespace
 
-LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
+LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
+                        const TypeAliasTable &imported_types)
 {
     LirModule module;
     module.name = program.source_path.empty() ? "__module__" : program.source_path;
     FunctionLowerer::FunctionTable functions;
     FunctionLowerer::GlobalTypeTable global_types;
-    TypeAliasTable type_aliases;
+    FunctionLowerer::NominalValueTable nominal_type_values;
+    TypeAliasTable type_aliases = imported_types;
+    for (const auto &statement : program.statements)
+    {
+        if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
+        {
+            Token identity = klass->name;
+            identity.lexeme = nominal_type_identity(program.source_path, klass->name);
+            type_aliases.insert_or_assign(klass->name.lexeme, TypeExpr::named(identity));
+        }
+        else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
+        {
+            Token identity = interface->name;
+            identity.lexeme = nominal_type_identity(program.source_path, interface->name);
+            type_aliases.insert_or_assign(interface->name.lexeme, TypeExpr::named(identity));
+        }
+    }
     std::unordered_set<std::string> fixed_globals;
     struct FunctionWork
     {
@@ -1801,7 +1840,25 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         if (auto *alias =
                 dynamic_cast<TypeAliasDeclStmt *>(statement.get()))
         {
-            type_aliases.emplace(alias->name.lexeme, &alias->target);
+            type_aliases.insert_or_assign(alias->name.lexeme, alias->target);
+        }
+    }
+    for (auto &statement : program.statements)
+    {
+        if (const auto *alias =
+                dynamic_cast<const TypeAliasDeclStmt *>(statement.get()))
+        {
+            const TypeExpr resolved = resolve_type_aliases(alias->target, type_aliases);
+            if (resolved.kind == TypeExprKind::NAMED &&
+                resolved.name.find('@') != std::string::npos)
+            {
+                nominal_type_values.insert_or_assign(
+                    alias->name.lexeme,
+                    runtime_type_name(alias->target, type_aliases, false));
+            }
+            type_aliases.insert_or_assign(
+                alias->name.lexeme,
+                resolved);
         }
     }
 
@@ -1844,6 +1901,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             LirInterfaceDescriptor descriptor;
             descriptor.name = interface->name.lexeme;
+            descriptor.type_identity = nominal_type_identity(program.source_path, interface->name);
             for (auto &member : interface->methods)
             {
                 auto *method = dynamic_cast<FunctionDeclStmt *>(member.get());
@@ -1873,6 +1931,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             LirClassDescriptor descriptor;
             descriptor.name = klass->name.lexeme;
+            descriptor.type_identity = nominal_type_identity(program.source_path, klass->name);
             descriptor.parent = runtime_type_name(klass->parent, type_aliases);
             for (const TypeExpr &interface : klass->interfaces)
             {
@@ -1973,7 +2032,8 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 false,
                                 parameter_offset,
                                 &imports,
-                                &type_aliases);
+                                &type_aliases,
+                                &nominal_type_values);
         lowerer.lower(*function->body, function->params);
     }
 
@@ -1993,7 +2053,8 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 true,
                                 0,
                                 &imports,
-                                &type_aliases);
+                                &type_aliases,
+                                &nominal_type_values);
         lowerer.lower_module_statements(initializer_statements);
         module.initializer_functions.push_back(module.functions.size() - 1);
     }

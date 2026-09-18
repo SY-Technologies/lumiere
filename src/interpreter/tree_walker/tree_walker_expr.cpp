@@ -1,6 +1,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
 #include <functional>
 #include <iostream>
@@ -12,6 +13,14 @@ namespace lumiere
 
 namespace
 {
+
+Value checked_integer(TreeWalker &runtime, const Token &site,
+                      std::optional<int64_t> value)
+{
+    if (!value)
+        runtime.raise_runtime_error(site, "valeur hors limites pour Entier");
+    return Value::entier(*value);
+}
 
 std::string describe_binary_operand_types(const Value &left, const Value &right)
 {
@@ -172,7 +181,7 @@ void TreeWalker::visit(BinaryExpr &expr)
     case TokenType::PLUS:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() + right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::add(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -191,7 +200,7 @@ void TreeWalker::visit(BinaryExpr &expr)
     case TokenType::MOINS:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() - right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::subtract(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -205,7 +214,7 @@ void TreeWalker::visit(BinaryExpr &expr)
     case TokenType::ETOILE:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() * right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::multiply(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -223,7 +232,7 @@ void TreeWalker::visit(BinaryExpr &expr)
             {
                 throw_runtime_error(expr.op, "division par zéro");
             }
-            m_result = Value::entier(left.as_entier() / right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::divide(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -246,7 +255,7 @@ void TreeWalker::visit(BinaryExpr &expr)
             {
                 throw_runtime_error(expr.op, "modulo par zéro");
             }
-            m_result = Value::entier(left.as_entier() % right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::remainder(left.as_entier(), right.as_entier()));
             return;
         }
         throw_runtime_error(
@@ -399,7 +408,8 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
         }
     }
 
-    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme) : nullptr;
+    std::shared_ptr<LumiereClass> declaring_class;
+    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme, &declaring_class) : nullptr;
     if (field_decl == nullptr)
     {
         throw_runtime_error(target.member, "champ introuvable: '" + target.member.lexeme + "'");
@@ -412,7 +422,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     Value value = evaluate(value_expr);
     ensure_value_matches_annotation(
         value,
-        field_decl->type,
+        class_annotation(declaring_class, field_decl->type),
         target.member,
         "le champ '" + target.member.lexeme + "'");
     instance->fields[target.member.lexeme] = value;
@@ -501,7 +511,7 @@ void TreeWalker::visit(UnaryExpr &expr)
     case TokenType::MOINS:
         if (operand.is_entier())
         {
-            m_result = Value::entier(-operand.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::negate(operand.as_entier()));
             return;
         }
         if (operand.is_numeric())
@@ -534,7 +544,7 @@ void TreeWalker::visit(CastExpr &expr)
         }
         if (operand.is_decimal())
         {
-            m_result = Value::entier(static_cast<int64_t>(operand.as_decimal()));
+            m_result = checked_integer(*this, expr.target_type.source, numeric::to_integer(operand.as_decimal()));
             return;
         }
         if (operand.is_symbole())
@@ -546,7 +556,11 @@ void TreeWalker::visit(CastExpr &expr)
         {
             try
             {
-                m_result = Value::entier(std::stoll(operand.as_texte()));
+                std::size_t consumed = 0;
+                const auto value = std::stoll(operand.as_texte(), &consumed);
+                if (consumed != operand.as_texte().size())
+                    throw std::invalid_argument("caractères restants");
+                m_result = Value::entier(value);
                 return;
             }
             catch (...)
@@ -572,7 +586,11 @@ void TreeWalker::visit(CastExpr &expr)
         {
             try
             {
-                m_result = Value::decimal(std::stod(operand.as_texte()));
+                std::size_t consumed = 0;
+                const auto value = std::stod(operand.as_texte(), &consumed);
+                if (consumed != operand.as_texte().size())
+                    throw std::invalid_argument("caractères restants");
+                m_result = Value::decimal(value);
                 return;
             }
             catch (...)
@@ -615,7 +633,8 @@ void TreeWalker::visit(CastExpr &expr)
         if (operand.is_entier())
         {
             const int64_t unicode_value = operand.as_entier();
-            if (unicode_value < 0 || unicode_value > 0x10FFFF)
+            if (unicode_value < 0 || unicode_value > 0x10FFFF ||
+                (unicode_value >= 0xD800 && unicode_value <= 0xDFFF))
             {
                 throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le point de code Unicode est invalide");
             }
@@ -656,7 +675,7 @@ void TreeWalker::visit(TypeCheckExpr &expr)
 
 void TreeWalker::visit(FunctionExpr &expr)
 {
-    m_result = Value::fonction(make_declared_function(expr, m_self, m_env));
+    m_result = Value::fonction(make_declared_function(expr, m_self, m_env_owner));
 }
 
 void TreeWalker::visit(CallExpr &expr)
@@ -664,7 +683,7 @@ void TreeWalker::visit(CallExpr &expr)
     if (auto *identifier = dynamic_cast<IdentifierExpr *>(expr.callee.get()))
     {
         const std::string &builtin_name = identifier->name.lexeme;
-        if (builtin_name == "afficher" ||
+        if ((builtin_name == "afficher" ||
             builtin_name == "lire" ||
             builtin_name == "lire_entier" ||
             builtin_name == "lire_décimal" ||
@@ -672,7 +691,8 @@ void TreeWalker::visit(CallExpr &expr)
             builtin_name == "lire_logique" ||
             builtin_name == "type_de" ||
             builtin_name == "Succès" ||
-            builtin_name == "Échec")
+            builtin_name == "Échec") &&
+            (m_env == nullptr || !m_env->contains(builtin_name)))
         {
             m_result = call_builtin(builtin_name, expr.args, expr.paren);
             return;
@@ -816,14 +836,19 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
     if (lookup_class != nullptr)
     {
-        if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme))
+        std::shared_ptr<LumiereClass> declaring_class;
+        if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme, &declaring_class))
         {
             if (function_decl->is_prive && !access_uses_ici(*expr.object))
             {
                 throw_runtime_error(expr.member, "acces interdit a la methode privee '" + expr.member.lexeme + "'");
             }
 
-            m_result = Value::fonction(make_declared_function(*function_decl, object, m_env));
+            m_result = Value::fonction(make_declared_function(
+                *function_decl,
+                object,
+                class_closure_owner(declaring_class),
+                class_source_identity(declaring_class)));
             return;
         }
 
@@ -984,7 +1009,18 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
     }
 
     const std::vector<Parameter> &params = decl_ptr != nullptr ? decl_ptr->params : expr_ptr->params;
-    const TypeExpr &return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
+    TypeExpr return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
+    // Return checks run after restoring the caller's value environment. Resolve
+    // their annotation in the function's lexical environment before entering it.
+    try
+    {
+        if (const auto closure = function_closure_owner(*function))
+            return_type = closure->resolve_type_aliases(return_type);
+    }
+    catch (const std::invalid_argument &error)
+    {
+        raise_runtime_error(call_site, error.what());
+    }
     Stmt *body = decl_ptr != nullptr ? decl_ptr->body.get() : expr_ptr->body.get();
     const std::string function_name = decl_ptr != nullptr ? decl_ptr->name.lexeme : "<anonyme>";
 
@@ -1018,6 +1054,7 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
     // through the parent chain preserved by function_closure_owner(...).
     m_env_owner = std::make_shared<Environment>(function_closure_owner(*function));
     m_env = m_env_owner.get();
+    m_env->set_source_identity(function_source_identity(*function));
     m_self = function->receiver;
 
     try
@@ -1092,7 +1129,7 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
                 parameter.type,
                 site_token,
                 "le parametre '" + parameter.name + "'");
-            m_env->define(parameter.name, std::move(argument_value), parameter.type.to_string());
+            m_env->define(parameter.name, std::move(argument_value), resolved_annotation_name(parameter.type));
         }
 
         if (body != nullptr)
@@ -1343,7 +1380,12 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
     auto object = std::make_shared<LumiereObject>();
     object->klass = klass;
 
-    std::unordered_map<std::string, VarDeclStmt *> fields_by_name;
+    struct FieldInfo
+    {
+        VarDeclStmt *declaration;
+        Token annotation;
+    };
+    std::unordered_map<std::string, FieldInfo> fields_by_name;
     std::vector<std::string> field_order;
 
     std::function<void(const std::shared_ptr<LumiereClass> &)> collect_fields = [&](const std::shared_ptr<LumiereClass> &current) {
@@ -1367,7 +1409,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         {
             if (auto *field = dynamic_cast<VarDeclStmt *>(member.get()))
             {
-                fields_by_name[field->name.lexeme] = field;
+                fields_by_name.insert_or_assign(field->name.lexeme, FieldInfo{field, class_annotation(current, field->type)});
                 field_order.push_back(field->name.lexeme);
             }
         }
@@ -1418,14 +1460,15 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         object->fields[field_name] = evaluate(*arg.value);
         ensure_value_matches_annotation(
             object->fields[field_name],
-            fields_by_name[field_name]->type,
+            fields_by_name.at(field_name).annotation,
             call_site,
             "le champ '" + field_name + "'");
         assigned_fields.insert(field_name);
     }
 
-    for (const auto &[field_name, field_decl] : fields_by_name)
+    for (const auto &[field_name, field] : fields_by_name)
     {
+        const auto *field_decl = field.declaration;
         if (!assigned_fields.count(field_name))
         {
             if (field_decl->initializer)
@@ -1438,7 +1481,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
             }
             ensure_value_matches_annotation(
                 object->fields[field_name],
-                field_decl->type,
+                field.annotation,
                 field_decl->name,
                 "le champ '" + field_name + "'");
         }

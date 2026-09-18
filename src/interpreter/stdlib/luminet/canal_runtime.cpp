@@ -254,7 +254,7 @@ Value make_canal_client_value(IRuntime &runtime,
         });
 
     Value result = Value::objet(std::move(object));
-    runtime.annotate_value(result, "CanalClient", site);
+    runtime.annotate_value(result, "LumiNet.CanalClient", site);
     return result;
 }
 

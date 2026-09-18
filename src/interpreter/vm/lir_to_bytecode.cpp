@@ -99,6 +99,7 @@ std::size_t instr_size(const LirModule &module,
     case LirOpcode::IR_OP_LIST:
     case LirOpcode::IR_OP_DICTIONARY:
         return 2;
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
     case LirOpcode::IR_OP_INDEX_GET:
     case LirOpcode::IR_OP_INDEX_SET:
@@ -386,6 +387,9 @@ void emit_instr(const LirModule &module,
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
         chunk.write_opcode(Opcode::SEQUENCE_LENGTH, bc_loc(instruction.source));
         return;
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
+        chunk.write_opcode(Opcode::ITERATION_SNAPSHOT, bc_loc(instruction.source));
+        return;
     case LirOpcode::IR_OP_INDEX_GET:
         chunk.write_opcode(Opcode::INDEX_GET, bc_loc(instruction.source));
         return;
@@ -543,6 +547,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         VmClassDescriptor descriptor;
         descriptor.name = klass.name;
+        descriptor.type_identity = klass.type_identity;
         descriptor.parent = klass.parent;
         descriptor.interfaces = klass.interfaces;
         for (const LirFieldDescriptor &field : klass.fields)
@@ -576,6 +581,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         VmInterfaceDescriptor descriptor;
         descriptor.name = interface.name;
+        descriptor.type_identity = interface.type_identity;
         for (const LirInterfaceMethodDescriptor &method : interface.methods)
         {
             descriptor.methods.push_back({method.name, method.parameter_types, method.return_type});

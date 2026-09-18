@@ -1,0 +1,8 @@
+fonction principal() {
+    soit texte = "é中😀".repeter(10000)
+    soit total = 0
+    pour chaque caractère dans texte {
+        total = total + (caractère en Entier)
+    }
+    afficher(total)
+}

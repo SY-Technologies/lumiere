@@ -1,0 +1,9 @@
+fonction principal() {
+    soit index = 0
+    soit total = 0
+    tant que index < 1000000 {
+        total = total + index
+        index = index + 1
+    }
+    afficher(total)
+}

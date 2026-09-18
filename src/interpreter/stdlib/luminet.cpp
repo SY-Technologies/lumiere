@@ -12,6 +12,15 @@ void register_luminet_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
 #if LUMIERE_ENABLE_LUMINET
+    for (const char *name :
+         {"HTTP", "Canal", "TCP", "UDP", "DNS", "Adresse",
+          "AdresseRéseau", "ConnexionTCP", "ServeurTCP",
+          "SocketUDP", "PaquetUDP", "RéponseHTTP",
+          "RequêteHTTP", "RéponseServeurHTTP", "ServeurHTTP",
+          "CanalClient", "ServeurCanal", "ErreurAdresse",
+          "ErreurDNS", "ErreurConnexion", "ErreurDélai",
+          "ErreurIO", "ErreurProtocole", "ErreurHTTP"})
+        stdlib_bind_public_type(module, name);
     auto root = make_hidden_typed_object("LumiNet");
     root->fields["Adresse"] = make_luminet_adresse_module(make_native_function);
     root->fields["DNS"] = make_luminet_dns_module(make_native_function);

@@ -107,6 +107,7 @@ enum class LirOpcode : std::uint8_t
     IR_OP_CLOSURE,
     IR_OP_LIST,
     IR_OP_DICTIONARY,
+    IR_OP_ITERATION_SNAPSHOT,
     IR_OP_SEQUENCE_LENGTH,
     IR_OP_INDEX_GET,
     IR_OP_INDEX_SET,
@@ -232,6 +233,7 @@ struct LirMethodDescriptor
 struct LirClassDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::string parent;
     std::vector<std::string> interfaces;
     std::vector<LirFieldDescriptor> fields;
@@ -248,6 +250,7 @@ struct LirInterfaceMethodDescriptor
 struct LirInterfaceDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::vector<LirInterfaceMethodDescriptor> methods;
 };
 

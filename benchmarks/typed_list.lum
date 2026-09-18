@@ -1,0 +1,10 @@
+fonction principal() {
+    soit valeurs: Liste[Entier] = []
+    soit index = 0
+    tant que index < 200000 {
+        valeurs.ajouter(index)
+        index = index + 1
+    }
+    afficher(valeurs.taille())
+    afficher(valeurs[199999])
+}

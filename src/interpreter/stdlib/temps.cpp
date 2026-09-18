@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 
 #include <chrono>
@@ -19,6 +20,7 @@ std::shared_ptr<LumiereObject> make_typed_object(const std::string &type_name, i
     auto object = std::make_shared<LumiereObject>();
     auto klass = std::make_shared<LumiereClass>();
     klass->name = type_name;
+    klass->type_identity = native_nominal_type_identity("Temps", type_name);
     object->klass = std::move(klass);
     object->fields["__millis"] = Value::entier(millis);
     return object;
@@ -418,6 +420,8 @@ int64_t expect_integer_argument(IRuntime &runtime, const NativeArgs &native_args
 void register_temps_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
+    stdlib_bind_public_type(module, "Instant");
+    stdlib_bind_public_type(module, "Durée");
     auto error_class = std::make_shared<LumiereClass>();
     error_class->name = "Temps.ErreurTemps";
     stdlib_bind_public_value(
@@ -442,7 +446,7 @@ void register_temps_module(Module &module)
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "Temps.maintenant", native_args.site);
             const auto now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::system_clock::now());
             Value instant = make_instant_value(millis_from_time_point(now), make_native_function);
-            runtime.annotate_value(instant, "Instant", native_args.site);
+            runtime.annotate_value(instant, "Temps.Instant", native_args.site);
             return instant;
         });
 
@@ -453,7 +457,7 @@ void register_temps_module(Module &module)
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const int64_t millis = expect_integer_argument(runtime, native_args, "Temps.depuis_horodatage");
             Value instant = make_instant_value(millis, make_native_function);
-            runtime.annotate_value(instant, "Instant", native_args.site);
+            runtime.annotate_value(instant, "Temps.Instant", native_args.site);
             return instant;
         });
 
@@ -469,7 +473,7 @@ void register_temps_module(Module &module)
             try
             {
                 Value instant = make_instant_value(parse_instant_string(text, format), make_native_function);
-                runtime.annotate_value(instant, "Instant", native_args.site);
+                runtime.annotate_value(instant, "Temps.Instant", native_args.site);
                 return stdlib_success(std::move(instant));
             }
             catch (const std::exception &error)
@@ -507,7 +511,7 @@ void register_temps_module(Module &module)
                 }
             }
             Value duration = make_duration_value(end_ms - start_ms, make_native_function);
-            runtime.annotate_value(duration, "Durée", native_args.site);
+            runtime.annotate_value(duration, "Temps.Durée", native_args.site);
             return duration;
         });
 
@@ -548,7 +552,7 @@ void register_temps_module(Module &module)
                     runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le resultat depasse la limite d'une Duree");
                 }
                 Value duration = make_duration_value(amount * factor_ms, make_native_function);
-                runtime.annotate_value(duration, "Durée", native_args.site);
+                runtime.annotate_value(duration, "Temps.Durée", native_args.site);
                 return duration;
             });
     };

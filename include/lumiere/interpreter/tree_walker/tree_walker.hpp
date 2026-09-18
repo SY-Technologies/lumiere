@@ -167,28 +167,6 @@ namespace lumiere
             std::shared_ptr<Environment> environment;
         };
 
-        struct ListConstraint
-        {
-            std::string element_type;
-        };
-
-        struct FixedListConstraint
-        {
-            std::string element_type;
-            std::size_t length = 0;
-        };
-
-        struct DictConstraint
-        {
-            std::string key_type;
-            std::string value_type;
-        };
-
-        struct SetConstraint
-        {
-            std::string element_type;
-        };
-
         class StackFrameGuard
         {
         public:
@@ -213,12 +191,8 @@ namespace lumiere
         std::vector<StackFrame> m_stack_trace;
         std::string m_current_source_path;
         std::string m_current_source_text;
+        std::size_t m_incremental_unit = 0;
         LumiTestRuntimeOptions m_lumitest_options;
-        mutable std::unordered_map<const ListeData *, ListConstraint> m_list_constraints;
-        mutable std::unordered_map<const ListeFixeData *, FixedListConstraint> m_fixed_list_constraints;
-        mutable std::unordered_map<const DictData *, DictConstraint> m_dict_constraints;
-        mutable std::unordered_map<const EnsembleData *, SetConstraint> m_set_constraints;
-        std::unordered_map<std::string, TypeExpr> m_type_aliases;
 
         /**
          * @brief Evaluates an expression and returns its resulting runtime value.
@@ -317,7 +291,8 @@ namespace lumiere
          */
         std::shared_ptr<LumiereFunction> make_declared_function(FunctionDeclStmt &decl,
                                                                 Value receiver,
-                                                                Environment *closure) const;
+                                                                std::shared_ptr<Environment> closure,
+                                                                std::string source_identity = {}) const;
 
         /**
          * @brief Captures an anonymous function expression as a callable runtime value.
@@ -327,7 +302,8 @@ namespace lumiere
          */
         std::shared_ptr<LumiereFunction> make_declared_function(FunctionExpr &expr,
                                                                 Value receiver,
-                                                                Environment *closure) const;
+                                                                std::shared_ptr<Environment> closure,
+                                                                std::string source_identity = {}) const;
 
         /**
          * @brief Resolves a built-in member access on a runtime value.
@@ -571,6 +547,7 @@ namespace lumiere
          */
         void register_value_annotation(const Value &value, const Token &annotation) const;
         void register_value_annotation(const Value &value, const TypeExpr &annotation) const;
+        std::string resolved_annotation_name(const TypeExpr &annotation) const;
 
         /**
          * @brief Enforces the declared element type before mutating a `Liste`.
@@ -655,11 +632,16 @@ namespace lumiere
          * @brief Returns the shared owner that keeps a captured closure environment alive.
          */
         std::shared_ptr<Environment> function_closure_owner(const LumiereFunction &function) const;
+        const std::string &function_source_identity(const LumiereFunction &function) const;
 
         /**
          * @brief Returns the class declaration behind a class value, if present.
          */
         ClassDeclStmt *class_decl(const std::shared_ptr<LumiereClass> &klass) const;
+        std::shared_ptr<Environment> class_closure_owner(const std::shared_ptr<LumiereClass> &klass) const;
+        const std::string &class_source_identity(const std::shared_ptr<LumiereClass> &klass) const;
+        Token class_annotation(const std::shared_ptr<LumiereClass> &klass, const TypeExpr &type) const;
+        std::shared_ptr<LumiereInterface> resolve_interface_value(const TypeExpr &type) const;
 
         /**
          * @brief Returns the interface declaration behind an interface value, if present.
@@ -690,12 +672,14 @@ namespace lumiere
         /**
          * @brief Finds a field declaration with the given name on this class.
          */
-        VarDeclStmt *find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
+        VarDeclStmt *find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name,
+                                    std::shared_ptr<LumiereClass> *owner = nullptr) const;
 
         /**
          * @brief Finds a method declaration with the given name on this class.
          */
-        FunctionDeclStmt *find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
+        FunctionDeclStmt *find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name,
+                                          std::shared_ptr<LumiereClass> *owner = nullptr) const;
 
         /**
          * @brief Finds a method declaration with the given name on this interface.

@@ -37,7 +37,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     {
         try
         {
-            m_env->define_fixe(stmt.name.lexeme, std::move(value), stmt.type.to_string());
+            m_env->define_fixe(stmt.name.lexeme, std::move(value), resolved_annotation_name(stmt.type));
         }
         catch (const RuntimeError &error)
         {
@@ -48,7 +48,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     {
         try
         {
-            m_env->define(stmt.name.lexeme, std::move(value), stmt.type.to_string());
+            m_env->define(stmt.name.lexeme, std::move(value), resolved_annotation_name(stmt.type));
         }
         catch (const RuntimeError &error)
         {
@@ -66,7 +66,7 @@ void TreeWalker::visit(FunctionDeclStmt &stmt)
 
     try
     {
-        m_env->define_fixe(stmt.name.lexeme, Value::fonction(make_declared_function(stmt, m_self, m_env)));
+        m_env->define_fixe(stmt.name.lexeme, Value::fonction(make_declared_function(stmt, m_self, m_env_owner)));
     }
     catch (const RuntimeError &error)
     {
@@ -154,7 +154,7 @@ void TreeWalker::visit(InterfaceDeclStmt &stmt)
 
 void TreeWalker::visit(TypeAliasDeclStmt &stmt)
 {
-    m_type_aliases.insert_or_assign(stmt.name.lexeme, stmt.target);
+    m_env->define_type_alias(stmt.name.lexeme, stmt.target);
 }
 
 void TreeWalker::visit(ImportStmt &stmt)
@@ -175,9 +175,12 @@ void TreeWalker::visit(ImportStmt &stmt)
                     imported_member.alias.lexeme.empty()
                         ? imported_member.name.lexeme
                         : imported_member.alias.lexeme;
-                m_type_aliases.insert_or_assign(
+                m_env->define_type_alias(
                     binding_name,
                     module->type_aliases.at(imported_member.name.lexeme));
+                if (const auto value = module->public_type_values.find(imported_member.name.lexeme);
+                    value != module->public_type_values.end())
+                    m_env->define_fixe(binding_name, value->second);
                 continue;
             }
             if (module->public_members.count(imported_member.name.lexeme) == 0)
@@ -221,13 +224,24 @@ void TreeWalker::visit(ImportStmt &stmt)
         if (member_it != module->members.end())
         {
             namespace_object->fields[public_name] = member_it->second;
+            if (member_it->second.is_classe() || member_it->second.is_interface())
+            {
+                Token identity = stmt.module_name;
+                identity.lexeme = member_it->second.is_classe()
+                    ? member_it->second.as_classe()->type_identity : member_it->second.as_interface()->type_identity;
+                if (!identity.lexeme.empty())
+                    m_env->define_type_alias(binding_name + '.' + public_name, TypeExpr::named(identity));
+            }
         }
     }
     for (const std::string &name : module->public_type_aliases)
     {
-        m_type_aliases.insert_or_assign(
+        m_env->define_type_alias(
             binding_name + '.' + name,
             module->type_aliases.at(name));
+        if (const auto value = module->public_type_values.find(name);
+            value != module->public_type_values.end())
+            namespace_object->fields.insert_or_assign(name, value->second);
     }
 
     try

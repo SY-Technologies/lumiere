@@ -1,4 +1,5 @@
 #include "../luminet_shared.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +16,9 @@ std::shared_ptr<LumiereObject> make_hidden_typed_object(const std::string &type_
     auto object = std::make_shared<LumiereObject>();
     auto klass = std::make_shared<LumiereClass>();
     klass->name = type_name;
+    klass->type_identity = type_name.find('.') == std::string::npos
+        ? native_nominal_type_identity("LumiNet", type_name)
+        : native_nominal_type_identity(type_name);
     object->klass = std::move(klass);
     return object;
 }

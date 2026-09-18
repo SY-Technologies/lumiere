@@ -1,5 +1,6 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
 #include <cmath>
 #include <limits>
@@ -7,6 +8,17 @@
 
 namespace lumiere
 {
+
+namespace
+{
+Value rounded_integer(IRuntime &runtime, const RuntimeSite &site, double value)
+{
+    const auto integer = numeric::to_integer(value);
+    if (!integer)
+        runtime.raise_runtime_error(site, "Maths: valeur hors limites pour Entier");
+    return Value::entier(*integer);
+}
+}
 
 void register_maths_module(Module &module)
 {
@@ -83,7 +95,7 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.arrondir: le resultat depasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::llround(arrondir_val)));
+            return rounded_integer(runtime, call_site, std::round(arrondir_val));
         });
     stdlib_bind_public_value(module, "arrondir", Value::fonction(arrondir_function));
     stdlib_bind_public_value(module, "arrondi", Value::fonction(arrondir_function));
@@ -102,7 +114,7 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.plancher: le resultat depasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::floor(plancher_val)));
+            return rounded_integer(runtime, call_site, std::floor(plancher_val));
         });
 
     stdlib_bind_public_function(
@@ -119,7 +131,7 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.plafond: le resultat depasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::ceil(plafond_val)));
+            return rounded_integer(runtime, call_site, std::ceil(plafond_val));
         });
 
     stdlib_bind_public_function(
@@ -136,7 +148,7 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.tronquer: le resultat depasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::trunc(tronquer_val)));
+            return rounded_integer(runtime, call_site, std::trunc(tronquer_val));
         });
 
     stdlib_bind_public_function(
@@ -173,11 +185,13 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.racine_n attend un degre non nul");
             }
-            if (value < 0.0 && std::fmod(std::fabs(degree), 2.0) == 0.0)
+            if (value < 0.0 && std::fmod(std::fabs(degree), 2.0) != 1.0)
             {
                 runtime.raise_runtime_error(call_site, "Maths.racine_n ne peut pas calculer une racine paire d'une valeur negative");
             }
-            return Value::decimal(std::pow(value, 1.0 / degree));
+            return Value::decimal(value < 0.0
+                                      ? -std::pow(-value, 1.0 / degree)
+                                      : std::pow(value, 1.0 / degree));
         });
 
     stdlib_bind_public_function(

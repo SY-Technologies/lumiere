@@ -8,6 +8,9 @@
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
+#include "lumiere/interpreter/runtime/collection_constraints.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -23,6 +26,13 @@ namespace lumiere
 {
 namespace
 {
+
+Value checked_integer(std::optional<int64_t> value)
+{
+    if (!value)
+        throw VmRuntimeError("VM: valeur hors limites pour Entier");
+    return Value::entier(*value);
+}
 
 std::uint8_t read_byte(const Chunk &chunk, std::size_t &ip)
 {
@@ -60,7 +70,10 @@ Value pop_value(std::vector<Value> &stack)
         throw VmRuntimeError("VM: pile vide");
     }
 
-    Value value = stack.back();
+    // Arithmetic-heavy loops need only the integer payload, not a variant move.
+    Value value = stack.back().is_entier()
+                      ? Value::entier(stack.back().as_entier())
+                      : std::move(stack.back());
     stack.pop_back();
     return value;
 }
@@ -143,9 +156,6 @@ public:
 
 private:
     CallbackExecutor m_callback_executor;
-    mutable std::unordered_map<const ListeData *, std::string> m_list_types;
-    mutable std::unordered_map<const ListeFixeData *, std::string> m_fixed_list_types;
-    mutable std::unordered_map<const DictData *, std::pair<std::string, std::string>> m_dictionary_types;
 };
 
 std::vector<std::string_view> split_generic_arguments(const std::string_view specification)
@@ -272,7 +282,8 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         std::shared_ptr<LumiereClass> klass = value.as_objet()->klass;
         while (klass != nullptr)
         {
-            if (klass->name == name || klass->interfaces.contains(std::string(name)))
+            if ((klass->type_identity.empty() ? klass->name : klass->type_identity) == name ||
+                klass->interfaces.contains(std::string(name)))
             {
                 return true;
             }
@@ -407,21 +418,57 @@ std::vector<std::string_view> annotation_arguments(const std::string_view annota
 }
 
 void VmRuntimeServices::annotate_value(const Value &value,
-                                     const std::string_view type_name,
-                                     const RuntimeSite &) const
+                                     std::string_view type_name,
+                                     const RuntimeSite &site) const
 {
+    if (!value.is_liste() && !value.is_liste_fixe() && !value.is_dictionnaire() && !value.is_ensemble() && !value.is_resultat())
+        return;
+    // Re-annotation may update metadata that owns the caller's string view.
+    const std::string annotation(trim_type_name(type_name));
+    type_name = annotation;
+    if (const auto separator = find_collection_type_union(type_name); separator != std::string_view::npos)
+    {
+        const auto left = type_name.substr(0, separator);
+        annotate_value(value, matches_type_name(value, left) ? left : type_name.substr(separator + 1), site);
+        return;
+    }
     const auto arguments = annotation_arguments(type_name);
-    if (value.is_liste() && arguments.size() == 1)
+    if (type_name.starts_with("Résultat[") && value.is_resultat() && arguments.size() == 2)
     {
-        m_list_types[value.as_liste().get()] = std::string(arguments[0]);
+        const auto result = value.as_resultat();
+        annotate_value(result->payload, arguments[result->success ? 0 : 1], site);
     }
-    else if (value.is_liste_fixe() && arguments.size() == 2)
+    else if (type_name.starts_with("Liste[") && value.is_liste() && arguments.size() == 1)
     {
-        m_fixed_list_types[value.as_liste_fixe().get()] = std::string(arguments[0]);
+        if (!merge_collection_constraint(value.as_liste()->constraint, ListConstraint{std::string(arguments[0])}))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
+        for (const auto &element : value.as_liste()->elements)
+            annotate_value(element, arguments[0], site);
     }
-    else if (value.is_dictionnaire() && arguments.size() == 2)
+    else if (type_name.starts_with("ListeFixe[") && value.is_liste_fixe() && arguments.size() == 2)
     {
-        m_dictionary_types[value.as_dictionnaire().get()] = {std::string(arguments[0]), std::string(arguments[1])};
+        if (!merge_collection_constraint(value.as_liste_fixe()->constraint, FixedListConstraint{
+                std::string(arguments[0]), value.as_liste_fixe()->elements.size()}))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
+        for (const auto &element : value.as_liste_fixe()->elements)
+            annotate_value(element, arguments[0], site);
+    }
+    else if (type_name.starts_with("Dictionnaire[") && value.is_dictionnaire() && arguments.size() == 2)
+    {
+        if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{std::string(arguments[0]), std::string(arguments[1])}))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
+        for (const auto &[key, element] : value.as_dictionnaire()->entries)
+        {
+            annotate_value(key, arguments[0], site);
+            annotate_value(element, arguments[1], site);
+        }
+    }
+    else if (type_name.starts_with("Ensemble[") && value.is_ensemble() && arguments.size() == 1)
+    {
+        if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{std::string(arguments[0])}))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
+        for (const auto &element : value.as_ensemble()->elements)
+            annotate_value(element, arguments[0], site);
     }
 }
 
@@ -429,20 +476,26 @@ void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &l
                                            const Value &value,
                                            const std::string &context) const
 {
-    if (const auto type = list_element_type(list); type.has_value() && !matches_type_name(value, *type))
+    if (const auto &constraint = list->constraint;
+        constraint && !matches_type_name(value, constraint->element_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + *type);
+        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
     }
+    if (list->constraint)
+        annotate_value(value, list->constraint->element_type, {});
 }
 
 void VmRuntimeServices::enforce_fixed_list_element(const std::shared_ptr<ListeFixeData> &list,
                                                  const Value &value,
                                                  const std::string &context) const
 {
-    if (const auto type = fixed_list_element_type(list); type.has_value() && !matches_type_name(value, *type))
+    if (const auto &constraint = list->constraint;
+        constraint && !matches_type_name(value, constraint->element_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + *type);
+        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
     }
+    if (list->constraint)
+        annotate_value(value, list->constraint->element_type, {});
 }
 
 void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
@@ -450,37 +503,37 @@ void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData>
                                                const Value &value,
                                                const std::string &context) const
 {
-    const auto types = dictionary_types(dictionary);
-    if (!types.has_value())
+    const auto &constraint = dictionary->constraint;
+    if (!constraint)
     {
         return;
     }
-    if (!matches_type_name(key, types->first) || !matches_type_name(value, types->second))
+    if (!matches_type_name(key, constraint->key_type) || !matches_type_name(value, constraint->value_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend " + types->first + " -> " + types->second);
+        throw VmRuntimeError("VM: " + context + " attend " + display_runtime_type(constraint->key_type) + " -> " +
+                             display_runtime_type(constraint->value_type));
     }
+    annotate_value(key, constraint->key_type, {});
+    annotate_value(value, constraint->value_type, {});
 }
 
 std::optional<std::string> VmRuntimeServices::list_element_type(const std::shared_ptr<ListeData> &list) const
 {
-    const auto it = m_list_types.find(list.get());
-    return it == m_list_types.end() ? std::nullopt : std::optional<std::string>(it->second);
+    return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::string> VmRuntimeServices::fixed_list_element_type(
     const std::shared_ptr<ListeFixeData> &list) const
 {
-    const auto it = m_fixed_list_types.find(list.get());
-    return it == m_fixed_list_types.end() ? std::nullopt : std::optional<std::string>(it->second);
+    return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
     const std::shared_ptr<DictData> &dictionary) const
 {
-    const auto it = m_dictionary_types.find(dictionary.get());
-    return it == m_dictionary_types.end()
-               ? std::nullopt
-               : std::optional<std::pair<std::string, std::string>>(it->second);
+    if (!dictionary->constraint)
+        return std::nullopt;
+    return std::pair{dictionary->constraint->key_type, dictionary->constraint->value_type};
 }
 
 void execute_cast(std::vector<Value> &stack, const std::string &target)
@@ -495,7 +548,7 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
         }
         else if (operand.is_decimal())
         {
-            stack.push_back(Value::entier(static_cast<std::int64_t>(operand.as_decimal())));
+            stack.push_back(checked_integer(numeric::to_integer(operand.as_decimal())));
         }
         else if (operand.is_symbole())
         {
@@ -503,7 +556,13 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
         }
         else if (operand.is_texte())
         {
-            try { stack.push_back(Value::entier(std::stoll(operand.as_texte()))); }
+            try {
+                std::size_t consumed = 0;
+                const auto value = std::stoll(operand.as_texte(), &consumed);
+                if (consumed != operand.as_texte().size())
+                    throw std::invalid_argument("caractères restants");
+                stack.push_back(Value::entier(value));
+            }
             catch (...) { throw VmRuntimeError("VM: conversion vers Entier impossible pour une valeur de type Texte"); }
         }
         else
@@ -525,7 +584,13 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
         }
         else if (operand.is_texte())
         {
-            try { stack.push_back(Value::decimal(std::stod(operand.as_texte()))); }
+            try {
+                std::size_t consumed = 0;
+                const auto value = std::stod(operand.as_texte(), &consumed);
+                if (consumed != operand.as_texte().size())
+                    throw std::invalid_argument("caractères restants");
+                stack.push_back(Value::decimal(value));
+            }
             catch (...) { throw VmRuntimeError("VM: conversion vers Decimal impossible pour une valeur de type Texte"); }
         }
         else
@@ -565,7 +630,8 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
         else if (operand.is_entier())
         {
             const std::int64_t code_point = operand.as_entier();
-            if (code_point < 0 || code_point > 0x10FFFF)
+            if (code_point < 0 || code_point > 0x10FFFF ||
+                (code_point >= 0xD800 && code_point <= 0xDFFF))
             {
                 throw VmRuntimeError("VM: conversion vers Symbole impossible: le point de code Unicode est invalide");
             }
@@ -617,7 +683,7 @@ void execute_type_assertion(std::vector<Value> &stack,
     if (!matches_type_name(stack.back(), type_name))
     {
         throw VmRuntimeError("VM: valeur de type " + stack.back().type_name() +
-                             " incompatible avec " + type_name);
+                             " incompatible avec " + display_runtime_type(type_name));
     }
     runtime.annotate_value(stack.back(), type_name, {});
 }
@@ -629,7 +695,7 @@ void execute_add(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() + right.as_entier()));
+        stack.push_back(checked_integer(numeric::add(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -655,7 +721,7 @@ void execute_subtract(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() - right.as_entier()));
+        stack.push_back(checked_integer(numeric::subtract(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -675,7 +741,7 @@ void execute_multiply(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() * right.as_entier()));
+        stack.push_back(checked_integer(numeric::multiply(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -699,7 +765,7 @@ void execute_divide(std::vector<Value> &stack)
         {
             throw VmRuntimeError("VM: division par zero");
         }
-        stack.push_back(Value::entier(left.as_entier() / right.as_entier()));
+        stack.push_back(checked_integer(numeric::divide(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -729,7 +795,7 @@ void execute_modulo(std::vector<Value> &stack)
     {
         throw VmRuntimeError("VM: modulo par zero");
     }
-    stack.push_back(Value::entier(left.as_entier() % right.as_entier()));
+    stack.push_back(checked_integer(numeric::remainder(left.as_entier(), right.as_entier())));
 }
 
 void execute_negate(std::vector<Value> &stack)
@@ -738,7 +804,7 @@ void execute_negate(std::vector<Value> &stack)
 
     if (operand.is_entier())
     {
-        stack.push_back(Value::entier(-operand.as_entier()));
+        stack.push_back(checked_integer(numeric::negate(operand.as_entier())));
         return;
     }
 
@@ -805,7 +871,7 @@ void execute_list(std::vector<Value> &stack, const std::size_t length)
     const std::size_t start = stack.size() - length;
     for (std::size_t i = start; i < stack.size(); ++i)
     {
-        data->elements.push_back(stack[i]);
+        data->elements.push_back(std::move(stack[i]));
     }
 
     stack.resize(start);
@@ -826,11 +892,41 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
     const std::size_t start = stack.size() - value_count;
     for (std::size_t i = start; i < stack.size(); i += 2)
     {
-        data->entries.emplace_back(stack[i], stack[i + 1]);
+        data->entries.emplace_back(std::move(stack[i]), std::move(stack[i + 1]));
     }
 
     stack.resize(start);
     stack.push_back(Value::dictionnaire(std::move(data)));
+}
+
+void execute_iteration_snapshot(std::vector<Value> &stack)
+{
+    const Value iterable = pop_value(stack);
+    auto snapshot = std::make_shared<ListeData>();
+    // Match the tree walker: membership is fixed before the first iteration.
+    if (iterable.is_liste())
+        snapshot->elements = iterable.as_liste()->elements;
+    else if (iterable.is_liste_fixe())
+        snapshot->elements = iterable.as_liste_fixe()->elements;
+    else if (iterable.is_ensemble())
+        snapshot->elements = iterable.as_ensemble()->elements;
+    else if (iterable.is_texte())
+    {
+        const auto &text = iterable.as_texte();
+        std::size_t offset = 0;
+        while (offset < text.size())
+        {
+            char32_t character = 0;
+            const auto next = utf8::decode_one(text, offset, character);
+            if (!next)
+                throw VmRuntimeError("VM: texte UTF-8 invalide");
+            snapshot->elements.push_back(Value::symbole(character));
+            offset = *next;
+        }
+    }
+    else
+        throw VmRuntimeError("VM: cette valeur n'est pas iterable");
+    stack.push_back(Value::liste(std::move(snapshot)));
 }
 
 void execute_sequence_length(std::vector<Value> &stack)
@@ -1274,14 +1370,38 @@ Value make_bound_member(Value receiver,
     return Value::fonction(std::move(function));
 }
 
+struct LocalSlot
+{
+    Value value = Value::rien();
+    std::shared_ptr<Value> cell;
+
+    Value &get() { return cell ? *cell : value; }
+
+    std::shared_ptr<Value> capture()
+    {
+        // Only escaping locals need stable, shared storage. All readers and
+        // writers use the same cell after its first capture.
+        if (!cell)
+            cell = std::make_shared<Value>(std::move(value));
+        return cell;
+    }
+};
+
 struct CallFrame
 {
     const FunctionBytecode *function = nullptr;
     std::size_t ip = 0;
     std::size_t stack_base = 0;
-    std::vector<std::shared_ptr<Value>> locals;
+    std::vector<LocalSlot> locals;
     std::vector<std::shared_ptr<Value>> captures;
     SourceLocation call_site {};
+
+    std::shared_ptr<Value> capture(bool from_capture, std::size_t index)
+    {
+        if (index >= (from_capture ? captures.size() : locals.size()))
+            throw VmRuntimeError("VM: source de capture invalide");
+        return from_capture ? captures[index] : locals[index].capture();
+    }
 };
 
 struct VmClosureBody final : RuntimeFunctionBody
@@ -1449,7 +1569,7 @@ Value instantiate_vm_class(const ModuleBytecode &module,
         const Value value = value_it == assigned.end() ? Value::rien() : value_it->second;
         if (!field->type.empty() && !matches_type_name(value, field->type))
         {
-            throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + field->type);
+            throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
         }
         object->fields[field->name] = value;
     }
@@ -1481,16 +1601,12 @@ CallFrame make_call_frame(const ModuleBytecode &module,
     CallFrame frame;
     frame.function = &function;
     frame.stack_base = stack_base;
-    frame.locals.reserve(function.local_slot_count);
-    for (std::size_t i = 0; i < function.local_slot_count; ++i)
-    {
-        frame.locals.push_back(std::make_shared<Value>(Value::rien()));
-    }
+    frame.locals.resize(function.local_slot_count);
     frame.captures = std::move(captures);
     frame.call_site = call_site;
     for (std::size_t i = 0; i < args.size(); ++i)
     {
-        *frame.locals[i] = args[i];
+        frame.locals[i].get() = args[i];
     }
     return frame;
 }
@@ -1538,6 +1654,7 @@ struct VmExecutionState
     std::vector<Value> &globals;
     std::vector<bool> &global_defined;
     std::vector<bool> &initialized_functions;
+    VmRuntimeServices runtime_services;
 };
 
 Value run_frames(VmExecutionState &execution,
@@ -1554,23 +1671,7 @@ Value run_frames(VmExecutionState &execution,
     auto &initialized_functions = execution.initialized_functions;
     std::vector<Value> stack;
     std::vector<CallFrame> frames;
-    VmRuntimeServices runtime_services;
-    runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {
-        const auto function = callee.as_fonction();
-        const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
-        if (body == nullptr || args.arguments == nullptr)
-        {
-            throw VmRuntimeError("VM: fermeture bytecode invalide");
-        }
-        std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                *args.arguments);
-        return run_frames(execution,
-                          body->function_index,
-                          std::move(values),
-                          body->captures,
-                          {static_cast<std::size_t>(args.site.line),
-                           static_cast<std::size_t>(args.site.column)});
-    });
+    auto &runtime_services = execution.runtime_services;
     frames.push_back(make_call_frame(module,
                                      entry_function_index,
                                      entry_arguments,
@@ -1734,7 +1835,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index local invalide");
             }
-            stack.push_back(*locals[index]);
+            stack.push_back(locals[index].get());
             break;
         }
         case Opcode::SET_LOCAL:
@@ -1744,7 +1845,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index local invalide");
             }
-            *locals[index] = pop_value(stack);
+            locals[index].get() = pop_value(stack);
             break;
         }
         case Opcode::GET_CAPTURE:
@@ -1782,12 +1883,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 const bool from_capture = read_byte(chunk, ip) != 0;
                 const std::uint8_t source_index = read_byte(chunk, ip);
-                const auto &source = from_capture ? frame.captures : frame.locals;
-                if (source_index >= source.size())
-                {
-                    throw VmRuntimeError("VM: source de capture invalide");
-                }
-                body->captures.push_back(source[source_index]);
+                body->captures.push_back(frame.capture(from_capture, source_index));
             }
             auto closure = std::make_shared<LumiereFunction>();
             closure->name = module.functions[function_index].name;
@@ -1811,6 +1907,7 @@ Value run_frames(VmExecutionState &execution,
             const Value parent_value = descriptor.parent.empty() ? Value::rien() : pop_value(stack);
             auto klass = std::make_shared<LumiereClass>();
             klass->name = descriptor.name;
+            klass->type_identity = descriptor.type_identity;
             auto body = std::make_shared<VmClassBody>();
             body->descriptor_index = descriptor_index;
             for (const VmMethodDescriptor &method : descriptor.methods)
@@ -1818,12 +1915,7 @@ Value run_frames(VmExecutionState &execution,
                 auto &captures = body->method_captures[method.function_index];
                 for (const VmMethodDescriptor::CaptureSource &source : method.capture_sources)
                 {
-                    const auto &cells = source.from_capture ? frame.captures : frame.locals;
-                    if (source.index >= cells.size())
-                    {
-                        throw VmRuntimeError("VM: source de capture de methode invalide");
-                    }
-                    captures.push_back(cells[source.index]);
+                    captures.push_back(frame.capture(source.from_capture, source.index));
                 }
             }
             klass->body = std::move(body);
@@ -1849,10 +1941,9 @@ Value run_frames(VmExecutionState &execution,
                          interface_name.size() - 8,
                          8,
                          "::Erreur") == 0);
-                klass->interfaces[
-                    error_marker ? "Erreur"
-                                 : interface_name] =
-                    interface_values[i].as_interface();
+                const auto interface = interface_values[i].as_interface();
+                klass->interfaces[error_marker ? "Erreur" :
+                    (interface->type_identity.empty() ? interface_name : interface->type_identity)] = interface;
             }
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
@@ -1881,7 +1972,7 @@ Value run_frames(VmExecutionState &execution,
                 const auto interface_body = std::dynamic_pointer_cast<VmInterfaceBody>(interface->body);
                 if (interface_body == nullptr || interface_body->descriptor_index >= module.interfaces.size())
                 {
-                    throw VmRuntimeError("VM: interface non compatible avec le backend: " + interface_name);
+                    throw VmRuntimeError("VM: interface non compatible avec le backend: " + interface->name);
                 }
                 for (const VmInterfaceMethodDescriptor &required :
                      module.interfaces[interface_body->descriptor_index].methods)
@@ -1890,18 +1981,18 @@ Value run_frames(VmExecutionState &execution,
                     if (implemented == nullptr)
                     {
                         throw VmRuntimeError("VM: la classe " + descriptor.name +
-                                             " ne realise pas la methode requise " + interface_name + "." + required.name);
+                                             " ne realise pas la methode requise " + interface->name + "." + required.name);
                     }
                     if (implemented->parameter_types != required.parameter_types ||
                         implemented->return_type != required.return_type)
                     {
                         throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
-                                             " ne respecte pas la signature requise par l'interface " + interface_name);
+                                             " ne respecte pas la signature requise par l'interface " + interface->name);
                     }
                     if (implemented->is_private)
                     {
                         throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
-                                             " ne peut pas etre privee car elle realise l'interface " + interface_name);
+                                             " ne peut pas etre privee car elle realise l'interface " + interface->name);
                     }
                 }
             }
@@ -1917,6 +2008,7 @@ Value run_frames(VmExecutionState &execution,
             }
             auto interface = std::make_shared<LumiereInterface>();
             interface->name = module.interfaces[descriptor_index].name;
+            interface->type_identity = module.interfaces[descriptor_index].type_identity;
             auto body = std::make_shared<VmInterfaceBody>();
             body->descriptor_index = descriptor_index;
             interface->body = std::move(body);
@@ -2028,12 +2120,12 @@ Value run_frames(VmExecutionState &execution,
             }
 
             const std::size_t callee_index = stack.size() - static_cast<std::size_t>(arity) - 1;
-            const Value callee = stack[callee_index];
+            const Value callee = std::move(stack[callee_index]);
             std::vector<RuntimeArgument> call_args;
             call_args.reserve(arity);
             for (std::size_t i = callee_index + 1; i < stack.size(); ++i)
             {
-                call_args.push_back({argument_names[i - callee_index - 1], stack[i]});
+                call_args.push_back({argument_names[i - callee_index - 1], std::move(stack[i])});
             }
 
             stack.resize(callee_index);
@@ -2106,7 +2198,7 @@ Value run_frames(VmExecutionState &execution,
             call_args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                call_args.push_back({argument_names[i], stack[args_start + i]});
+                call_args.push_back({argument_names[i], std::move(stack[args_start + i])});
             }
             stack.resize(args_start);
 
@@ -2241,12 +2333,12 @@ Value run_frames(VmExecutionState &execution,
             }
 
             const std::size_t receiver_index = stack.size() - arity - 1;
-            const Value receiver = stack[receiver_index];
+            const Value receiver = std::move(stack[receiver_index]);
             std::vector<RuntimeArgument> args;
             args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                args.push_back({argument_names[i], stack[receiver_index + 1 + i]});
+                args.push_back({argument_names[i], std::move(stack[receiver_index + 1 + i])});
             }
             stack.resize(receiver_index);
 
@@ -2255,6 +2347,11 @@ Value run_frames(VmExecutionState &execution,
                 const auto field = receiver.as_objet()->fields.find(module.members[member_index]);
                 if (field != receiver.as_objet()->fields.end())
                 {
+                    if (field->second.is_classe())
+                    {
+                        stack.push_back(instantiate_vm_class(module, field->second.as_classe(), args));
+                        break;
+                    }
                     if (!field->second.is_fonction())
                     {
                         throw VmRuntimeError("VM: le membre '" + module.members[member_index] + "' n'est pas appelable");
@@ -2293,8 +2390,8 @@ Value run_frames(VmExecutionState &execution,
                 }
                 const bool private_access = !frame.locals.empty() &&
                                             frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0]->is_objet() &&
-                                            frame.locals[0]->as_objet() == receiver.as_objet();
+                                            frame.locals[0].get().is_objet() &&
+                                            frame.locals[0].get().as_objet() == receiver.as_objet();
                 if (method->is_private && !private_access)
                 {
                     throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
@@ -2354,8 +2451,8 @@ Value run_frames(VmExecutionState &execution,
                                                                         module.members[member_index]);
                     const bool private_access = !frame.locals.empty() &&
                                                 frame.function->name.find('.') != std::string::npos &&
-                                                frame.locals[0]->is_objet() &&
-                                                frame.locals[0]->as_objet() == receiver.as_objet();
+                                                frame.locals[0].get().is_objet() &&
+                                                frame.locals[0].get().as_objet() == receiver.as_objet();
                     if (descriptor != nullptr && descriptor->is_private && !private_access)
                     {
                         throw VmRuntimeError("VM: acces interdit au champ prive '" + descriptor->name + "'");
@@ -2374,8 +2471,8 @@ Value run_frames(VmExecutionState &execution,
                 }
                 const bool private_access = !frame.locals.empty() &&
                                             frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0]->is_objet() &&
-                                            frame.locals[0]->as_objet() == receiver.as_objet();
+                                            frame.locals[0].get().is_objet() &&
+                                            frame.locals[0].get().as_objet() == receiver.as_objet();
                 if (method->is_private && !private_access)
                 {
                     throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
@@ -2421,8 +2518,8 @@ Value run_frames(VmExecutionState &execution,
             }
             const bool private_access = !frame.locals.empty() &&
                                         frame.function->name.find('.') != std::string::npos &&
-                                        frame.locals[0]->is_objet() &&
-                                        frame.locals[0]->as_objet() == receiver.as_objet();
+                                        frame.locals[0].get().is_objet() &&
+                                        frame.locals[0].get().as_objet() == receiver.as_objet();
             if (field->is_private && !private_access)
             {
                 throw VmRuntimeError("VM: affectation interdite au champ prive '" + field->name + "'");
@@ -2433,7 +2530,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (!field->type.empty() && !matches_type_name(value, field->type))
             {
-                throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + field->type);
+                throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
             }
             receiver.as_objet()->fields[field->name] = value;
             stack.push_back(value);
@@ -2444,6 +2541,9 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::DICTIONARY:
             execute_dictionary(stack, read_byte(chunk, ip));
+            break;
+        case Opcode::ITERATION_SNAPSHOT:
+            execute_iteration_snapshot(stack);
             break;
         case Opcode::SEQUENCE_LENGTH:
             execute_sequence_length(stack);
@@ -2588,12 +2688,15 @@ Value run_frames(VmExecutionState &execution,
         }
         case Opcode::RETURN:
         {
-            Value result = stack.size() > frame.stack_base ? stack.back() : Value::rien();
-            result = result.with_trace_frame(TraceFrame{
-                frame.function->name,
-                frame.function->source_path,
-                static_cast<std::uint32_t>(frame.call_site.line),
-                static_cast<std::uint32_t>(frame.call_site.column)});
+            Value result = stack.size() > frame.stack_base ? std::move(stack.back()) : Value::rien();
+            if (result.is_resultat() && !result.as_resultat()->success)
+            {
+                result = result.with_trace_frame(TraceFrame{
+                    frame.function->name,
+                    frame.function->source_path,
+                    static_cast<std::uint32_t>(frame.call_site.line),
+                    static_cast<std::uint32_t>(frame.call_site.column)});
+            }
             stack.resize(frame.stack_base);
             frames.pop_back();
             if (frames.empty())
@@ -2674,7 +2777,19 @@ Value VM::run(const ModuleBytecode &module)
     std::vector<bool> global_defined(module.globals.size(), false);
     std::vector<bool> initialized_functions(module.functions.size(), false);
     VmExecutionState execution{
-        module, natives, function_indices, globals, global_defined, initialized_functions};
+        module, natives, function_indices, globals, global_defined, initialized_functions, {}};
+    // Initializers, entrypoint, and native callback re-entry share contracts and
+    // bound native methods for the entire execution, not just one frame stack.
+    execution.runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {
+        const auto function = callee.as_fonction();
+        const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+        if (body == nullptr || args.arguments == nullptr || body->function_index >= module.functions.size())
+            throw VmRuntimeError("VM: fermeture bytecode invalide");
+        auto values = normalize_closure_arguments(module.functions[body->function_index], *args.arguments);
+        return run_frames(execution, body->function_index, std::move(values), body->captures,
+                          {static_cast<std::size_t>(args.site.line),
+                           static_cast<std::size_t>(args.site.column)});
+    });
     for (std::size_t i = 0; i < module.globals.size(); ++i)
     {
         const std::string &name = module.globals[i];

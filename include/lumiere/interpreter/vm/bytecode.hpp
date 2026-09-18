@@ -62,6 +62,7 @@ enum class Opcode : std::uint8_t
     NAMESPACE,
     LIST,
     DICTIONARY,
+    ITERATION_SNAPSHOT,
     SEQUENCE_LENGTH,
     INDEX_GET,
     INDEX_SET,
@@ -169,6 +170,7 @@ struct VmMethodDescriptor
 struct VmClassDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::string parent;
     std::vector<std::string> interfaces;
     std::vector<VmFieldDescriptor> fields;
@@ -185,6 +187,7 @@ struct VmInterfaceMethodDescriptor
 struct VmInterfaceDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::vector<VmInterfaceMethodDescriptor> methods;
 };
 

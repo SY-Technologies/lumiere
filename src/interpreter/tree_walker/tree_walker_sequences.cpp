@@ -128,9 +128,9 @@ namespace lumiere
                 Value result = Value::liste_fixe(std::move(fixed));
 
                 std::string element_type = "Universel";
-                if (const auto it = walker.m_list_constraints.find(list.get()); it != walker.m_list_constraints.end())
+                if (list->constraint)
                 {
-                    element_type = it->second.element_type;
+                    element_type = list->constraint->element_type;
                 }
 
                 walker.register_value_annotation(
@@ -167,11 +167,11 @@ namespace lumiere
                 auto dynamic = std::make_shared<ListeData>();
                 dynamic->elements = list->elements;
                 Value result = Value::liste(std::move(dynamic));
-                if (const auto it = walker.m_fixed_list_constraints.find(list.get()); it != walker.m_fixed_list_constraints.end())
+                if (list->constraint)
                 {
                     walker.register_value_annotation(
                         result,
-                        Token(TokenType::IDENT, "Liste[" + it->second.element_type + "]", call_site.line, call_site.column));
+                        Token(TokenType::IDENT, "Liste[" + list->constraint->element_type + "]", call_site.line, call_site.column));
                 }
                 return result; });
         }
@@ -223,9 +223,9 @@ namespace lumiere
                 require_positional_args(args, 0, 0, "Dictionnaire.cles", call_site);
                 auto keys = std::make_shared<ListeData>();
                 std::string key_type = "Universel";
-                if (const auto it = walker.m_dict_constraints.find(dict.get()); it != walker.m_dict_constraints.end())
+                if (dict->constraint)
                 {
-                    key_type = it->second.key_type;
+                    key_type = dict->constraint->key_type;
                 }
                 for (const auto &entry : dict->entries)
                 {
@@ -242,9 +242,9 @@ namespace lumiere
                 require_positional_args(args, 0, 0, "Dictionnaire.valeurs", call_site);
                 auto values = std::make_shared<ListeData>();
                 std::string value_type = "Universel";
-                if (const auto it = walker.m_dict_constraints.find(dict.get()); it != walker.m_dict_constraints.end())
+                if (dict->constraint)
                 {
-                    value_type = it->second.value_type;
+                    value_type = dict->constraint->value_type;
                 }
                 for (const auto &entry : dict->entries)
                 {
@@ -262,10 +262,10 @@ namespace lumiere
                 auto pairs = std::make_shared<ListeData>();
                 std::string key_type = "Universel";
                 std::string value_type = "Universel";
-                if (const auto it = walker.m_dict_constraints.find(dict.get()); it != walker.m_dict_constraints.end())
+                if (dict->constraint)
                 {
-                    key_type = it->second.key_type;
-                    value_type = it->second.value_type;
+                    key_type = dict->constraint->key_type;
+                    value_type = dict->constraint->value_type;
                 }
                 const std::string pair_element_type = key_type == value_type ? key_type : "Universel";
 

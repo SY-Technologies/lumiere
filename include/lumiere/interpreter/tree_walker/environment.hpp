@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lumiere
 {
@@ -124,7 +125,129 @@ public:
 
     Environment *parent() const { return m_parent; }
 
+    void set_source_path(std::string path)
+    {
+        m_source_path = std::make_unique<std::string>(std::move(path));
+    }
+
+    const std::string &source_path() const
+    {
+        if (m_source_path)
+            return *m_source_path;
+        if (m_parent)
+            return m_parent->source_path();
+        static const std::string empty;
+        return empty;
+    }
+
+    void set_source_identity(std::string identity)
+    {
+        m_source_identity = std::make_unique<std::string>(std::move(identity));
+    }
+
+    const std::string &source_identity() const
+    {
+        if (m_source_identity)
+            return *m_source_identity;
+        if (m_parent)
+            return m_parent->source_identity();
+        return source_path();
+    }
+
+    void define_type_alias(const std::string &name, TypeExpr target)
+    {
+        if (!m_type_aliases)
+            m_type_aliases = std::make_unique<AliasTable>();
+        m_type_aliases->insert_or_assign(name, std::move(target));
+    }
+
+    const TypeExpr *find_type_alias(const std::string &name) const
+    {
+        if (m_type_aliases)
+        {
+            const auto alias = m_type_aliases->find(name);
+            if (alias != m_type_aliases->end())
+                return &alias->second;
+        }
+        return m_parent ? m_parent->find_type_alias(name) : nullptr;
+    }
+
+    Value find_nominal_value(const std::string &identity) const
+    {
+        for (const Environment *scope = this; scope; scope = scope->m_parent)
+        {
+            for (const auto &[name, binding] : scope->m_values)
+            {
+                static_cast<void>(name);
+                const Value &value = binding.value;
+                if (value.is_classe() && value.as_classe()->type_identity == identity)
+                    return value;
+                if (value.is_interface() && value.as_interface()->type_identity == identity)
+                    return value;
+                if (!value.is_objet() || value.as_objet()->klass != nullptr)
+                    continue;
+                for (const auto &[member_name, member] : value.as_objet()->fields)
+                {
+                    static_cast<void>(member_name);
+                    if (member.is_classe() && member.as_classe()->type_identity == identity)
+                        return member;
+                    if (member.is_interface() && member.as_interface()->type_identity == identity)
+                        return member;
+                }
+            }
+        }
+        return Value::rien();
+    }
+
+    TypeExpr resolve_type_aliases(const TypeExpr &type,
+                                 std::unordered_set<const TypeExpr *> resolving = {},
+                                 bool resolve_nominal = true) const
+    {
+        if (type.kind == TypeExprKind::NAMED)
+        {
+            for (const Environment *scope = this; scope; scope = scope->m_parent)
+            {
+                if (const auto value = scope->m_values.find(type.name);
+                    resolve_nominal && value != scope->m_values.end() &&
+                    (value->second.value.is_classe() || value->second.value.is_interface()))
+                {
+                    const auto &type_identity = value->second.value.is_classe()
+                        ? value->second.value.as_classe()->type_identity
+                        : value->second.value.as_interface()->type_identity;
+                    if (!type_identity.empty())
+                    {
+                        Token identity = type.source;
+                        identity.lexeme = type_identity;
+                        return TypeExpr::named(identity);
+                    }
+                }
+                if (!scope->m_type_aliases)
+                    continue;
+                const auto alias = scope->m_type_aliases->find(type.name);
+                if (alias == scope->m_type_aliases->end())
+                    continue;
+                if (!resolve_nominal && alias->second.kind == TypeExprKind::NAMED &&
+                    alias->second.name.find('@') != std::string::npos)
+                    return type;
+                if (!resolving.insert(&alias->second).second)
+                    throw std::invalid_argument("cycle d'alias de type impliquant '" + type.name + "'");
+                // Resolve dependencies where the alias was defined, not where
+                // it was used: an inner scope may shadow one of those names.
+                return scope->resolve_type_aliases(alias->second, std::move(resolving), resolve_nominal);
+            }
+            return type;
+        }
+        TypeExpr resolved = type;
+        for (TypeExpr &child : resolved.children)
+            child = resolve_type_aliases(child, resolving, resolve_nominal);
+        return resolved;
+    }
+
 private:
+    using AliasTable = std::unordered_map<std::string, TypeExpr>;
+    std::unique_ptr<AliasTable> m_type_aliases;
+    std::unique_ptr<std::string> m_source_path;
+    std::unique_ptr<std::string> m_source_identity;
     std::shared_ptr<Environment> m_parent_owner;
     Environment                          *m_parent = nullptr;
     std::unordered_map<std::string, Binding> m_values;

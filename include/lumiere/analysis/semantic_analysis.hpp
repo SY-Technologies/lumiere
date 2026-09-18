@@ -34,6 +34,8 @@ struct SemanticModuleExports
     {
         std::vector<std::string> parameter_names;
         std::vector<TypeExpr> parameter_types;
+        // Constructors use this instead of parameter_types to retain private aliases.
+        std::vector<SemanticTypeRef> resolved_parameter_types;
         std::vector<bool> optional_parameters;
         TypeExpr return_type;
         bool has_explicit_return_type = false;
@@ -41,6 +43,7 @@ struct SemanticModuleExports
 
     std::unordered_map<std::string, SemanticTypeKind> types;
     std::unordered_map<std::string, TypeExpr> aliases;
+    std::unordered_map<std::string, SemanticTypeRef> resolved_aliases;
     std::unordered_map<std::string, SemanticSymbolKind> values;
     std::unordered_map<std::string, TypeExpr> value_types;
     std::unordered_map<std::string, Callable> callables;
@@ -136,6 +139,7 @@ struct SemanticAnalysisOptions
 /**
  * Builds the public type/value manifest consumed by importing modules.
  */
-[[nodiscard]] SemanticModuleExports collect_semantic_exports(const StmtList &statements);
+[[nodiscard]] SemanticModuleExports collect_semantic_exports(const StmtList &statements,
+                                                             const SemanticModel &model);
 
 } // namespace lumiere

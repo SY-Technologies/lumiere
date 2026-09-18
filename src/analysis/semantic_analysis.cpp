@@ -272,6 +272,11 @@ private:
         }
         if (syntax.kind == TypeExprKind::NAMED)
         {
+            if (const auto alias = exports.resolved_aliases.find(syntax.name);
+                alias != exports.resolved_aliases.end())
+            {
+                return qualify_imported_type(alias->second, module_name);
+            }
             if (const auto alias = exports.aliases.find(syntax.name);
                 alias != exports.aliases.end())
             {
@@ -319,6 +324,33 @@ private:
         return resolved;
     }
 
+    SemanticTypeRef qualify_imported_type(const SemanticTypeRef &type, const std::string &module_name)
+    {
+        // Type equality is pointer-based: every imported node must be re-interned.
+        if (type->kind() == SemanticTypeKind::CLASS || type->kind() == SemanticTypeKind::INTERFACE)
+        {
+            if (type->name().find('.') != std::string_view::npos || type->name() == "Erreur")
+                return type->kind() == SemanticTypeKind::CLASS
+                           ? m_analysis.model.types.class_type(std::string(type->name()))
+                           : m_analysis.model.types.interface_type(std::string(type->name()));
+            return imported_type(module_name, std::string(type->name()), type->kind());
+        }
+        if (type->kind() == SemanticTypeKind::BUILTIN)
+            return m_analysis.model.types.builtin(std::string(type->name()));
+        if (type->kind() == SemanticTypeKind::INTEGER_ARGUMENT)
+            return m_analysis.model.types.integer_argument(type->integer());
+        if (type->kind() == SemanticTypeKind::TYPE_PARAMETER)
+            return m_analysis.model.types.type_parameter(std::string(type->name()));
+        if (type->kind() == SemanticTypeKind::BOTTOM)
+            return m_analysis.model.types.bottom();
+        std::vector<SemanticTypeRef> arguments;
+        for (const auto &argument : type->arguments())
+            arguments.push_back(qualify_imported_type(argument, module_name));
+        return type->kind() == SemanticTypeKind::UNION
+                   ? m_analysis.model.types.union_type(std::move(arguments))
+                   : m_analysis.model.types.generic(std::string(type->name()), std::move(arguments));
+    }
+
     void bind_imported_signature(const std::string &binding,
                                  const SemanticModuleExports::Callable &exported,
                                  const std::string &module_name,
@@ -329,6 +361,8 @@ private:
         signature.parameter_names = exported.parameter_names;
         signature.optional_parameters = exported.optional_parameters;
         signature.has_explicit_return_type = exported.has_explicit_return_type;
+        for (const auto &parameter : exported.resolved_parameter_types)
+            signature.parameter_types.push_back(qualify_imported_type(parameter, module_name));
         for (const TypeExpr &parameter : exported.parameter_types)
         {
             signature.parameter_types.push_back(
@@ -424,10 +458,15 @@ private:
             }
             for (const auto &[name, target] : module->second.aliases)
             {
+                const auto resolved = module->second.resolved_aliases.find(name);
                 bind_imported_type(
                     site,
                     alias + '.' + name,
-                    resolve_imported_type(target, import.module_name.lexeme, module->second),
+                    resolved == module->second.resolved_aliases.end()
+                        ? resolve_imported_type(target, import.module_name.lexeme,
+                                                module->second)
+                        : qualify_imported_type(resolved->second,
+                                                import.module_name.lexeme),
                     module_level);
             }
             for (const auto &[name, callable] : module->second.callables)
@@ -469,12 +508,17 @@ private:
             }
             if (alias != module->second.aliases.end())
             {
+                const auto resolved =
+                    module->second.resolved_aliases.find(member.name.lexeme);
                 bind_imported_type(
                     site,
                     binding,
-                    resolve_imported_type(alias->second,
-                                          import.module_name.lexeme,
-                                          module->second),
+                    resolved == module->second.resolved_aliases.end()
+                        ? resolve_imported_type(alias->second,
+                                                import.module_name.lexeme,
+                                                module->second)
+                        : qualify_imported_type(resolved->second,
+                                                import.module_name.lexeme),
                     module_level);
             }
             if (value != module->second.values.end())
@@ -1524,6 +1568,39 @@ private:
         return m_analysis.model.signature(name);
     }
 
+    const CallableSignature *text_member_signature(const std::string &name)
+    {
+        const std::string key = "Texte." + name;
+        if (const auto cached = m_builtin_member_signatures.find(key);
+            cached != m_builtin_member_signatures.end())
+            return &cached->second;
+
+        // Reuse the module contract, omitting its explicit text receiver.
+        // This works without an import and keeps methods out of module scope.
+        static const auto exports = native_module_exports("Texte");
+        if (!exports)
+            return nullptr;
+        const auto found = exports->callables.find(name);
+        if (found == exports->callables.end() || found->second.parameter_types.empty() ||
+            found->second.parameter_types.front().name != "Texte")
+            return nullptr;
+
+        for (const auto &error : exports->error_types)
+            m_error_types.insert("Texte." + error);
+        const auto &method = found->second;
+        CallableSignature signature;
+        signature.has_explicit_return_type = method.has_explicit_return_type;
+        signature.accepts_named_arguments = false;
+        for (std::size_t i = 1; i < method.parameter_types.size(); ++i)
+        {
+            signature.parameter_names.push_back(method.parameter_names[i]);
+            signature.parameter_types.push_back(resolve_imported_type(method.parameter_types[i], "Texte", *exports));
+            signature.optional_parameters.push_back(method.optional_parameters[i]);
+        }
+        signature.return_type = resolve_imported_type(method.return_type, "Texte", *exports);
+        return &m_builtin_member_signatures.emplace(key, std::move(signature)).first->second;
+    }
+
     const CallableSignature *callable_signature(const Expr &callee)
     {
         if (const auto *function = dynamic_cast<const FunctionExpr *>(&callee))
@@ -1622,7 +1699,10 @@ private:
             {
                 const std::string &member_name =
                     member->member.lexeme;
-                if (object_type->second != nullptr)
+                // A builtin type and a module can share a name (e.g. Texte).
+                // Module functions take an explicit receiver; methods do not.
+                if (object_type->second != nullptr &&
+                    object_type->second->kind() != SemanticTypeKind::BUILTIN)
                 {
                     if (const CallableSignature *signature =
                             find_named_signature(
@@ -1636,43 +1716,17 @@ private:
                 if (object_type->second != nullptr &&
                     object_type->second->kind() ==
                         SemanticTypeKind::BUILTIN &&
-                    object_type->second->name() == "Texte" &&
-                    (member_name == "en_entier" ||
-                     member_name == "en_decimal" ||
-                     member_name == "en_logique"))
+                    object_type->second->name() == "Texte")
                 {
-                    const char *success_name =
-                        member_name == "en_entier"
-                            ? "Entier"
-                            : member_name == "en_decimal"
-                                  ? "Décimal"
-                                  : "Logique";
-                    CallableSignature signature;
-                    signature.return_type =
-                        m_analysis.model.types.generic(
-                            "Résultat",
-                            {
-                                *m_analysis.model.find_type(
-                                    success_name),
-                                m_analysis.model.types.class_type(
-                                    "Texte.ErreurConversion"),
-                            });
-                    return &m_builtin_member_signatures
-                                .insert_or_assign(
-                                    member_name,
-                                    std::move(signature))
-                                .first->second;
+                    return text_member_signature(member_name);
                 }
                 const bool has_builtin_size =
                     object_type->second != nullptr &&
-                    ((object_type->second->kind() ==
-                          SemanticTypeKind::BUILTIN &&
-                      object_type->second->name() == "Texte") ||
-                     (object_type->second->kind() ==
+                    (object_type->second->kind() ==
                           SemanticTypeKind::GENERIC &&
                       (object_type->second->name() == "Liste" ||
                        object_type->second->name() == "ListeFixe" ||
-                       object_type->second->name() == "Dictionnaire")));
+                       object_type->second->name() == "Dictionnaire"));
                 if (member->member.lexeme == "taille" &&
                     has_builtin_size)
                 {
@@ -3453,6 +3507,11 @@ private:
             {
                 signature = resolve_constructor(*parent_decl);
             }
+            else if (const CallableSignature *parent = find_named_signature(klass.parent.name))
+            {
+                // Imported classes expose their constructor contract, not their AST.
+                signature = *parent;
+            }
         }
 
         for (const StmtPtr &member : klass.members)
@@ -3598,7 +3657,7 @@ SemanticAnalysis analyze_semantics(const StmtList &statements,
         .analyze(statements);
 }
 
-SemanticModuleExports collect_semantic_exports(const StmtList &statements)
+SemanticModuleExports collect_semantic_exports(const StmtList &statements, const SemanticModel &model)
 {
     SemanticModuleExports exports;
     for (const StmtPtr &statement : statements)
@@ -3661,6 +3720,16 @@ SemanticModuleExports collect_semantic_exports(const StmtList &statements)
             {
                 exports.types.emplace(klass->name.lexeme, SemanticTypeKind::CLASS);
                 exports.values.emplace(klass->name.lexeme, SemanticSymbolKind::CLASS);
+                if (const CallableSignature *signature = model.constructor(*klass))
+                {
+                    SemanticModuleExports::Callable callable;
+                    callable.parameter_names = signature->parameter_names;
+                    callable.resolved_parameter_types = signature->parameter_types;
+                    callable.optional_parameters = signature->optional_parameters;
+                    callable.return_type = TypeExpr::named(klass->name);
+                    callable.has_explicit_return_type = true;
+                    exports.callables.emplace(klass->name.lexeme, std::move(callable));
+                }
                 if (std::any_of(
                         klass->interfaces.begin(), klass->interfaces.end(),
                         [](const TypeExpr &interface) {
@@ -3685,6 +3754,13 @@ SemanticModuleExports collect_semantic_exports(const StmtList &statements)
             if (alias->is_public)
             {
                 exports.aliases.emplace(alias->name.lexeme, alias->target);
+                if (const SemanticTypeRef *resolved =
+                        model.find_type(alias->name.lexeme))
+                {
+                    exports.resolved_aliases.emplace(
+                        alias->name.lexeme,
+                        *resolved);
+                }
             }
         }
     }

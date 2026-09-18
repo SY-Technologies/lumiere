@@ -1,6 +1,8 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/parser/utf8.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <unordered_set>
@@ -10,6 +12,24 @@ namespace lumiere
 
 namespace
 {
+
+std::vector<std::size_t> character_offsets(IRuntime &runtime, const std::string &text,
+                                          const RuntimeSite &site)
+{
+    std::vector<std::size_t> offsets;
+    std::size_t offset = 0;
+    while (offset < text.size())
+    {
+        offsets.push_back(offset);
+        char32_t character;
+        const auto next = utf8::decode_one(text, offset, character);
+        if (!next)
+            runtime.raise_runtime_error(site, "texte UTF-8 invalide");
+        offset = *next;
+    }
+    offsets.push_back(text.size());
+    return offsets;
+}
 
 // These trim helpers are plain C++ string utilities. They intentionally use
 // std::isspace over raw bytes, so the whitespace rules here are C/C++ rules,
@@ -93,7 +113,10 @@ Value execute_texte_operation(IRuntime &runtime,
     if (operation == "taille")
     {
         stdlib_expect_positional(runtime, args, 0, "Texte.taille", call_site);
-        return Value::entier(static_cast<int64_t>(text.size()));
+        const auto count = utf8::character_count(text);
+        if (!count)
+            runtime.raise_runtime_error(call_site, "texte UTF-8 invalide");
+        return Value::entier(static_cast<int64_t>(*count));
     }
     if (operation == "est_vide")
     {
@@ -111,7 +134,12 @@ Value execute_texte_operation(IRuntime &runtime,
         stdlib_expect_positional(runtime, args, 1, "Texte.index_de", call_site);
         const std::string needle = stdlib_expect_text(runtime, args[0].value, "Texte.index_de", call_site);
         const std::size_t pos = text.find(needle);
-        return Value::entier(pos == std::string::npos ? -1 : static_cast<int64_t>(pos));
+        if (pos == std::string::npos)
+            return Value::entier(-1);
+        const auto count = utf8::character_count(std::string_view(text).substr(0, pos));
+        if (!count || !utf8::character_count(needle))
+            runtime.raise_runtime_error(call_site, "texte UTF-8 invalide");
+        return Value::entier(static_cast<int64_t>(*count));
     }
     if (operation == "commence_par")
     {
@@ -205,7 +233,12 @@ Value execute_texte_operation(IRuntime &runtime,
     if (operation == "inverser")
     {
         stdlib_expect_positional(runtime, args, 0, "Texte.inverser", call_site);
-        return Value::texte(std::string(text.rbegin(), text.rend()));
+        const auto offsets = character_offsets(runtime, text, call_site);
+        std::string reversed;
+        reversed.reserve(text.size());
+        for (std::size_t i = offsets.size() - 1; i > 0; --i)
+            reversed.append(text, offsets[i - 1], offsets[i] - offsets[i - 1]);
+        return Value::texte(std::move(reversed));
     }
     if (operation == "repeter")
     {
@@ -216,11 +249,14 @@ Value execute_texte_operation(IRuntime &runtime,
             runtime.raise_runtime_error(call_site, "Texte.repeter attend un nombre non negatif");
         }
         constexpr int64_t kMaxRepeatBytes = 10 * 1024 * 1024;
-        if (!text.empty() && count > kMaxRepeatBytes / static_cast<int64_t>(text.size()))
+        if (text.empty() || count == 0)
+            return Value::texte("");
+        if (count > kMaxRepeatBytes / static_cast<int64_t>(text.size()))
         {
             runtime.raise_runtime_error(call_site, "Texte.repeter: le resultat depasse la taille maximale autorisee");
         }
         std::string result;
+        result.reserve(text.size() * static_cast<std::size_t>(count));
         for (int64_t i = 0; i < count; ++i)
         {
             result += text;
@@ -232,12 +268,15 @@ Value execute_texte_operation(IRuntime &runtime,
         stdlib_expect_positional(runtime, args, 2, "Texte.inserer", call_site);
         const int64_t position = stdlib_expect_integer(runtime, args[0].value, "Texte.inserer", call_site);
         const std::string fragment = stdlib_expect_text(runtime, args[1].value, "Texte.inserer", call_site);
-        if (position < 0 || static_cast<std::size_t>(position) > text.size())
+        const auto offsets = character_offsets(runtime, text, call_site);
+        if (position < 0 || static_cast<std::size_t>(position) >= offsets.size())
         {
             runtime.raise_runtime_error(call_site, "position d'insertion hors limites");
         }
         std::string result = text;
-        result.insert(static_cast<std::size_t>(position), fragment);
+        if (!utf8::character_count(fragment))
+            runtime.raise_runtime_error(call_site, "texte UTF-8 invalide");
+        result.insert(offsets[static_cast<std::size_t>(position)], fragment);
         return Value::texte(std::move(result));
     }
     if (operation == "supprimer")
@@ -245,36 +284,44 @@ Value execute_texte_operation(IRuntime &runtime,
         stdlib_expect_positional(runtime, args, 2, "Texte.supprimer", call_site);
         const int64_t debut = stdlib_expect_integer(runtime, args[0].value, "Texte.supprimer", call_site);
         const int64_t longueur = stdlib_expect_integer(runtime, args[1].value, "Texte.supprimer", call_site);
-        if (debut < 0 || longueur < 0 || static_cast<std::size_t>(debut) >= text.size())
+        const auto offsets = character_offsets(runtime, text, call_site);
+        const auto count = offsets.size() - 1;
+        if (debut < 0 || longueur < 0 || static_cast<std::size_t>(debut) > count)
         {
             runtime.raise_runtime_error(call_site, "suppression hors limites");
         }
         std::string result = text;
-        result.erase(static_cast<std::size_t>(debut), static_cast<std::size_t>(longueur));
+        const auto begin = static_cast<std::size_t>(debut);
+        const auto length = std::min(static_cast<std::size_t>(longueur), count - begin);
+        result.erase(offsets[begin], offsets[begin + length] - offsets[begin]);
         return Value::texte(std::move(result));
     }
     if (operation == "sous_texte")
     {
         stdlib_expect_positional_range(runtime, args, 1, 2, "Texte.sous_texte", call_site);
         const int64_t debut = stdlib_expect_integer(runtime, args[0].value, "Texte.sous_texte", call_site);
-        if (debut < 0 || static_cast<std::size_t>(debut) > text.size())
+        const auto offsets = character_offsets(runtime, text, call_site);
+        const auto count = offsets.size() - 1;
+        if (debut < 0 || static_cast<std::size_t>(debut) > count)
         {
             runtime.raise_runtime_error(call_site, "indice de debut hors limites");
         }
         if (args.size() == 1)
         {
-            return Value::texte(text.substr(static_cast<std::size_t>(debut)));
+            return Value::texte(text.substr(offsets[static_cast<std::size_t>(debut)]));
         }
         const int64_t longueur = stdlib_expect_integer(runtime, args[1].value, "Texte.sous_texte", call_site);
         if (longueur < 0)
         {
             runtime.raise_runtime_error(call_site, "longueur negative interdite");
         }
-        if (static_cast<std::size_t>(debut) + static_cast<std::size_t>(longueur) > text.size())
+        if (static_cast<std::size_t>(longueur) > count - static_cast<std::size_t>(debut))
         {
             runtime.raise_runtime_error(call_site, "sous_texte: la longueur depasse la taille du texte");
         }
-        return Value::texte(text.substr(static_cast<std::size_t>(debut), static_cast<std::size_t>(longueur)));
+        const auto begin = static_cast<std::size_t>(debut);
+        const auto end = begin + static_cast<std::size_t>(longueur);
+        return Value::texte(text.substr(offsets[begin], offsets[end] - offsets[begin]));
     }
     if (operation == "en_entier")
     {

@@ -71,9 +71,11 @@ CommandResult run_cli(const std::string &args,
                       const std::filesystem::path &working_dir,
                       const std::string &stdin_text = {})
 {
-    const std::filesystem::path stdout_path = working_dir / "stdout.txt";
-    const std::filesystem::path stderr_path = working_dir / "stderr.txt";
-    const std::filesystem::path stdin_path = working_dir / "stdin.txt";
+    // Repository examples share a directory when CTest runs tests in parallel.
+    const std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    const std::filesystem::path stdout_path = working_dir / (test_name + "_stdout.txt");
+    const std::filesystem::path stderr_path = working_dir / (test_name + "_stderr.txt");
+    const std::filesystem::path stdin_path = working_dir / (test_name + "_stdin.txt");
     if (!stdin_text.empty())
     {
         std::ofstream input(stdin_path);
@@ -99,6 +101,10 @@ CommandResult run_cli(const std::string &args,
     result.exit_code = system_code;
     result.stdout_text = read_file(stdout_path);
     result.stderr_text = read_file(stderr_path);
+    std::filesystem::remove(stdout_path);
+    std::filesystem::remove(stderr_path);
+    if (!stdin_text.empty())
+        std::filesystem::remove(stdin_path);
     return result;
 }
 
@@ -112,6 +118,59 @@ void write_source(const std::filesystem::path &path, const std::string &source)
 std::filesystem::path repo_examples_dir()
 {
     return std::filesystem::path(__FILE__).parent_path().parent_path() / "examples";
+}
+
+TEST(CliIntegration, BothBackendsTrapNumericOverflowAndInvalidCasts)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_numeric_boundaries";
+    const auto file = root / "main.lum";
+    for (const auto *expression : {
+             "9223372036854775807 + 1",
+             "(-9223372036854775807 - 1) - 1",
+             "9223372036854775807 * 2",
+             "(-9223372036854775807 - 1) / -1",
+             "-(-9223372036854775807 - 1)",
+             "Maths.non_nombre en Entier",
+             "Maths.infini en Entier",
+             "9223372036854775808.0 en Entier",
+             "Maths.plancher(Maths.non_nombre)",
+             "Maths.arrondir(9223372036854775808.0)",
+             "Maths.plafond(Maths.non_nombre)",
+             "Maths.tronquer(Maths.non_nombre)",
+             "\"12abc\" en Entier",
+             "\"1.5abc\" en Décimal",
+             "55296 en Symbole",
+             "57343 en Symbole"})
+    {
+        write_source(file, "importer Maths\nfonction principal() {\n afficher(" +
+                               std::string(expression) + ")\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + expression);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_NE(result.exit_code, 0);
+            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+        }
+    }
+}
+
+TEST(CliIntegration, BothBackendsPreserveRepresentableNumericBoundaries)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_numeric_valid";
+    const auto file = root / "main.lum";
+    write_source(file,
+                 "importer Maths\nfonction principal() {\n"
+                 " afficher((-9223372036854775807 - 1) % -1)\n"
+                 " afficher((-9223372036854775808.0) en Entier)\n"
+                 " afficher(Maths.racine_n(-8, 3))\n"
+                 " afficher(Maths.racine_n(-8, -3))\n}\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "0\n-9223372036854775808\n-2\n-0.5\n");
+    }
 }
 
 TEST(CliIntegration, ExecutesTreeWalkerProgramFromFile)
@@ -776,6 +835,41 @@ TEST(CliIntegration, ExecutesVmAnonymousFunctionsAndMutableClosures)
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
+TEST(CliIntegration, BothBackendsShareCapturedLocalsBeforeAndAfterReturn)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_shared_capture_cells";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction fabriquer() {
+    soit valeur = 10
+    soit lire = fonction() { retourne valeur }
+    valeur = 20
+    soit augmenter = fonction() {
+        valeur = valeur + 1
+        retourne valeur
+    }
+    afficher(lire())
+    augmenter()
+    afficher(valeur)
+    retourne [lire, augmenter]
+}
+fonction principal() {
+    soit actions = fabriquer()
+    afficher(actions[0]())
+    afficher(actions[1]())
+    afficher(actions[0]())
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "20\n21\n21\n22\n22\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST(CliIntegration, ExecutesVmTransitiveClosureCaptures)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_transitive_closure_test";
@@ -1127,6 +1221,91 @@ TEST(CliIntegration, RejectsVmDictionaryLookupForMissingKey)
 
     EXPECT_NE(result.exit_code, 0);
     EXPECT_NE(result.stderr_text.find("cle introuvable"), std::string::npos);
+}
+
+TEST(CliIntegration, BothBackendsUseUnicodeScalarTextPositions)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_unicode_positions";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+importer Texte
+fonction principal() {
+    soit texte = "aé中😀"
+    afficher(texte.taille())
+    afficher(Texte.taille(texte))
+    afficher(texte.index_de("😀"))
+    afficher(texte.index_de("absent"))
+    afficher(texte.inverser())
+    afficher(texte.inserer(2, "界"))
+    afficher(texte.inserer(4, "!"))
+    afficher(texte.supprimer(1, 2))
+    afficher(texte.supprimer(1, 9223372036854775807))
+    afficher(texte.sous_texte(1, 2))
+    afficher(texte.sous_texte(3))
+    afficher(texte.sous_texte(4, 0))
+    afficher("".repeter(9223372036854775807))
+    afficher("é".taille())
+    pour chaque ch dans texte { afficher(ch) }
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "4\n4\n3\n-1\n😀中éa\naé界中😀\naé中😀!\na😀\na\né中\n😀\n\n\n2\na\né\n中\n😀\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsRejectInvalidTextPositions)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_unicode_bounds";
+    const auto file = root / "main.lum";
+    for (const auto *expression : {"\"é😀\".inserer(3, \"x\")",
+                                   "\"é😀\".supprimer(-1, 1)",
+                                   "\"é😀\".sous_texte(1, 9223372036854775807)",
+                                   "\"é😀\".sous_texte(3)"})
+    {
+        write_source(file, "fonction principal() { afficher(" + std::string(expression) + ") }\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + expression);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_NE(result.exit_code, 0);
+            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsIterateASnapshotWhenListChanges)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_iteration_snapshot";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction principal() {
+    soit valeurs = [1, 2, 3]
+    pour chaque valeur dans valeurs {
+        afficher(valeur)
+        si valeur == 1 {
+            valeurs[1] = 99
+            valeurs.ajouter(4)
+        }
+    }
+    afficher(valeurs)
+    pour chaque ch dans "" { afficher("incorrect") }
+    pour chaque valeur dans [] { afficher("incorrect") }
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "1\n2\n3\n[1, 99, 3, 4]\n");
+    }
+    std::filesystem::remove_all(root);
 }
 
 TEST(CliIntegration, ExecutesVmForEachLoopsOverLists)
@@ -1571,12 +1750,28 @@ TEST(CliIntegration, ReplPreservesDefinitionsAndPrintsExpressionResults)
                                          "}\n"
                                          "ajouter(2)\n"
                                          "Succès(7)\n"
+                                         "fonction creerA() {\n"
+                                         "  classe Objet {\n"
+                                         "    fonction meme(autre: Universel) -> Logique { retourne autre est Objet }\n"
+                                         "  }\n"
+                                         "  retourne Objet()\n"
+                                         "}\n"
+                                         "fonction creerB() {\n"
+                                         "  classe Objet {\n"
+                                         "    fonction meme(autre: Universel) -> Logique { retourne autre est Objet }\n"
+                                         "  }\n"
+                                         "  retourne Objet()\n"
+                                         "}\n"
+                                         "soit a = creerA()\n"
+                                         "soit b = creerB()\n"
+                                         "a.meme(b)\n"
                                          ":quitter\n");
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_NE(result.stdout_text.find("Lumiere "), std::string::npos);
     EXPECT_NE(result.stdout_text.find("42\n"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("faux\n"), std::string::npos);
     EXPECT_EQ(result.stdout_text.find("Succès(7)\n"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("LUM-S0050"), std::string::npos);
 }
@@ -1750,6 +1945,370 @@ TEST(CliIntegration, ExecutesModuleImportsEndToEnd)
     EXPECT_NE(result.stdout_text.find("21\n42\n"), std::string::npos);
 }
 
+TEST(CliIntegration, BothBackendsPreserveImportedInterfaceIdentity)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_interface_identity";
+    const auto file = root / "main.lum";
+    const std::string module =
+        "public interface Contrat { fonction valeur() -> Entier }\n"
+        "public classe Objet réalise Contrat { fonction valeur() -> Entier { retourne 7 } }\n"
+        "public fonction accepter(valeur: Contrat) -> Contrat { retourne valeur }\n";
+    write_source(root / "PremierModule.lum", module);
+    write_source(root / "SecondModule.lum", module);
+    for (const std::string mutation : {"", "valeurs.ajouter(B.Objet())", "appels[0](B.Objet())",
+                                      "classe Invalide réalise A.Contrat {}"})
+    {
+        write_source(file,
+            "importer PremierModule comme A\nimporter SecondModule comme B\n"
+            "importer PremierModule.{Contrat comme Premier}\n"
+            "importer SecondModule.{Contrat comme Second}\ntype Alias = Premier\n"
+            "classe Locale réalise Alias { fonction valeur() -> Entier { retourne 8 } }\n"
+            "classe Enfant : Locale {}\n"
+            "classe Qualifiee réalise A.Contrat { fonction valeur() -> Entier { retourne 9 } }\n"
+            "fonction principal() {\nsoit objet = A.Objet()\n"
+            "afficher(objet est Premier)\nafficher(objet est Second)\n"
+            "afficher(objet est A.Contrat)\nafficher(Locale() est Premier)\n"
+            "afficher(Qualifiee() est Premier)\n"
+            "afficher(Enfant() est Premier)\n"
+            "soit valeurs: Liste[Premier] = []\nvaleurs.ajouter(objet)\n"
+            "soit appels = [A.accepter]\nappels[0](objet)\n" + mutation + "\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + mutation);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_EQ(result.stdout_text, "vrai\nfaux\nvrai\nvrai\nvrai\nvrai\n") << result.stderr_text;
+            EXPECT_EQ(result.stderr_text.find("Contrat@"), std::string::npos) << result.stderr_text;
+            if (mutation.empty())
+                EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+            else
+            {
+                EXPECT_NE(result.exit_code, 0);
+                EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos) << result.stderr_text;
+            }
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsImplementInterfacesThroughTypeOnlyAliases)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_interface_type_alias";
+    const auto file = root / "main.lum";
+    const std::string module =
+        "public interface Contrat { fonction valeur() -> Entier }\n"
+        "public type Alias = Contrat\n";
+    write_source(root / "Base.lum", module);
+    write_source(root / "Autre.lum", module);
+    write_source(root / "Relais.lum",
+                 "importer Base.{Alias}\npublic type ContratRelaye = Alias\n");
+    write_source(
+        file,
+        "importer Base.{Alias comme Direct}\n"
+        "importer Base comme Espace\n"
+        "importer Autre.{Alias comme AutreContrat}\n"
+        "importer Relais.{ContratRelaye}\n"
+        "classe Directe réalise Direct { fonction valeur() -> Entier { retourne 1 } }\n"
+        "classe Qualifiee réalise Espace.Alias { fonction valeur() -> Entier { retourne 2 } }\n"
+        "classe Relayee réalise ContratRelaye { fonction valeur() -> Entier { retourne 3 } }\n"
+        "fonction principal() {\n"
+        "  importer Base.{Alias comme Local}\n"
+        "  classe Locale réalise Local { fonction valeur() -> Entier { retourne 4 } }\n"
+        "  afficher(Directe() est Direct)\n"
+        "  afficher(Qualifiee() est Espace.Alias)\n"
+        "  afficher(Relayee() est ContratRelaye)\n"
+        "  afficher(Locale() est Local)\n"
+        "  afficher(Directe() est AutreContrat)\n"
+        "}\n");
+
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "vrai\nvrai\nvrai\nvrai\nfaux\n");
+        EXPECT_EQ(result.stderr_text.find("Contrat@"), std::string::npos) << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPreserveImportedClassIdentity)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_nominal_identity";
+    const auto file = root / "main.lum";
+    write_source(root / "PremierModule.lum",
+                 "public classe Objet {}\npublic type Alias = Objet\n"
+                 "public classe Boite { valeur: Objet }\n"
+                 "public fonction accepter(valeur: Objet) -> Objet { retourne valeur }\n"
+                 "public fonction creer() -> Objet { retourne Objet() }\n");
+    write_source(root / "SecondModule.lum", "public classe Objet {}\n");
+    const std::string declarations =
+        "importer PremierModule.{Objet comme Premier, Alias, creer}\n"
+        "importer SecondModule.{Objet comme Second}\nimporter PremierModule comme Espace\n"
+        "classe Enfant : Premier {}\n"
+        "fonction identite(valeur: Premier) -> Premier { retourne valeur }\n";
+    for (const std::string mutation : {"", "valeurs.ajouter(Second())",
+                                      "boite.valeur = Second()",
+                                      "soit appels = [Espace.accepter]\nappels[0](Second())"})
+    {
+        write_source(file, declarations + "fonction principal() {\n"
+                     "soit objet: Premier = identite(creer())\n"
+                     "afficher(objet est Premier)\nafficher(objet est Second)\n"
+                     "afficher(objet est Espace.Objet)\nafficher(objet est Alias)\n"
+                     "soit enfant = Enfant()\nafficher(enfant est Premier)\n"
+                     "soit boite = Espace.Boite(valeur: objet)\n"
+                     "soit valeurs: Liste[Premier] = [objet]\nvaleurs.ajouter(enfant)\n" +
+                     mutation + "\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + mutation);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_EQ(result.stdout_text, "vrai\nfaux\nvrai\nvrai\nvrai\n") << result.stderr_text;
+            EXPECT_EQ(result.stderr_text.find("Objet@"), std::string::npos) << result.stderr_text;
+            if (!mutation.empty())
+            {
+                EXPECT_NE(result.exit_code, 0);
+                EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos) << result.stderr_text;
+            }
+            else
+                EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, SemanticAnalysisPreservesTransitiveNominalOwners)
+{
+    const auto root = std::filesystem::temp_directory_path() /
+                      "lumiere_semantic_nominal_owner";
+    const auto file = root / "main.lum";
+    write_source(root / "Origine.lum", "public classe Objet {}\n");
+    write_source(root / "Relais.lum",
+                 "importer Origine.{Objet}\npublic type Alias = Objet\n");
+    write_source(root / "Autre.lum", "public classe Objet {}\n");
+    write_source(file,
+                 "importer Relais.{Alias}\n"
+                 "importer Autre.{Objet comme AutreObjet}\n"
+                 "soit valeur: Alias = AutreObjet()\n");
+
+    const auto result = run_cli("check " + shell_quote(file.string()), root);
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stderr_text.find("LUM-S0019"), std::string::npos)
+        << result.stderr_text;
+    EXPECT_NE(result.stderr_text.find("Origine.Objet"), std::string::npos)
+        << result.stderr_text;
+    EXPECT_NE(result.stderr_text.find("Autre.Objet"), std::string::npos)
+        << result.stderr_text;
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsKeepLocalClassIdentitiesScoped)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_local_nominal_identity";
+    const auto file = root / "main.lum";
+    write_source(root / "Types.lum", "public classe Objet {}\n");
+    write_source(file,
+                 "classe Objet {}\nfonction principal() {\nsoit origine = Objet()\n"
+                 "{ classe Objet {}\nsoit autre = Objet()\n"
+                 "afficher(origine est Objet)\nafficher(autre est Objet)\n}\n"
+                 "afficher(origine est Objet)\n"
+                 "{ importer Types.{Objet comme Externe}\nsoit autre = Externe()\n"
+                 "afficher(autre est Externe)\nafficher(origine est Externe)\n}\n}\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "faux\nvrai\nvrai\nvrai\nfaux\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsBindInheritedMethodsInTheirDeclaringModule)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_method_declaration_context";
+    const auto file = root / "main.lum";
+    write_source(root / "Services.lum",
+                 "type Nombre = Entier\nsoit decalage = 3\n"
+                 "public classe Service {\n"
+                 "fonction calculer(valeur: Nombre) -> Nombre { retourne valeur + decalage }\n}\n");
+    write_source(file,
+                 "importer Services.{Service}\ntype Nombre = Texte\nsoit decalage = 100\n"
+                 "classe Enfant : Service {}\nfonction principal() {\n"
+                 "soit objet = Enfant()\nsoit methode = objet.calculer\n"
+                 "afficher(objet.calculer(4))\nafficher(methode(5))\n}\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "7\n8\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsConstructSubclassesOfImportedClasses)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_imported_constructor";
+    const auto file = root / "main.lum";
+    write_source(root / "Parents.lum",
+                 "type Nombre = Entier\npublic classe Base { valeur: Nombre }\n");
+    write_source(root / "Milieu.lum",
+                 "importer Parents.{Base comme Origine}\npublic classe Base : Origine {}\n");
+    for (const auto &import : {std::string("importer Parents.{Base}"),
+                               std::string("importer Parents.{Base comme Origine}"),
+                               std::string("importer Milieu.{Base}")})
+    {
+        const std::string parent = import.find("comme") == std::string::npos ? "Base" : "Origine";
+        for (const auto *argument : {"valeur: 7", "7", "valeur: \"incorrect\"", "inconnu: 7"})
+        {
+            write_source(file, import + "\ntype Nombre = Texte\nclasse Enfant : " + parent +
+                         " {}\nclasse Petit : Enfant {}\nfonction principal() {\n"
+                         "soit objet = Petit(" + argument + ")\nafficher(objet.valeur)\n}\n");
+            for (const auto *backend : {"--vm", "--tw"})
+            {
+                SCOPED_TRACE(import + " " + backend + " " + argument);
+                const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+                if (std::string(argument) == "7" || std::string(argument) == "valeur: 7")
+                {
+                    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+                    EXPECT_EQ(result.stdout_text, "7\n");
+                }
+                else
+                {
+                    EXPECT_NE(result.exit_code, 0);
+                    EXPECT_NE(result.stderr_text.find("LUM-S"), std::string::npos) << result.stderr_text;
+                }
+            }
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPreserveImportedConstructorGenericContracts)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_imported_constructor_generics";
+    const auto file = root / "main.lum";
+    write_source(root / "Parents.lum",
+                 "type Elements = Liste[Entier | Texte]\npublic classe Base { valeurs: Elements }\n");
+    for (const auto *argument : {"[1, \"texte\"]", "[vrai]"})
+    {
+        write_source(file,
+                     "importer Parents.{Base}\nclasse Enfant : Base {}\nfonction principal() {\n"
+                     "soit objet = Enfant(valeurs: " + std::string(argument) + ")\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + argument);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            if (std::string(argument) == "[vrai]")
+            {
+                EXPECT_NE(result.exit_code, 0);
+                EXPECT_NE(result.stderr_text.find("LUM-S0019"), std::string::npos) << result.stderr_text;
+            }
+            else
+                EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsResolveImportedFunctionAliasesInTheirDefiningModule)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_function_alias_scope";
+    const auto file = root / "main.lum";
+    write_source(root / "Fonctions.lum",
+                 "public fonction identite(valeur: Nombre) -> Nombre { retourne valeur }\n"
+                 "type Nombre = Entier\n");
+    write_source(file,
+                 "importer Fonctions.{identite}\ntype Nombre = Texte\n"
+                 "fonction principal() { afficher(identite(7)) }\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "7\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsAllowAssignmentsThroughTypeAliases)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_alias_assignments";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+type Nombre = Entier
+type Nombres = Liste[Nombre]
+classe Boite {}
+type Contenant = Boite
+fonction incrementer(valeur: Nombre) -> Nombre {
+    valeur = valeur + 1
+    retourne valeur
+}
+fonction principal() {
+    soit valeur: Nombre = 1
+    valeur = incrementer(valeur)
+    soit valeurs: Nombres = [1]
+    valeurs = [valeur]
+    soit boite: Contenant = Boite()
+    boite = Boite()
+    afficher(valeurs)
+    afficher(boite est Contenant)
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "[2]\nvrai\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsImportClosedCollectionTypeAliases)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_imported_type_aliases";
+    const auto file = root / "main.lum";
+    write_source(root / "Types.lum",
+                 "type Interne = Entier\npublic type Nombres = Liste[Interne]\n");
+    write_source(root / "Relais.lum",
+                 "importer Types.{Nombres}\npublic type Exportés = Nombres\n");
+    for (const auto &[import, type] : {
+             std::pair{"importer Types.{Nombres}", "Nombres"},
+             std::pair{"importer Types.{Nombres comme Entiers}", "Entiers"},
+             std::pair{"importer Types comme t", "t.Nombres"},
+             std::pair{"importer Relais.{Exportés}", "Exportés"}})
+    {
+        for (bool local : {false, true})
+        for (bool invalid : {false, true})
+        {
+            const std::string import_line = std::string(import) + "\n";
+            write_source(file, (local ? "" : import_line) + "type Interne = Texte\nfonction principal() {\n" +
+                         (local ? import_line : "") +
+                         "soit valeurs: " + type + " = [1]\nvaleurs = [1]\nvaleurs.ajouter(2)\nafficher(valeurs)\n" +
+                         (invalid ? "valeurs.ajouter(\"incorrect\")\n" : "") + "}\n");
+            for (const auto *backend : {"--vm", "--tw"})
+            {
+                SCOPED_TRACE(std::string(backend) + " " + import);
+                SCOPED_TRACE(local ? "function-local import" : "module-level import");
+                const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+                EXPECT_EQ(result.stdout_text, "[1, 2]\n") << result.stderr_text;
+                if (invalid)
+                {
+                    EXPECT_NE(result.exit_code, 0);
+                    EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+                }
+                else
+                {
+                    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+                    EXPECT_TRUE(result.stderr_text.empty());
+                }
+            }
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 TEST(CliIntegration, PreservesErrorContractsAcrossModuleBoundaries)
 {
     const std::filesystem::path root =
@@ -1836,8 +2395,45 @@ TEST(CliIntegration, ExecutesBuiltinModulesEndToEnd)
     const CommandResult result = run_cli("--tree-walker --run " + shell_quote((root / "main.lum").string()), root);
     std::filesystem::remove_all(root);
 
-    EXPECT_EQ(result.exit_code, 0);
-    EXPECT_NE(result.stdout_text.find("vrai\nbonjour\n"), std::string::npos);
+    EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+    EXPECT_NE(result.stdout_text.find("vrai\nbonjour\n"), std::string::npos) << result.stderr_text;
+}
+
+TEST(CliIntegration, BothBackendsPreserveNativeNominalTypeIdentity)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_native_nominal_identity";
+    const auto file = root / "main.lum";
+    const auto missing = root / "absent.txt";
+    write_source(
+        file,
+        "importer Temps.{Instant comme Moment, Durée comme Intervalle, maintenant, secondes}\n"
+        "importer Temps comme T\n"
+        "importer Fichier.{ErreurFichier comme ErreurLecture, lire_texte}\n"
+        "classe Instant {}\n"
+        "fonction identite(valeur: Moment) -> Moment { retourne valeur }\n"
+        "fonction principal() {\n"
+        "  soit instant: Moment = identite(maintenant())\n"
+        "  soit intervalle: Intervalle = secondes(1)\n"
+        "  afficher(instant est Moment)\n"
+        "  afficher(instant est T.Instant)\n"
+        "  afficher(intervalle est Intervalle)\n"
+        "  afficher(Instant() est Moment)\n"
+        "  soit lecture = lire_texte(\"" + missing.string() + "\")\n"
+        "  agir selon lecture {\n"
+        "    Succès(_) -> afficher(faux)\n"
+        "    Échec(erreur) -> afficher(erreur est ErreurLecture)\n"
+        "  }\n"
+        "}\n");
+
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "vrai\nvrai\nvrai\nfaux\nvrai\n");
+        EXPECT_EQ(result.stderr_text.find("@"), std::string::npos) << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
 }
 
 TEST(CliIntegration, ImportsCycleFailsEndToEnd)
@@ -2567,6 +3163,134 @@ TEST(CliIntegration, VmBackendSupportsLazyBlockScopedImports)
     EXPECT_EQ(result.exit_code, 0);
     EXPECT_EQ(result.stdout_text, "avant\nmilieu\ninitialisation\n7\n7\n");
     EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
+}
+
+TEST(CliIntegration, BothBackendsPreserveCollectionContractsAcrossCallbacks)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_callback_contracts";
+    const auto file = root / "main.lum";
+    for (const auto *body : {
+             "soit valeurs: Liste[Entier] = [1]\n"
+             "LumiTest.groupe(\"callback\", fonction() { valeurs.ajouter(\"incorrect\") })",
+             "soit valeurs = [1]\n"
+             "LumiTest.groupe(\"callback\", fonction() { soit alias: Liste[Entier] = valeurs })\n"
+             "valeurs.ajouter(\"incorrect\")"})
+    {
+        write_source(file, "importer LumiTest\nfonction principal() {\n" + std::string(body) + "\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + body);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_NE(result.exit_code, 0);
+            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsKeepBoundMethodsFromNestedCallbacksAlive)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_callback_bound_method";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+importer LumiTest
+fonction principal() {
+    soit valeurs: Liste[Entier] = [1]
+    soit ajouter = valeurs.ajouter
+    LumiTest.groupe("exterieur", fonction() {
+        LumiTest.groupe("interieur", fonction() {
+            ajouter = valeurs.ajouter
+        })
+        ajouter(2)
+    })
+    ajouter(3)
+    afficher(valeurs)
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "[1, 2, 3]\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsProtectNestedCollectionsAndTypeAliases)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_nested_alias_contracts";
+    const auto file = root / "main.lum";
+    for (const auto *declarations : {
+             "soit valeurs = [1]\nsoit conteneur: Liste[Liste[Entier]] = [valeurs]\n",
+             "soit valeurs = [1]\nsoit conteneur: Liste[Liste[Entier]] = []\nconteneur.ajouter(valeurs)\n",
+             "soit valeurs = [1]\nsoit sortie: Résultat[Liste[Entier], Erreur] = Succès(valeurs)\nagir selon sortie { Succès(_) -> ignorer Échec(_) -> ignorer }\n",
+             "soit valeurs: Nombres = [1]\n",
+             "soit valeurs: Liste[Nombre] = [1]\n"})
+    {
+        write_source(file, "type Nombre = Entier\ntype Nombres = Liste[Nombre]\n"
+                           "fonction principal() {\n" + std::string(declarations) +
+                           "valeurs.ajouter(2)\nafficher(\"pret\")\nvaleurs.ajouter(\"incorrect\")\n}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + declarations);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_NE(result.exit_code, 0);
+            EXPECT_EQ(result.stdout_text, "pret\n");
+            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+TEST(CliIntegration, BothBackendsDiscardConstraintsWithDeadCollections)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_dead_collection_constraints";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction annoter() {
+    soit valeurs: Liste[Entier] = [1]
+}
+fonction nouvelle() -> Texte {
+    soit valeurs = []
+    valeurs.ajouter("libre")
+    retourne valeurs[0] en Texte
+}
+fonction principal() {
+    soit index = 0
+    tant que index < 1000 {
+        annoter()
+        afficher(nouvelle())
+        index = index + 1
+    }
+}
+)lum");
+    std::string expected;
+    for (int i = 0; i < 1000; ++i)
+        expected += "libre\n";
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, expected);
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsPreserveGlobalCollectionContracts)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_global_contracts";
+    const auto file = root / "main.lum";
+    write_source(file, "soit valeurs: Liste[Entier] = [1]\n"
+                       "fonction principal() { valeurs.ajouter(\"incorrect\") }\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_NE(result.exit_code, 0);
+        EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+    }
+    std::filesystem::remove_all(root);
 }
 
 TEST(CliIntegration, VmBackendSupportsNativeCallbacksIntoBytecode)

@@ -117,7 +117,7 @@ Value make_http_response_value(IRuntime &runtime,
             return make_text_dictionary_value(inner_runtime, headers, native_args.site);
         }));
     Value result = Value::objet(std::move(object));
-    runtime.annotate_value(result, "RéponseHTTP", site);
+    runtime.annotate_value(result, "LumiNet.RéponseHTTP", site);
     return result;
 }
 
@@ -174,7 +174,7 @@ Value make_http_request_value(IRuntime &runtime,
             return make_text_dictionary_value(inner_runtime, request.headers, native_args.site);
         }));
     Value result = Value::objet(std::move(object));
-    runtime.annotate_value(result, "RequêteHTTP", site);
+    runtime.annotate_value(result, "LumiNet.RequêteHTTP", site);
     return result;
 }
 
@@ -421,7 +421,7 @@ Value make_http_response_writer_value(IRuntime &runtime,
         }));
 
     Value result = Value::objet(std::move(object));
-    runtime.annotate_value(result, "RéponseServeurHTTP", site);
+    runtime.annotate_value(result, "LumiNet.RéponseServeurHTTP", site);
     return result;
 }
 

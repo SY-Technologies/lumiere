@@ -183,6 +183,13 @@ direnv allow .
 
 After that, `build`, `run`, and `tests` are available in your shell when inside the project directory.
 
+## Runtime development
+
+Runtime contracts, optimization mechanics, and the remaining engineering
+priorities are documented in [Runtime hardening](./RUNTIME_HARDENING.md).
+Reproducible performance checks live in `benchmarks/` and can be run with
+`python3 scripts/benchmark.py build_release/lumiere`.
+
 ## Releases
 
 Multi-OS release scaffolding is documented in [`docs/release-scaffolding.md`](./docs/release-scaffolding.md).
