@@ -49,7 +49,9 @@ void TreeWalker::visit(LiteralExpr &expr)
         m_result = Value::entier(numeric::parse_integer_literal(expr.token.lexeme).value_or(0));
         return;
     case TokenType::DECIMAL_LIT:
-        m_result = Value::decimal(std::stod(numeric::without_digit_separators(expr.token.lexeme)));
+        // The tokenizer refuses a literal this cannot parse, so the value is
+        // always there by the time execution reaches it.
+        m_result = Value::decimal(numeric::parse_decimal_literal(expr.token.lexeme).value_or(0.0));
         return;
     case TokenType::TEXTE_LIT:
         m_result = Value::texte(expr.token.lexeme.substr(1, expr.token.lexeme.size() - 2));

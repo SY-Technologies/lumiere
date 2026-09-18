@@ -23,9 +23,24 @@ LIR are prerequisites for a backend as much as for the interpreter.
   infinities, and values outside `[-2^63, 2^63)`. Rounding helpers check the
   rounded value before converting. Comparing against a double representation
   of `INT64_MAX` is insufficient: that representation rounds up to `2^63`.
-- Numeric text casts must consume the whole input. Trailing junk no longer
-  silently succeeds. They still use the existing C++ numeric parser; this
-  change does not define a locale-independent numeric grammar.
+- Numeric text casts must consume the whole input, leading whitespace included:
+  `" 1.5"` used to be accepted while `"1.5 "` was refused, because `std::stod`
+  skips leading blanks and then counts them as consumed. Decimal parsing is now
+  `std::from_chars`, which is locale-independent, so the language's own numbers
+  no longer depend on the environment's decimal separator.
+- A `Décimal` is printed as the shortest text that reads back as the same value.
+  Stream formatting defaults to six significant digits, so `123456789.125` came
+  out as `1.23457e+08` and `0.1 + 0.2` as `0.3`: the runtime reported a number
+  it had not computed, and printed output could not be pasted back into a
+  program. `Maths.tan(Maths.pi / 4)` now prints `0.9999999999999999`, which is
+  what it is.
+- A decimal literal whose magnitude the type cannot hold is refused, with a
+  source location, rather than rounded to zero or to an infinity — the same
+  principle as trapping integer overflow instead of wrapping. A subnormal such
+  as `5e-324` is representable and is accepted; it used to surface as
+  `erreur: stod`, a C++ exception name reaching the user.
+- `infini`, `-infini` and `non_nombre` print under the names the language gives
+  them rather than C's `inf` and `nan`.
 - `Symbole` conversions reject UTF-16 surrogate code points.
 - Text indexing, iteration, length, search positions, reversal, insertion,
   deletion, and slicing use Unicode scalar positions, not UTF-8 byte offsets.
@@ -838,11 +853,18 @@ The first runs found, and these are now fixed:
   carry the context that required the type, so they say "la variable 'f' attend
   …" rather than naming only the types, which is what the tree walker always did.
 
-Three divergences are recorded rather than closed, each as a corpus case with a
-`divergence.connue` note: whether `principal` is required at all, an assignment to
-an undeclared name that the analyzer accepts, and which token a runtime error
-points at. A recorded divergence fails the run once the engines agree, so the note
-cannot outlive the problem.
+Whether `principal` is required was the first recorded divergence, and it is now
+settled: a program has a place to start, a module does not, so the analyzer
+reports it when a file is about to be run and both engines are told the same
+thing before either starts. The corpus case that recorded the divergence failed
+the moment the engines agreed, which is what that mechanism is for.
+
+What remains recorded: which token a runtime error's caret points at, and a
+family where the analyzer is weaker than the VM's compiler — the VM compiles a
+whole module up front and rejects things `lumiere check` accepted, so it reports
+them at a different moment and in different words from the tree walker. Two
+instances are on file. In both, the divergence is a symptom of an analyzer rule
+that has not been written yet.
 
 ## Next engineering priorities
 

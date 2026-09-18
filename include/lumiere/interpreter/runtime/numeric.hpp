@@ -4,11 +4,55 @@
 #include <cstdint>
 #include <limits>
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstdio>
 #include <optional>
 #include <string>
+#include <system_error>
 
 namespace lumiere::numeric
 {
+
+/**
+ * @brief The shortest text that reads back as exactly this value.
+ *
+ * Stream formatting defaults to six significant digits, which rounds in
+ * silence: 123456789.125 came out as 1.23457e+08 and 0.1 + 0.2 as 0.3, so the
+ * language misreported its own arithmetic and a printed number could not be
+ * trusted or pasted back into a program. std::to_chars without a precision
+ * gives the shortest digit string that parses back to the same double, which is
+ * the only formatting with that property.
+ *
+ * The two values that are not numbers are named as Lumière names them. They do
+ * not round-trip -- neither is a literal -- but printing C's spelling of them in
+ * a language whose constants are 'infini' and 'non_nombre' helps no one.
+ */
+inline std::string decimal_to_text(const double value)
+{
+    if (std::isnan(value))
+    {
+        return "non_nombre";
+    }
+    if (std::isinf(value))
+    {
+        return value < 0 ? "-infini" : "infini";
+    }
+
+    // The longest shortest-round-trip form of a double is 17 significant
+    // digits with a sign, a point and an exponent: comfortably under this.
+    std::array<char, 64> buffer{};
+    const auto [end, failure] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+    if (failure == std::errc{})
+    {
+        return std::string(buffer.data(), end);
+    }
+
+    // Unreachable with a buffer this size, and the fallback still round-trips
+    // rather than inventing a value.
+    const int written = std::snprintf(buffer.data(), buffer.size(), "%.17g", value);
+    return written > 0 ? std::string(buffer.data(), static_cast<std::size_t>(written)) : std::string("0");
+}
 
 inline constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
 inline constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
@@ -98,28 +142,51 @@ inline std::optional<std::int64_t> parse_integer_literal(const std::string &text
 /**
  * @brief Parses a Décimal from text, or nothing.
  *
- * The whole text must be consumed, and the result must be finite. Every
- * arithmetic path that would reach a non-number or an infinity traps, so text
- * must not be the one door that lets them in: std::stod accepts "nan" and
- * "inf", and a value read from a file or from standard input would otherwise
- * carry them into a program that is built to exclude them.
+ * The whole text must be consumed, and the result must be representable.
+ *
+ * std::from_chars rather than std::stod, for four reasons that all bit:
+ * stod skips leading whitespace and then reports it as consumed, so " 1.5"
+ * was accepted while "1.5 " was refused; stod reads the decimal point from the
+ * C locale, which makes the language's own numbers depend on the environment;
+ * stod throws on a subnormal such as 5e-324, which is a perfectly representable
+ * Décimal; and it signals failure by throwing, which is how "erreur: stod"
+ * reached users. from_chars has none of those properties and is the exact
+ * inverse of decimal_to_text above.
+ *
+ * A magnitude the type cannot hold is refused rather than rounded to zero or to
+ * an infinity. That matches how Entier behaves -- arithmetic that leaves the
+ * range traps rather than wrapping -- and it is the same principle as printing
+ * every digit: the runtime does not quietly substitute a different number.
  */
 inline std::optional<double> parse_decimal(const std::string &text)
 {
-    try
+    std::string_view body(text);
+    // from_chars does not accept a leading '+', which callers may well pass.
+    if (!body.empty() && body.front() == '+')
     {
-        std::size_t consumed = 0;
-        const double value = std::stod(text, &consumed);
-        if (consumed != text.size() || !std::isfinite(value))
-        {
-            return std::nullopt;
-        }
-        return value;
+        body.remove_prefix(1);
     }
-    catch (const std::exception &)
+
+    double value = 0.0;
+    const auto [end, failure] =
+        std::from_chars(body.data(), body.data() + body.size(), value, std::chars_format::general);
+    if (failure != std::errc{} || end != body.data() + body.size() || !std::isfinite(value))
     {
         return std::nullopt;
     }
+    return value;
+}
+
+/**
+ * @brief Parses a Décimal literal written in source, or nothing when it cannot
+ *        be represented.
+ *
+ * Checked in the tokenizer, where the source location still exists, for the
+ * same reason as parse_integer_literal above.
+ */
+inline std::optional<double> parse_decimal_literal(const std::string &text)
+{
+    return parse_decimal(without_digit_separators(text));
 }
 
 inline std::optional<std::int64_t> to_integer(double value)

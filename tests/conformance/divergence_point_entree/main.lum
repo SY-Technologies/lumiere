@@ -1,5 +1,0 @@
-// Un programme sans 'principal'. Le tree-walker exécute le code de plus haut
-// niveau et s'arrête là ; la VM refuse de compiler faute de point d'entrée.
-// La question — 'principal' est-il obligatoire ? — est une décision de langage,
-// pas un détail d'implémentation, et elle n'est pas encore prise.
-afficher("code de plus haut niveau")

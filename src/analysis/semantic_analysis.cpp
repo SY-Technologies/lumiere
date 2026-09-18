@@ -3647,6 +3647,7 @@ private:
 
     void validate_entry_point(const StmtList &statements)
     {
+        bool found = false;
         for (const StmtPtr &statement : statements)
         {
             const auto *function =
@@ -3657,6 +3658,7 @@ private:
                 continue;
             }
 
+            found = true;
             const CallableSignature &signature =
                 ensure_signature(*function);
             if (!signature.parameter_types.empty())
@@ -3688,6 +3690,23 @@ private:
             }
             return;
         }
+
+        // Only when the file is about to be run. Both engines execute a file's
+        // top-level code, but only the VM used to insist on an entry point
+        // afterwards, so the same file ran under one engine and was refused by
+        // the other. Deciding it here means they are told the same thing at the
+        // same moment, before either of them starts.
+        if (found || !m_options.require_entry_point)
+        {
+            return;
+        }
+        m_analysis.diagnostics.push_back({
+            "LUM-S0051",
+            DiagnosticSeverity::ERROR_LEVEL,
+            "ce programme n'a pas de point d'entrée : ajoutez une fonction 'principal'",
+            m_source_path,
+            SourceRange{},
+        });
     }
 
     const CallableSignature &resolve_constructor(const ClassDeclStmt &klass)

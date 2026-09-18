@@ -1,5 +1,6 @@
 #include "lumiere/interpreter/runtime/value.hpp"
 #include "lumiere/interpreter/runtime/cycles.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 #include "lumiere/parser/utf8.hpp"
 
 #include <cmath>
@@ -389,7 +390,7 @@ std::string Value::to_string() const
         out << as_entier();
         break;
     case Type::DECIMAL:
-        out << as_decimal();
+        out << numeric::decimal_to_text(as_decimal());
         break;
     case Type::LOGIQUE:
         out << (as_logique() ? "vrai" : "faux");

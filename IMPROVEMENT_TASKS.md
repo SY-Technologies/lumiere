@@ -85,15 +85,21 @@ Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences
 - [ ] Fuzz malformed bytecode against the verifier. The verifier's guarantee —
       that anything it accepts cannot make the interpreter read out of bounds —
       is the one property here with no test behind it.
-- [ ] Decide whether `principal` is required. The tree walker runs a program
-      without one; the VM refuses to compile it. This is a language decision, not
-      an implementation detail. Recorded as
-      `tests/conformance/divergence_point_entree`.
-- [ ] Reject assignment to an undeclared name in the analyzer. `lumiere check`
-      accepts `index = 42` at top level with no declaration; the VM catches it
-      when compiling and the tree walker only on reaching it. Fixing the analyzer
-      removes both differences at once. Recorded as
-      `tests/conformance/divergence_globale_non_declaree`.
+- [x] Decide whether `principal` is required. It is: a program has a place to
+      start, a module does not. The analyzer reports LUM-S0051 when a file is
+      about to be run and has no `principal`, so both engines are told the same
+      thing before either starts. `lumiere check` on a module and `lumiere
+      tester` are unaffected. Pinned by
+      `tests/conformance/point_entree_obligatoire`.
+- [ ] Close the gap where the analyzer is weaker than the VM's compiler. The VM
+      compiles a whole module before running it and rejects things `lumiere
+      check` accepted, so it fails at a different moment and with different words
+      from the tree walker, which only fails on reaching them. Two instances are
+      recorded: assignment to an undeclared name
+      (`tests/conformance/divergence_globale_non_declaree`) and `parent` outside
+      a method (`tests/conformance/divergence_parent_hors_methode`). Both are
+      analyzer errors waiting to be written; the divergence is a symptom. Worth a
+      sweep of the VM compiler's own rejections for the rest of the family.
 - [ ] Settle which token a runtime error points at. The two engines pick
       different tokens for the same failure, so the caret can sit one character
       apart. A spot fix traded one divergence for another; this needs a stated
@@ -108,7 +114,7 @@ operator. Three of the five were found by the fuzzer rather than by hand.
 
 Acceptance: `scripts/conformance` and `scripts/fuzz` each run from one command
 and store minimal reproductions. Met, except that malformed bytecode is not yet
-fuzzed and three divergences above are recorded rather than closed.
+fuzzed and the divergences above are recorded rather than closed.
 
 ## T5 — Profile representative workloads
 

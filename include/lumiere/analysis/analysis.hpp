@@ -26,6 +26,11 @@ struct AnalysisResult
 struct AnalysisOptions
 {
     bool consume_last_expression = false;
+    // Set when the file is about to be run as a program rather than read as a
+    // module. A module has no entry point and needs none, so this is off by
+    // default: `lumiere check` on a module must not demand a 'principal' the
+    // module has no business declaring.
+    bool require_entry_point = false;
 };
 
 /**

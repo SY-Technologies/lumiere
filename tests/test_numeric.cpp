@@ -57,4 +57,42 @@ TEST(Numeric, RejectsNonfiniteAndUnrepresentableConversions)
     EXPECT_EQ(to_integer(3.9), 3);
 }
 
+// The contract decimal_to_text exists for: whatever it prints, parse_decimal
+// reads back as exactly the same double. Six-significant-digit formatting broke
+// this silently, so it is worth asserting rather than assuming.
+TEST(Numeric, DecimalTextReadsBackAsTheSameValue)
+{
+    const double values[] = {
+        0.0, -0.0, 1.0, -1.0, 0.5, 0.1, 0.1 + 0.2, 1.0 / 3.0,
+        123456789.125, 3.14159265358979323846, 2.718281828459045,
+        1e-300, 1e300, 1e10, 1.5e-5, 9007199254740993.0,
+        std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::denorm_min(),
+        std::nextafter(1.0, 2.0),
+    };
+
+    for (const double value : values)
+    {
+        const std::string text = decimal_to_text(value);
+        const std::optional<double> parsed = parse_decimal(text);
+        ASSERT_TRUE(parsed.has_value()) << text;
+        EXPECT_EQ(*parsed, value) << text;
+    }
+}
+
+TEST(Numeric, DecimalTextKeeps0Point1Plus0Point2Honest)
+{
+    // The whole point: this is not 0.3, and the runtime no longer says it is.
+    EXPECT_EQ(decimal_to_text(0.1 + 0.2), "0.30000000000000004");
+    EXPECT_EQ(decimal_to_text(123456789.125), "123456789.125");
+}
+
+TEST(Numeric, DecimalTextNamesTheNonNumbersInFrench)
+{
+    EXPECT_EQ(decimal_to_text(std::numeric_limits<double>::quiet_NaN()), "non_nombre");
+    EXPECT_EQ(decimal_to_text(std::numeric_limits<double>::infinity()), "infini");
+    EXPECT_EQ(decimal_to_text(-std::numeric_limits<double>::infinity()), "-infini");
+}
+
 } // namespace lumiere::numeric

@@ -372,6 +372,15 @@ namespace lumiere
 
         if (is_decimal)
         {
+            // Same reason as the Entier check below: reported here, where the
+            // source location still exists. Without it a literal the type
+            // cannot hold reached the conversion and surfaced as "erreur: stod".
+            if (!numeric::parse_decimal_literal(std::string(m_scanner.lexeme())))
+            {
+                return error_token(
+                    "décimal hors limites — un littéral Décimal doit tenir entre "
+                    "4.9406564584124654e-324 et 1.7976931348623157e+308 en valeur absolue");
+            }
             return make_token(TokenType::DECIMAL_LIT);
         }
 

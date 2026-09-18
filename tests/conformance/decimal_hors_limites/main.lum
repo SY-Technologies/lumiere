@@ -1,0 +1,6 @@
+// Une magnitude que le type ne peut pas contenir est refusée plutôt qu'arrondie
+// vers zéro ou vers l'infini, comme un dépassement d'Entier est piégé plutôt
+// que replié. Auparavant ce littéral ressortait en « erreur: stod ».
+fonction principal() {
+    afficher(1e400)
+}

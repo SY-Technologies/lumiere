@@ -97,13 +97,14 @@ std::string read_file_text(const std::filesystem::path &path)
 std::unique_ptr<lumiere::Program> parse_program(
     std::string source,
     std::string source_path,
-    const bool consume_last_expression = false)
+    const bool consume_last_expression = false,
+    const bool require_entry_point = false)
 {
     lumiere::AnalysisResult analysis =
         lumiere::analyze_source(
             source,
             source_path,
-            lumiere::AnalysisOptions{consume_last_expression});
+            lumiere::AnalysisOptions{consume_last_expression, require_entry_point});
     if (analysis.has_errors())
     {
         for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
@@ -788,7 +789,9 @@ int main(int argc, char *argv[])
         }
 
         const std::filesystem::path file_path = resolve_input_file(options.file_argument);
-        auto program = parse_program(read_file_text(file_path), file_path.string());
+        // A file that is only being parsed or dumped is not being run, so it is
+        // not required to be a program.
+        auto program = parse_program(read_file_text(file_path), file_path.string(), false, options.execute);
         if (program == nullptr)
         {
             return 1;

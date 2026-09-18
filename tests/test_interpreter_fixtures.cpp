@@ -3793,7 +3793,13 @@ TEST(InterpreterBuiltinModules, SupportsMathsModule)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "vrai\n7\n2.5\n4\n2\n4\n3\n4\n3\n9\n3\n32\n1\n2\n3\n1\n1\n1\nvrai\n3.14159\n180\nvrai\nvrai\nvrai\nvrai\n");
+    // tan(pi/4) is 0.9999999999999999 in double arithmetic, and pi is not
+    // 3.14159. Both used to print rounded to six significant digits, which hid
+    // what the runtime had actually computed; decimals now print the shortest
+    // text that reads back as the same value.
+    EXPECT_EQ(output,
+              "vrai\n7\n2.5\n4\n2\n4\n3\n4\n3\n9\n3\n32\n1\n2\n3\n1\n1\n"
+              "0.9999999999999999\nvrai\n3.141592653589793\n180\nvrai\nvrai\nvrai\nvrai\n");
 }
 
 TEST(InterpreterBuiltinModules, SupportsSelectiveImportFromMathsModule)
@@ -3824,7 +3830,8 @@ TEST(InterpreterBuiltinModules, PreservesMathsAliasesForCompatibility)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "6\n3\n1\n1\n1\n");
+    // tangente(pi/4) is not exactly 1; see SupportsMathsModule above.
+    EXPECT_EQ(output, "6\n3\n1\n1\n0.9999999999999999\n");
 }
 
 TEST(InterpreterBuiltinModules, RejectsInvalidMathsUsage)

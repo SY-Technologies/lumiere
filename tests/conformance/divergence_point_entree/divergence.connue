@@ -1,3 +1,0 @@
-Le tree-walker accepte un programme sans 'principal' et exécute son code de plus
-haut niveau ; la VM le rejette. Il faut trancher : soit 'principal' est exigé
-pour les deux moteurs, soit aucun ne l'exige. Voir T4 dans IMPROVEMENT_TASKS.md.

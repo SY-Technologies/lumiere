@@ -1,0 +1,11 @@
+// 'parent' employé hors d'une méthode. Deuxième cas de la même famille que
+// divergence_globale_non_declaree : l'analyseur laisse passer ce que le
+// compilateur de la VM refuse, si bien que la VM échoue à la compilation et le
+// tree-walker seulement en arrivant dessus, avec d'autres mots.
+fonction libre() {
+    parent.chose()
+}
+
+fonction principal() {
+    libre()
+}

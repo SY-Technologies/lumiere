@@ -122,6 +122,7 @@ struct SemanticAnalysis
 struct SemanticAnalysisOptions
 {
     bool consume_last_expression = false;
+    bool require_entry_point = false;
 };
 
 /**
