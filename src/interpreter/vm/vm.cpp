@@ -1,6 +1,7 @@
 #include "lumiere/interpreter/vm/vm.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
+#include "lumiere/interpreter/vm/verifier.hpp"
 #include "native_globals.hpp"
 #include "vm_error.hpp"
 #include "lumiere/interpreter/runtime/iruntime.hpp"
@@ -13,6 +14,7 @@
 #include "lumiere/interpreter/runtime/collection_constraints.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
+#include <cassert>
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -37,10 +39,11 @@ Value checked_integer(std::optional<int64_t> value)
 
 std::uint8_t read_byte(const Chunk &chunk, std::size_t &ip)
 {
-    if (ip >= chunk.code.size())
-    {
-        throw VmRuntimeError("VM: lecture hors limites du bytecode");
-    }
+    // verify_module has already proved that every operand this reads is present,
+    // so the bound is not re-tested here: it was two comparisons per instruction
+    // on the hottest path in the runtime. The assertion keeps the guarantee under
+    // test, where the Debug and sanitizer builds run the whole suite.
+    assert(ip < chunk.code.size());
     return chunk.code[ip++];
 }
 
@@ -2853,6 +2856,12 @@ void VM::execute(Program &program)
 {
     VmCompiler compiler;
     ModuleBytecode module = compiler.compile(program);
+    // Checked once here so the interpreter can read operands without checking
+    // them again on every instruction.
+    if (const auto problem = verify_module(module))
+    {
+        throw VmCompileError("VM: bytecode invalide — " + *problem);
+    }
     const Value result = run(module);
     if (result.is_resultat() && !result.as_resultat()->success)
     {

@@ -55,6 +55,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/vm/ast_to_lir.cpp
     src/interpreter/vm/bytecode.cpp
     src/interpreter/vm/disassembler.cpp
+    src/interpreter/vm/verifier.cpp
     src/interpreter/vm/compiler.cpp
     src/interpreter/vm/lir_to_bytecode.cpp
     src/interpreter/vm/native_globals.cpp
@@ -226,6 +227,7 @@ if(BUILD_TESTING)
         tests/test_interpreter_fixtures.cpp
         tests/test_cli_integration.cpp
         tests/test_vm_lir.cpp
+        tests/test_vm_verifier.cpp
         tests/test_no_legacy_exceptions.cpp
         tests/test_windows_header_compatibility.cpp
     )

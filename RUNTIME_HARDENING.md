@@ -604,6 +604,41 @@ measurements above put the achievable interpreter target near 90 ms against C's
 0.30 ms. Matching Go means compiling to native code, ahead of time or through a
 JIT, and that is a decision about what the project is, not an optimization.
 
+### A verifier, and what it bought — 2026-09-18
+
+The interpreter tested the instruction pointer against the code size on every
+byte it read, which is two or more comparisons per instruction on the hottest
+path in the runtime. Those tests are now a single pass: `verify_module` walks
+each function once before anything runs and proves every opcode known, every
+operand present, every table index in range, every jump landing on the first
+byte of an instruction, and every function ending where it cannot fall past its
+own code.
+
+Jump boundaries are a new guarantee. The interpreter only checked that a target
+was inside the chunk, so a jump into the middle of an instruction would have
+been decoded as one. That is now refused, along with unknown opcodes, truncated
+operands and indices past their table — at load, naming the function and the
+offset, rather than part-way through a run.
+
+The interpreter's memory safety now rests on that pass instead of on per-read
+tests, so it is tested directly: nine cases build modules by hand and check each
+rejection, and the reads assert their bound in the Debug and sanitizer builds,
+where the whole suite runs with the assertions live.
+
+This was worth 25.9% on the integer loop, 16.7% on function calls and 14.8% on
+Unicode traversal.
+
+**The revised target is met.** On the validation host, nine runs: CPython at
+80.94 ms and the VM at 78.50 ms on the same 1,000,000-iteration loop. The four
+changes in this round — a lazily built source location, shared text buffers, one
+type-erased handle in place of fourteen variant alternatives, and verified
+bytecode — took the loop from 138.9 ms to 78.3 ms, 44% less, each measured
+separately and each kept or reverted on its own evidence.
+
+The next lever inside the interpreter is still the object model: a trivially
+copyable value would remove the last third of the copy cost the variant used to
+charge, and the same work is what bounded memory needs.
+
 ## Verification and measurement
 
 ```sh

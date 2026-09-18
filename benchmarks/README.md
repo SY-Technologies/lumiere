@@ -211,3 +211,47 @@ now assert instead, and the assertions are live in the Debug and sanitizer
 builds. The whole suite passes under AddressSanitizer and UndefinedBehavior
 Sanitizer with them enabled, so no accessor is reached with the wrong tag on any
 path the 425 tests cover.
+
+## Verified bytecode, unchecked reads — 2026-09-18
+
+Same host, compiler and RelWithDebInfo options. The baseline is the commit
+immediately before the verifier existed. Seven measured runs per workload after
+one warm-up, VM backend, baseline first.
+
+| Workload | Before median (min–max), s | After median (min–max), s | Change |
+| --- | --- | --- | --- |
+| 1,000,000 integer-loop iterations | 0.105589 (0.104811–0.108411) | 0.078282 (0.078028–0.078912) | −25.9% |
+| 30,000 Unicode scalars | 0.006648 (0.006552–0.006759) | 0.005662 (0.005471–0.005735) | −14.8% |
+| 100,000 user-function calls | 0.038428 (0.037997–0.040314) | 0.032020 (0.031887–0.033264) | −16.7% |
+| 3,000 identity calls carrying 128 KiB text | 0.002837 (0.002766–0.002913) | 0.002952 (0.002673–0.003188) | +4.1% |
+| 200,000 typed-list appends | 0.056696 (0.056451–0.059149) | 0.051947 (0.051202–0.054528) | −8.4% |
+| 50,000 dictionary writes then reads | 0.054335 (0.053514–0.059670) | 0.054947 (0.052080–0.057818) | +1.1% |
+
+The two workloads that moved up are both in the low milliseconds, where the
+spread overlaps; neither is a claimed regression.
+
+Reading one byte of bytecode used to test the instruction pointer against the
+code size, twice or more per instruction. `verify_module` now walks every
+function once, before anything runs, and proves what the interpreter was
+re-checking: every opcode known, every operand present, every table index in
+range, every jump landing on the first byte of an instruction, and every
+function ending on an instruction that cannot fall past its own code. The read
+then costs an index.
+
+The jump check is new rather than moved. The interpreter only tested that a
+target was inside the code, so a jump into the middle of an instruction would
+have been executed as though it were an instruction. Nothing generates that
+today, but it was reachable through a compiler bug and is now refused.
+
+Malformed bytecode is also refused earlier and more uniformly: at load, naming
+the function and the offset, instead of part-way through a run. Nine tests build
+modules by hand and check each rejection, because the interpreter's memory
+safety now rests on this pass rather than on per-read tests. The reads assert
+their bound in the Debug and sanitizer builds, and the whole suite passes there
+with those assertions live.
+
+Against the target on the same host, nine runs: C at 0.29 ms, CPython at
+80.94 ms, the VM at **78.50 ms**. The VM is now faster than CPython on this
+workload, which was the revised goal. Cumulatively the loop has gone from
+138.9 ms at the start of this work to 78.3 ms, 44% less, in four changes that
+each carried their own measurement.
