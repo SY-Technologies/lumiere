@@ -71,6 +71,11 @@ namespace lumiere
         bool is_equal(const Value &left, const Value &right) const override;
 
         /**
+         * @brief Rejects a value that cannot stay equal to itself while stored as a key.
+         */
+        void require_dictionary_key(const Value &key, const Token &site) const;
+
+        /**
          * @brief Converts a value to text.
          */
         std::string to_text(const Value &value) const override;

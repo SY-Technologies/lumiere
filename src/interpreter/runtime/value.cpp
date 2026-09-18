@@ -1,6 +1,8 @@
 #include "lumiere/interpreter/runtime/value.hpp"
 #include "lumiere/parser/utf8.hpp"
 
+#include <cmath>
+
 #include <sstream>
 
 namespace lumiere
@@ -50,6 +52,58 @@ Value Value::with_trace_frame(const TraceFrame &frame) const
             result->origin,
             std::move(trace)});
     return value;
+}
+
+DictEntry *DictData::find(const Value &key)
+{
+    for (DictEntry &entry : entries)
+    {
+        if (entry.first == key)
+        {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+const DictEntry *DictData::find(const Value &key) const
+{
+    return const_cast<DictData *>(this)->find(key);
+}
+
+bool DictData::set(Value key, Value value)
+{
+    if (DictEntry *existing = find(key))
+    {
+        existing->second = std::move(value);
+        return false;
+    }
+    entries.emplace_back(std::move(key), std::move(value));
+    return true;
+}
+
+bool DictData::erase(const Value &key, Value &removed)
+{
+    for (auto it = entries.begin(); it != entries.end(); ++it)
+    {
+        if (it->first == key)
+        {
+            removed = std::move(it->second);
+            entries.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<std::string> dictionary_key_rejection(const Value &key)
+{
+    if (key.is_decimal() && std::isnan(key.as_decimal()))
+    {
+        return std::string(
+            "une valeur non-nombre ne peut pas servir de cle : elle n'est egale a aucune valeur, pas meme a elle-meme");
+    }
+    return std::nullopt;
 }
 
 bool Value::operator==(const Value &other) const

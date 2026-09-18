@@ -53,11 +53,40 @@ struct EnsembleData
     std::optional<SetConstraint> constraint;
 };
 using DictEntry = std::pair<Value, Value>;
+
+/**
+ * @brief Association table holding at most one entry per key.
+ *
+ * Entries keep insertion order, and reassigning an existing key keeps that
+ * key's original position. Every mutation goes through these operations so
+ * neither engine can build a dictionary with duplicate keys.
+ */
 struct DictData
 {
     std::vector<DictEntry> entries;
     std::optional<DictConstraint> constraint;
+
+    /** @brief Entry whose key equals @p key, or nullptr. */
+    DictEntry *find(const Value &key);
+    const DictEntry *find(const Value &key) const;
+
+    /** @brief Inserts or overwrites @p key. Returns true when a new key was added. */
+    bool set(Value key, Value value);
+
+    /** @brief Removes @p key, writing its value to @p removed. Returns false if absent. */
+    bool erase(const Value &key, Value &removed);
 };
+
+/**
+ * @brief Explains, in French, why @p key cannot be a dictionary key.
+ *
+ * A key must stay equal to itself for as long as it is stored. Every value
+ * qualifies except a non-number, which is not equal to itself, so storing one
+ * would create an entry that can never be found again. Text parsing reaches
+ * that value: "nan".en_decimal() succeeds. Returns std::nullopt when the key
+ * is admissible.
+ */
+std::optional<std::string> dictionary_key_rejection(const Value &key);
 struct ResultData;
 
 struct Value

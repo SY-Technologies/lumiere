@@ -207,14 +207,8 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 1, 1, "Dictionnaire.contient", call_site);
-                for (const auto &entry : dict->entries)
-                {
-                    if (walker.is_equal(entry.first, args[0].value))
-                    {
-                        return Value::logique(true);
-                    }
-                }
-                return Value::logique(false); });
+                (void)walker;
+                return Value::logique(dict->find(args[0].value) != nullptr); });
         }
         if (member.lexeme == "cles")
         {
@@ -298,14 +292,10 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 1, 1, "Dictionnaire.retirer", call_site);
-                for (auto it = dict->entries.begin(); it != dict->entries.end(); ++it)
+                Value removed;
+                if (dict->erase(args[0].value, removed))
                 {
-                    if (walker.is_equal(it->first, args[0].value))
-                    {
-                        Value removed = it->second;
-                        dict->entries.erase(it);
-                        return removed;
-                    }
+                    return removed;
                 }
                 walker.throw_runtime_error(call_site, "cle introuvable dans le dictionnaire");
                 return Value::rien(); });

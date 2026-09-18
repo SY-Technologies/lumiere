@@ -640,6 +640,14 @@ namespace lumiere
         return a == b;
     }
 
+    void TreeWalker::require_dictionary_key(const Value &key, const Token &site) const
+    {
+        if (const auto rejection = dictionary_key_rejection(key))
+        {
+            throw_runtime_error(site, *rejection);
+        }
+    }
+
     bool TreeWalker::is_iterable_value(const Value &value) const
     {
         return value.is_liste() || value.is_liste_fixe() || value.is_ensemble() || value.is_texte();

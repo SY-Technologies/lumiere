@@ -472,17 +472,9 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     {
         auto dict = object.as_dictionnaire();
         enforce_dict_entry_constraint(dict, key, value, target.bracket, "l'entree du dictionnaire");
-        for (auto &entry : dict->entries)
-        {
-            if (is_equal(entry.first, key))
-            {
-                entry.second = value;
-                m_result = std::move(value);
-                return;
-            }
-        }
-        dict->entries.push_back({key, value});
-        m_result = dict->entries.back().second;
+        require_dictionary_key(key, target.bracket);
+        dict->set(key, value);
+        m_result = std::move(value);
         return;
     }
 
@@ -496,7 +488,10 @@ void TreeWalker::visit(DictionaryExpr &expr)
 
     for (auto &entry : expr.entries)
     {
-        data->entries.push_back({evaluate(*entry.key), evaluate(*entry.value)});
+        Value key = evaluate(*entry.key);
+        Value value = evaluate(*entry.value);
+        require_dictionary_key(key, expr.brace);
+        data->set(std::move(key), std::move(value));
     }
 
     m_result = Value::dictionnaire(std::move(data));
@@ -905,13 +900,10 @@ void TreeWalker::visit(IndexAccessExpr &expr)
     {
         auto dict = object.as_dictionnaire();
 
-        for (const auto &entry : dict->entries)
+        if (const DictEntry *entry = dict->find(index))
         {
-            if (is_equal(entry.first, index))
-            {
-                m_result = entry.second;
-                return;
-            }
+            m_result = entry->second;
+            return;
         }
 
         throw_runtime_error(expr.bracket, "cle introuvable dans le Dictionnaire");

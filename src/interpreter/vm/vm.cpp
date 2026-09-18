@@ -109,6 +109,14 @@ bool values_equal(const Value &left, const Value &right)
     return left == right;
 }
 
+void require_dictionary_key(const Value &key)
+{
+    if (const auto rejection = dictionary_key_rejection(key))
+    {
+        throw VmRuntimeError("VM: " + *rejection);
+    }
+}
+
 class VmRuntimeServices final : public IRuntime
 {
 public:
@@ -892,7 +900,8 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
     const std::size_t start = stack.size() - value_count;
     for (std::size_t i = start; i < stack.size(); i += 2)
     {
-        data->entries.emplace_back(std::move(stack[i]), std::move(stack[i + 1]));
+        require_dictionary_key(stack[i]);
+        data->set(std::move(stack[i]), std::move(stack[i + 1]));
     }
 
     stack.resize(start);
@@ -962,13 +971,10 @@ void execute_index_get(std::vector<Value> &stack)
     const Value sequence = pop_value(stack);
     if (sequence.is_dictionnaire())
     {
-        for (const auto &entry : sequence.as_dictionnaire()->entries)
+        if (const DictEntry *entry = sequence.as_dictionnaire()->find(index))
         {
-            if (values_equal(entry.first, index))
-            {
-                stack.push_back(entry.second);
-                return;
-            }
+            stack.push_back(entry->second);
+            return;
         }
         throw VmRuntimeError("VM: cle introuvable dans le Dictionnaire");
     }
@@ -1061,16 +1067,8 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
     {
         auto dictionary = object.as_dictionnaire();
         runtime.enforce_dictionary_entry(dictionary, index, value, "l'affectation de dictionnaire");
-        for (auto &entry : dictionary->entries)
-        {
-            if (values_equal(entry.first, index))
-            {
-                entry.second = value;
-                stack.push_back(value);
-                return;
-            }
-        }
-        dictionary->entries.emplace_back(index, value);
+        require_dictionary_key(index);
+        dictionary->set(index, value);
         stack.push_back(value);
         return;
     }
@@ -1272,14 +1270,7 @@ Value execute_member_call(const Value &receiver,
         if (member == "contient")
         {
             require_member_arity("Dictionnaire.contient", args, 1);
-            for (const auto &entry : dictionary->entries)
-            {
-                if (values_equal(entry.first, args[0]))
-                {
-                    return Value::logique(true);
-                }
-            }
-            return Value::logique(false);
+            return Value::logique(dictionary->find(args[0]) != nullptr);
         }
         if (member == "cles" || member == "valeurs")
         {
@@ -1313,14 +1304,10 @@ Value execute_member_call(const Value &receiver,
         if (member == "retirer")
         {
             require_member_arity("Dictionnaire.retirer", args, 1);
-            for (auto it = dictionary->entries.begin(); it != dictionary->entries.end(); ++it)
+            Value removed;
+            if (dictionary->erase(args[0], removed))
             {
-                if (values_equal(it->first, args[0]))
-                {
-                    Value removed = it->second;
-                    dictionary->entries.erase(it);
-                    return removed;
-                }
+                return removed;
             }
             throw VmRuntimeError("VM: cle introuvable dans le dictionnaire");
         }

@@ -3614,4 +3614,83 @@ TEST(CliIntegration, RunsAfterEachEvenWhenLumiTestFails)
     EXPECT_NE(result.stdout_text.find("post état"), std::string::npos);
 }
 
+TEST(CliIntegration, BothBackendsKeepOneEntryPerDictionaryKey)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_dictionary_keys";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction principal() {
+    soit d = {"a": 1, "b": 2, "a": 3}
+    afficher(d.taille())
+    afficher(d["a"])
+    afficher(d.cles().joindre(","))
+
+    soit ordre = {"z": 1, "y": 2}
+    ordre["z"] = 10
+    afficher(ordre.cles().joindre(","))
+    afficher(ordre["z"])
+    ordre.retirer("y")
+    ordre["y"] = 9
+    afficher(ordre.cles().joindre(","))
+
+    soit nombres = {1: "entier"}
+    nombres[1.0] = "decimal"
+    afficher(nombres.taille())
+
+    soit zeros = {}
+    zeros[0.0] = "plus"
+    zeros[-0.0] = "moins"
+    afficher(zeros.taille())
+    afficher(zeros[0.0])
+
+    soit gauche = [1]
+    soit droite = [1]
+    soit refs = {}
+    refs[gauche] = "gauche"
+    refs[droite] = "droite"
+    afficher(refs.taille())
+    afficher(refs[gauche])
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        // A repeated key overwrites in place: the dictionary keeps two entries and "a"
+        // stays first. Entier and Decimal never compare equal, so 1 and 1.0 are two
+        // keys, while 0.0 and -0.0 are one. Lists are compared by identity, so two
+        // lists with equal contents remain distinct keys.
+        EXPECT_EQ(result.stdout_text, "2\n3\na,b\nz,y\n10\nz,y\n2\n1\nmoins\n2\ngauche\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsRejectNonNumberDictionaryKeys)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_dictionary_nan_key";
+    const auto file = root / "main.lum";
+    // A non-number is not equal to itself, so an entry stored under one could never
+    // be found again. Text parsing reaches that value, so the key is refused instead.
+    write_source(file, R"lum(
+fonction principal() {
+    soit absent = agir selon "nan".en_decimal() {
+        Succès(valeur) -> valeur
+        Échec(_) -> 0.0
+    }
+    soit d = {}
+    d[absent] = "perdu"
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_NE(result.exit_code, 0);
+        EXPECT_NE(result.stderr_text.find("ne peut pas servir de cle"), std::string::npos)
+            << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
 } // namespace
