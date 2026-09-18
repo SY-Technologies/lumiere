@@ -210,11 +210,11 @@ namespace lumiere
                 (void)walker;
                 return Value::logique(dict->find(args[0].value) != nullptr); });
         }
-        if (member.lexeme == "cles")
+        if (member.lexeme == "cles" || member.lexeme == "clés")
         {
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
-                require_positional_args(args, 0, 0, "Dictionnaire.cles", call_site);
+                require_positional_args(args, 0, 0, "Dictionnaire.clés", call_site);
                 auto keys = std::make_shared<ListeData>();
                 std::string key_type = "Universel";
                 if (dict->constraint)

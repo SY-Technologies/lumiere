@@ -901,6 +901,13 @@ void execute_iteration_snapshot(std::vector<Value> &stack)
         snapshot->elements = iterable.as_liste_fixe()->elements;
     else if (iterable.is_ensemble())
         snapshot->elements = iterable.as_ensemble()->elements;
+    else if (iterable.is_dictionnaire())
+    {
+        // Walking a dictionary walks its keys, matching the tree walker.
+        snapshot->elements.reserve(iterable.as_dictionnaire()->size());
+        for (const auto &entry : iterable.as_dictionnaire()->items())
+            snapshot->elements.push_back(entry.first);
+    }
     else if (iterable.is_texte())
     {
         const auto &text = iterable.as_texte();
@@ -1242,19 +1249,20 @@ Value execute_member_call(const Value &receiver,
             require_member_arity("Dictionnaire.contient", args, 1);
             return Value::logique(dictionary->find(args[0]) != nullptr);
         }
-        if (member == "cles" || member == "valeurs")
+        const bool wants_keys = member == "cles" || member == "clés";
+        if (wants_keys || member == "valeurs")
         {
             require_member_arity("Dictionnaire." + member, args, 0);
             auto result = std::make_shared<ListeData>();
             for (const auto &entry : dictionary->items())
             {
-                result->elements.push_back(member == "cles" ? entry.first : entry.second);
+                result->elements.push_back(wants_keys ? entry.first : entry.second);
             }
             Value list_result = Value::liste(std::move(result));
             if (const auto types = runtime.dictionary_types(dictionary); types.has_value())
             {
                 runtime.annotate_value(list_result,
-                                       "Liste[" + (member == "cles" ? types->first : types->second) + "]",
+                                       "Liste[" + (wants_keys ? types->first : types->second) + "]",
                                        site);
             }
             return list_result;

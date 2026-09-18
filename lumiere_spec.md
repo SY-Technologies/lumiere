@@ -303,6 +303,12 @@ pour chaque note dans notes {
 }
 ```
 
+A `Liste`, a `ListeFixe`, an `Ensemble`, a `Dictionnaire` and a `Texte` are
+iterable. A dictionary yields its keys, and a text yields its Unicode scalars.
+The loop binds one name, and the sequence is snapshotted before the first
+iteration, so adding or replacing elements inside the loop does not change what
+is visited.
+
 ### Loop control
 
 - `arrêter`
@@ -626,13 +632,16 @@ Notes:
 - `taille() -> Entier`
 - `vide() -> Logique`
 - `contient(cle) -> Logique`
-- `cles() -> Liste[K]`
+- `clés() -> Liste[K]`, also spelled `cles()`
 - `valeurs() -> Liste[V]`
 - `paires() -> Liste[ListeFixe[Universel, 2]]`
 - `retirer(cle) -> V`
 
 Notes:
 
+- a dictionary holds at most one entry per key; assigning an existing key
+  overwrites it in place and leaves it in its original position
+- `pour chaque cle dans dictionnaire` walks the keys, in insertion order
 - missing keys in `retirer` raise an error
 - dictionary index assignment also enforces key/value annotations
 - `paires()` returns ordered two-element fixed lists `[clé, valeur]`

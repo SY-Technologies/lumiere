@@ -3770,4 +3770,33 @@ TEST(CliIntegration, BothBackendsRejectFixedListElementAssignment)
     std::filesystem::remove_all(root);
 }
 
+TEST(CliIntegration, BothBackendsWalkDictionaryKeys)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_dictionary_iteration";
+    const auto file = root / "main.lum";
+    write_source(file, R"lum(
+fonction principal() {
+    soit d = {"a": 1, "b": 2}
+    pour chaque cle dans d {
+        afficher(cle + "=" + d[cle])
+    }
+    afficher(d.clés().joindre(","))
+    afficher(d.cles().joindre(","))
+    pour chaque cle dans d {
+        si cle == "a" { d["z"] = 9 }
+        afficher(cle)
+    }
+}
+)lum");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        // Keys in insertion order, and the loop walks a snapshot, so "z" is not visited.
+        EXPECT_EQ(result.stdout_text, "a=1\nb=2\na,b\na,b\na\nb\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
 } // namespace

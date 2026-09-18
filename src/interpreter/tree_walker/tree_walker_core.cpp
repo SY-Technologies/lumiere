@@ -650,7 +650,8 @@ namespace lumiere
 
     bool TreeWalker::is_iterable_value(const Value &value) const
     {
-        return value.is_liste() || value.is_liste_fixe() || value.is_ensemble() || value.is_texte();
+        return value.is_liste() || value.is_liste_fixe() || value.is_ensemble() ||
+               value.is_dictionnaire() || value.is_texte();
     }
 
     bool TreeWalker::supports_index_read(const Value &value) const
@@ -777,6 +778,19 @@ namespace lumiere
         if (const auto *elements = sequence_elements(iterable))
         {
             return *elements;
+        }
+
+        if (iterable.is_dictionnaire())
+        {
+            // Walking a dictionary walks its keys, as `pour chaque` binds one name
+            // and `d[cle]` then reaches the value.
+            std::vector<Value> keys;
+            keys.reserve(iterable.as_dictionnaire()->size());
+            for (const auto &entry : iterable.as_dictionnaire()->items())
+            {
+                keys.push_back(entry.first);
+            }
+            return keys;
         }
 
         if (iterable.is_texte())
