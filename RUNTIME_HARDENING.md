@@ -3,6 +3,17 @@
 This is an implementation checkpoint, not a claim that Lumière is production-ready.
 The priority is defined behavior, agreement between engines, and measured speed.
 
+The project's performance target was Go. It is now the interpreter tier: ahead
+of CPython on the benchmark suite, measured by `scripts/compare-languages.py`.
+The Go target was withdrawn on evidence, not on preference — the measurements and
+the reasoning are under "Where the VM's time actually goes" below. The short
+version is that Go compiles ahead of time to native code and an interpreter that
+dispatches one instruction at a time is 10x to 100x off compiled code however
+well it is written, so matching Go means building a native backend and a precise
+collector rather than optimizing this one. Nothing on the current roadmap is
+wasted if that decision is revisited: the object model in priority 1 and a typed
+LIR are prerequisites for a backend as much as for the interpreter.
+
 ## Contracts established in this change
 
 - `Entier` is signed 64-bit. Addition, subtraction, multiplication, division,

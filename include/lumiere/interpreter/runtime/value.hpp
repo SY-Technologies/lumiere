@@ -137,6 +137,17 @@ std::optional<std::string> dictionary_key_rejection(const Value &key);
 std::size_t value_hash(const Value &value);
 struct ResultData;
 
+/**
+ * @brief Immutable, shared text storage.
+ *
+ * Text used to sit inside the variant as a std::string, which made Value 48
+ * bytes and gave every copy of any value — an integer pushed on the stack
+ * included — a fourteen-way visitor to run instead of a move of bytes. Sharing
+ * the buffer makes copying text a reference count and shrinks every Value.
+ * The buffer is const because Lumière text is immutable.
+ */
+using TexteRef = std::shared_ptr<const std::string>;
+
 struct Value
 {
     enum class Type
@@ -164,7 +175,7 @@ struct Value
         double,                             // DECIMAL
         bool,                               // LOGIQUE
         char32_t,                           // SYMBOLE
-        std::string,                        // TEXTE
+        TexteRef,                           // TEXTE
         std::shared_ptr<ListeData>,          // LISTE
         std::shared_ptr<ListeFixeData>,      // LISTE_FIXE
         std::shared_ptr<DictData>,           // DICTIONNAIRE
@@ -222,6 +233,15 @@ struct Value
     }
 
     static Value texte(std::string str)
+    {
+        Value v;
+        v.type = Type::TEXTE;
+        v.data = std::make_shared<const std::string>(std::move(str));
+        return v;
+    }
+
+    /** @brief Shares an existing text buffer instead of copying it. */
+    static Value texte(TexteRef str)
     {
         Value v;
         v.type = Type::TEXTE;
@@ -312,7 +332,13 @@ struct Value
 
     const std::string &as_texte() const
     {
-        return std::get<std::string>(data);
+        return *std::get<TexteRef>(data);
+    }
+
+    /** @brief The shared buffer, for handing text on without copying it. */
+    const TexteRef &as_texte_ref() const
+    {
+        return std::get<TexteRef>(data);
     }
 
     std::shared_ptr<ListeData> as_liste() const

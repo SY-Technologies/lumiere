@@ -132,3 +132,38 @@ not measured. All 415 tests passed in RelWithDebInfo and in an
 AddressSanitizer/UndefinedBehaviorSanitizer Debug build with leak detection
 disabled, excluding the five example tests, which need to delete files the
 sandbox used here forbids.
+
+## Shared text buffers checkpoint — 2026-09-17
+
+Same host, compiler and RelWithDebInfo options as the previous checkpoint. The
+baseline is the commit immediately before text moved out of the value variant.
+Seven measured runs per workload after one warm-up, VM backend, baseline first.
+
+| Workload | Before median (min–max), s | After median (min–max), s |
+| --- | --- | --- |
+| 1,000,000 integer-loop iterations | 0.127601 (0.126163–0.128254) | 0.127999 (0.127300–0.130895) |
+| 30,000 Unicode scalars | 0.008568 (0.008404–0.008683) | 0.008153 (0.007944–0.008424) |
+| 100,000 user-function calls | 0.046049 (0.045619–0.069783) | 0.046019 (0.045657–0.048077) |
+| 3,000 identity calls carrying 128 KiB text | 0.110650 (0.108524–0.112748) | 0.003467 (0.003219–0.003730) |
+| 200,000 typed-list appends | 0.069620 (0.063815–0.072255) | 0.062864 (0.060751–0.066973) |
+| 50,000 dictionary writes then reads | 0.057862 (0.056766–0.060172) | 0.064260 (0.061759–0.090529) |
+
+`Value` went from 48 bytes to 32. Passing large text is about 32x less elapsed
+time, because a copy is now a reference count instead of an allocation and a
+memcpy of the whole buffer. Typed-list appends fell about 10% and Unicode
+traversal about 5%, both from moving smaller values.
+
+The integer loop did not move at all, which is the result worth recording: the
+value's *size* was not what made it slow. The variant's fourteen-way visitor
+runs on every copy regardless of how small the payload is, so a scalar loop pays
+the same dispatch it always did. Only a trivially copyable value removes that,
+and that needs the runtime to own its heap objects itself.
+
+Dictionary writes cost about 11% more, and this is a real regression rather than
+noise. Short text used to live inside the `std::string` in the variant, where
+small-string optimization meant no allocation at all; every text value now costs
+one allocation. The workload builds 100,000 short keys, and the measured
+difference matches that count almost exactly. The trade was taken deliberately:
+programs that pass text around gain far more than programs that mint short
+strings lose. Recovering it means inline storage for short text, which is the
+same custom string the object-model work would provide.

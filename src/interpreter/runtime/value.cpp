@@ -359,6 +359,13 @@ bool Value::operator==(const Value &other) const
         return as_resultat()->success == other.as_resultat()->success &&
                as_resultat()->payload == other.as_resultat()->payload;
     }
+    if (is_texte())
+    {
+        // Sharing a buffer must not turn text equality into pointer equality.
+        const auto &left = as_texte_ref();
+        const auto &right = other.as_texte_ref();
+        return left == right || (left != nullptr && right != nullptr && *left == *right);
+    }
     if (is_liste_fixe())
     {
         // A fixed list is a value, not a handle: two of them are equal when their
