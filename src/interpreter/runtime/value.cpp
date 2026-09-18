@@ -2,6 +2,7 @@
 #include "lumiere/parser/utf8.hpp"
 
 #include <cmath>
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include <cstdint>
 #include <type_traits>
 
@@ -337,8 +338,7 @@ std::optional<std::string> dictionary_key_rejection(const Value &key)
 {
     if (key.is_decimal() && std::isnan(key.as_decimal()))
     {
-        return std::string(
-            "une valeur non-nombre ne peut pas servir de cle : elle n'est egale a aucune valeur, pas meme a elle-meme");
+        return messages::cle_non_nombre();
     }
     return std::nullopt;
 }

@@ -459,7 +459,7 @@ CliOptions parse_run_args(int argc, char *argv[])
         if (!options.file_argument.empty())
         {
             print_usage();
-            throw std::runtime_error("plus d'un fichier a ete fourni");
+            throw std::runtime_error("plus d'un fichier a été fourni");
         }
 
         options.file_argument = arg;
@@ -530,7 +530,7 @@ TestCliOptions parse_test_args(int argc, char *argv[])
         if (!options.path_argument.empty())
         {
             print_usage();
-            throw std::runtime_error("plus d'un chemin de test a ete fourni");
+            throw std::runtime_error("plus d'un chemin de test a été fourni");
         }
 
         options.path_argument = arg;

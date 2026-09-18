@@ -22,7 +22,7 @@ void stdlib_expect_positional(IRuntime &runtime,
     {
         if (!arg.name.empty())
         {
-            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommes");
+            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
         }
     }
 }
@@ -48,7 +48,7 @@ void stdlib_expect_positional_range(IRuntime &runtime,
     {
         if (!arg.name.empty())
         {
-            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommes");
+            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
         }
     }
 }
@@ -91,7 +91,7 @@ double stdlib_expect_decimal(IRuntime &runtime,
     }
     if (!value.is_decimal())
     {
-        runtime.raise_runtime_error(call_site, context + " attend une valeur numerique");
+        runtime.raise_runtime_error(call_site, context + " attend une valeur numérique");
     }
     return value.as_decimal();
 }

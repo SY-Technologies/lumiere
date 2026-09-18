@@ -28,7 +28,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     Value value = stmt.initializer ? evaluate(*stmt.initializer) : Value::rien();
@@ -61,7 +61,7 @@ void TreeWalker::visit(FunctionDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     try
@@ -78,7 +78,7 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     std::shared_ptr<LumiereClass> runtime_parent = nullptr;
@@ -108,15 +108,15 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
                 FunctionDeclStmt *parent_method = find_method_decl(runtime_parent, method->name.lexeme);
                 if (method->is_remplace && parent_method == nullptr)
                 {
-                    throw_runtime_error(method->name, "remplace utilise sans methode parente correspondante: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "remplace utilise sans méthode parente correspondante: " + method->name.lexeme);
                 }
                 if (!method->is_remplace && parent_method != nullptr)
                 {
-                    throw_runtime_error(method->name, "methode parente deja definie; utilisez remplace: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "méthode parente déjà définie; utilisez remplace: " + method->name.lexeme);
                 }
                 if (method->is_remplace && parent_method != nullptr && !method_signatures_match(*parent_method, *method))
                 {
-                    throw_runtime_error(method->name, "la methode remplacee doit conserver la meme signature: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "la méthode remplacee doit conserver la même signature: " + method->name.lexeme);
                 }
             }
         }
@@ -139,7 +139,7 @@ void TreeWalker::visit(InterfaceDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     try
@@ -161,7 +161,7 @@ void TreeWalker::visit(ImportStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.module_name, "environnement d'execution absent");
+        throw_runtime_error(stmt.module_name, "environnement d'exécution absent");
     }
 
     const std::shared_ptr<Module> module = load_module(stmt.module_name);
@@ -185,7 +185,7 @@ void TreeWalker::visit(ImportStmt &stmt)
             }
             if (module->public_members.count(imported_member.name.lexeme) == 0)
             {
-                throw_runtime_error(imported_member.name, "membre non exporte ou introuvable dans le module: " + imported_member.name.lexeme);
+                throw_runtime_error(imported_member.name, "membre non exporté ou introuvable dans le module: " + imported_member.name.lexeme);
             }
 
             const auto member_it = module->members.find(imported_member.name.lexeme);

@@ -175,7 +175,7 @@ int parse_fixed_int(const std::string &text, std::size_t offset, std::size_t wid
         const char ch = text[offset + i];
         if (!std::isdigit(static_cast<unsigned char>(ch)))
         {
-            throw std::runtime_error("caractere inattendu pour " + label);
+            throw std::runtime_error("caractère inattendu pour " + label);
         }
         value = value * 10 + (ch - '0');
     }
@@ -241,7 +241,7 @@ int64_t parse_instant_string(const std::string &text, const std::string &format)
         {
             if (text_index >= text.size() || text[text_index] != format[format_index])
             {
-                throw std::runtime_error("separateur inattendu");
+                throw std::runtime_error("séparateur inattendu");
             }
             ++format_index;
             ++text_index;
@@ -349,11 +349,11 @@ Value make_instant_value(int64_t millis, const NativeFunctionFactory &make_nativ
             const int64_t duration_ms = expect_object_millis(runtime, args[0].value, "Durée", "Instant.ajouter", native_args.site);
             if (duration_ms > 0 && millis > std::numeric_limits<int64_t>::max() - duration_ms)
             {
-                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le resultat depasse la limite d'un Instant");
+                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le résultat dépasse la limite d'un Instant");
             }
             if (duration_ms < 0 && millis < std::numeric_limits<int64_t>::min() - duration_ms)
             {
-                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le resultat depasse la limite d'un Instant");
+                runtime.raise_runtime_error(native_args.site, "Instant.ajouter: le résultat dépasse la limite d'un Instant");
             }
             return make_instant_value(millis + duration_ms, make_native_function);
         }));
@@ -365,11 +365,11 @@ Value make_instant_value(int64_t millis, const NativeFunctionFactory &make_nativ
             const int64_t duration_ms = expect_object_millis(runtime, args[0].value, "Durée", "Instant.soustraire", native_args.site);
             if (duration_ms < 0 && millis > std::numeric_limits<int64_t>::max() + duration_ms)
             {
-                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le resultat depasse la limite d'un Instant");
+                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le résultat dépasse la limite d'un Instant");
             }
             if (duration_ms > 0 && millis < std::numeric_limits<int64_t>::min() + duration_ms)
             {
-                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le resultat depasse la limite d'un Instant");
+                runtime.raise_runtime_error(native_args.site, "Instant.soustraire: le résultat dépasse la limite d'un Instant");
             }
             return make_instant_value(millis - duration_ms, make_native_function);
         }));
@@ -500,14 +500,14 @@ void register_temps_module(Module &module)
             {
                 if (end_ms < std::numeric_limits<int64_t>::min() + start_ms)
                 {
-                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree depasse les limites");
+                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree dépasse les limites");
                 }
             }
             else if (start_ms < 0)
             {
                 if (end_ms > std::numeric_limits<int64_t>::max() + start_ms)
                 {
-                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree depasse les limites");
+                    runtime.raise_runtime_error(native_args.site, "Temps.entre: le calcul de duree dépasse les limites");
                 }
             }
             Value duration = make_duration_value(end_ms - start_ms, make_native_function);
@@ -525,12 +525,12 @@ void register_temps_module(Module &module)
             const int64_t duration_ms = expect_object_millis(runtime, args[0].value, "Durée", "Temps.attendre", native_args.site);
             if (duration_ms < 0)
             {
-                runtime.raise_runtime_error(native_args.site, "Temps.attendre attend une duree positive");
+                runtime.raise_runtime_error(native_args.site, "Temps.attendre attend une durée positive");
             }
             constexpr int64_t kMaxSleepMs = 24LL * 60 * 60 * 1000;
             if (duration_ms > kMaxSleepMs)
             {
-                runtime.raise_runtime_error(native_args.site, "Temps.attendre: la duree depasse le maximum autorise (24h)");
+                runtime.raise_runtime_error(native_args.site, "Temps.attendre: la duree dépasse le maximum autorise (24h)");
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
             return Value::rien();
@@ -545,11 +545,11 @@ void register_temps_module(Module &module)
                 const int64_t amount = expect_integer_argument(runtime, native_args, "Temps." + name);
                 if (amount > 0 && factor_ms > 0 && amount > std::numeric_limits<int64_t>::max() / factor_ms)
                 {
-                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le resultat depasse la limite d'une Duree");
+                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le résultat dépasse la limite d'une Duree");
                 }
                 if (amount < 0 && factor_ms > 0 && amount < std::numeric_limits<int64_t>::min() / factor_ms)
                 {
-                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le resultat depasse la limite d'une Duree");
+                    runtime.raise_runtime_error(native_args.site, "Temps." + name + ": le résultat dépasse la limite d'une Duree");
                 }
                 Value duration = make_duration_value(amount * factor_ms, make_native_function);
                 runtime.annotate_value(duration, "Temps.Durée", native_args.site);

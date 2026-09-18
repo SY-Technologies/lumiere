@@ -487,6 +487,30 @@ between 1% and 11% in the same direction, which is within this host's noise and
 is not claimed as an improvement. Peak memory was not measured; the index adds
 about one machine word per 0.75 entries above the threshold.
 
+### One wording for every runtime diagnostic — 2026-09-17
+
+The two engines detect the same conditions in separate code, and each owned its
+wording. A corpus of twenty-six failing programs showed fifteen of them reported
+differently: the same division was "division par zero" from the VM and "division
+par zero interdite" from the tree walker, an unknown member named the member in
+one and blamed the receiver in the other ("acces membre impossible: la cible
+avant '.' doit etre un Objet"), and a failed element-type check named the
+received type in one and not the other.
+
+Every message a program can reach now lives in `diagnostics/runtime_messages.hpp`
+and both engines call it. An out-of-bounds index names the index, the length and
+the collection instead of saying only "indice hors limites". A dictionary write
+that violates its declared types reports the key and the value separately, as
+the tree walker already did. A cross-engine test runs that corpus and fails if
+the two ever disagree again.
+
+Runtime messages also carry their accents now. The header was "erreur
+d'execution", and the prose under it was written without them while the
+analyzer's diagnostics had them, so one program could produce "clé" and "cle"
+in the same session. The sweep covered message text only: dispatch keys, member
+names and identifiers inside diagnostics are untouched, which is why
+`lire_decimal` and `en_liste_fixe` still read as they are written in source.
+
 ## Verification and measurement
 
 ```sh

@@ -43,7 +43,7 @@ void register_maths_module(Module &module)
                 const int64_t val = args[0].value.as_entier();
                 if (val == std::numeric_limits<int64_t>::min())
                 {
-                    runtime.raise_runtime_error(call_site, "Maths.absolu: la valeur absolue de -2^63 depasse la limite d'un Entier");
+                    runtime.raise_runtime_error(call_site, "Maths.absolu: la valeur absolue de -2^63 dépasse la limite d'un Entier");
                 }
                 return Value::entier(std::llabs(val));
             }
@@ -93,7 +93,7 @@ void register_maths_module(Module &module)
             if (arrondir_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 arrondir_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.arrondir: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.arrondir: le résultat dépasse la limite d'un Entier");
             }
             return rounded_integer(runtime, call_site, std::round(arrondir_val));
         });
@@ -112,7 +112,7 @@ void register_maths_module(Module &module)
             if (plancher_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 plancher_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.plancher: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.plancher: le résultat dépasse la limite d'un Entier");
             }
             return rounded_integer(runtime, call_site, std::floor(plancher_val));
         });
@@ -129,7 +129,7 @@ void register_maths_module(Module &module)
             if (plafond_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 plafond_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.plafond: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.plafond: le résultat dépasse la limite d'un Entier");
             }
             return rounded_integer(runtime, call_site, std::ceil(plafond_val));
         });
@@ -146,7 +146,7 @@ void register_maths_module(Module &module)
             if (tronquer_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 tronquer_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.tronquer: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.tronquer: le résultat dépasse la limite d'un Entier");
             }
             return rounded_integer(runtime, call_site, std::trunc(tronquer_val));
         });
@@ -162,7 +162,7 @@ void register_maths_module(Module &module)
             const double value = stdlib_expect_decimal(runtime, args[0].value, "Maths.racine", call_site);
             if (std::isnan(value) || value < 0.0)
             {
-                runtime.raise_runtime_error(call_site, "Maths.racine attend une valeur non negative");
+                runtime.raise_runtime_error(call_site, "Maths.racine attend une valeur non négative");
             }
             return Value::decimal(std::sqrt(value));
         });
@@ -187,7 +187,7 @@ void register_maths_module(Module &module)
             }
             if (value < 0.0 && std::fmod(std::fabs(degree), 2.0) != 1.0)
             {
-                runtime.raise_runtime_error(call_site, "Maths.racine_n ne peut pas calculer une racine paire d'une valeur negative");
+                runtime.raise_runtime_error(call_site, "Maths.racine_n ne peut pas calculer une racine paire d'une valeur négative");
             }
             return Value::decimal(value < 0.0
                                       ? -std::pow(-value, 1.0 / degree)

@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 
 namespace lumiere
 {
@@ -102,7 +103,8 @@ namespace lumiere
                 const int64_t position = walker.assert_entier(args[0].value, call_site);
                 if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
                 {
-                    walker.throw_runtime_error(call_site, "indice hors limites");
+                    walker.throw_runtime_error(
+                        call_site, messages::indice_hors_limites(position, list->elements.size(), "Liste"));
                 }
                 Value removed = list->elements[static_cast<std::size_t>(position)];
                 list->elements.erase(list->elements.begin() + position);
@@ -133,7 +135,7 @@ namespace lumiere
                 const int64_t length = walker.assert_entier(args[0].value, call_site);
                 if (length < 0)
                 {
-                    walker.throw_runtime_error(call_site, "la taille d'une ListeFixe ne peut pas etre negative");
+                    walker.throw_runtime_error(call_site, "la taille d'une ListeFixe ne peut pas être négative");
                 }
                 if (static_cast<std::size_t>(length) != list->elements.size())
                 {
@@ -425,7 +427,7 @@ namespace lumiere
                 {
                     return removed;
                 }
-                walker.throw_runtime_error(call_site, "cle introuvable dans le dictionnaire");
+                walker.throw_runtime_error(call_site, messages::cle_introuvable());
                 return Value::rien(); });
         }
 

@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/runtime/collection_constraints.hpp"
 #include "lumiere/interpreter/runtime/type_aliases.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
@@ -558,7 +559,7 @@ namespace lumiere
 
         const Token key_annotation(TokenType::IDENT, dict->constraint->key_type, site.line, site.column);
         const Token value_annotation(TokenType::IDENT, dict->constraint->value_type, site.line, site.column);
-        ensure_value_matches_annotation(key, key_annotation, site, context + " (cle)");
+        ensure_value_matches_annotation(key, key_annotation, site, context + " (clé)");
         ensure_value_matches_annotation(entry_value, value_annotation, site, context + " (valeur)");
     }
 
@@ -608,8 +609,7 @@ namespace lumiere
 
         throw_runtime_error(
             site,
-            context + " attend une valeur de type " + display_runtime_type(annotation.lexeme) +
-                "; type recu: " + value.type_name());
+            messages::type_attendu(context, display_runtime_type(annotation.lexeme), value.type_name()));
     }
 
     void TreeWalker::ensure_value_matches_annotation(const Value &value,
@@ -630,7 +630,7 @@ namespace lumiere
         throw_runtime_error(
             site,
             context + " attend une valeur de type " + display_runtime_type(annotation.to_string()) +
-                "; type recu: " + value.type_name());
+                "; type reçu: " + value.type_name());
     }
 
 } // namespace lumiere

@@ -367,7 +367,7 @@ namespace lumiere
         // "variable introuvable".
         if (is_alpha_start(static_cast<unsigned char>(m_scanner.peek())))
         {
-            return error_token("nombre invalide — un caractere ne peut pas suivre immediatement un nombre");
+            return error_token("nombre invalide — un caractère ne peut pas suivre immédiatement un nombre");
         }
 
         if (is_decimal)
@@ -379,7 +379,7 @@ namespace lumiere
         if (!numeric::parse_integer_literal(m_scanner.lexeme()))
         {
             return error_token(
-                "entier hors limites — un litteral Entier ne peut pas depasser 9223372036854775807");
+                "entier hors limites — un littéral Entier ne peut pas dépasser 9223372036854775807");
         }
         return make_token(TokenType::ENTIER_LIT);
     }

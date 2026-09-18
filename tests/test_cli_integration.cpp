@@ -149,7 +149,7 @@ TEST(CliIntegration, BothBackendsTrapNumericOverflowAndInvalidCasts)
             SCOPED_TRACE(std::string(backend) + " " + expression);
             const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
             EXPECT_NE(result.exit_code, 0);
-            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+            EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
         }
     }
 }
@@ -1166,7 +1166,7 @@ TEST(CliIntegration, EnforcesVmGenericListMutationsThroughAliases)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("Liste.ajouter attend une valeur Entier"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("Liste.ajouter attend une valeur de type Entier"), std::string::npos);
 }
 
 TEST(CliIntegration, EnforcesVmGenericIndexedMutations)
@@ -1184,7 +1184,7 @@ TEST(CliIntegration, EnforcesVmGenericIndexedMutations)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("attend Texte -> Entier"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("l'entrée du dictionnaire (valeur) attend une valeur de type Entier"), std::string::npos);
 }
 
 TEST(CliIntegration, PreservesVmGenericTypesFromNativeMemberResults)
@@ -1202,7 +1202,7 @@ TEST(CliIntegration, PreservesVmGenericTypesFromNativeMemberResults)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("Liste.ajouter attend une valeur Texte"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("Liste.ajouter attend une valeur de type Texte"), std::string::npos);
 }
 
 TEST(CliIntegration, RejectsVmDictionaryLookupForMissingKey)
@@ -1220,7 +1220,7 @@ TEST(CliIntegration, RejectsVmDictionaryLookupForMissingKey)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("cle introuvable"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("clé introuvable"), std::string::npos);
 }
 
 TEST(CliIntegration, BothBackendsUseUnicodeScalarTextPositions)
@@ -1273,7 +1273,7 @@ TEST(CliIntegration, BothBackendsRejectInvalidTextPositions)
             SCOPED_TRACE(std::string(backend) + " " + expression);
             const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
             EXPECT_NE(result.exit_code, 0);
-            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+            EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
         }
     }
     std::filesystem::remove_all(root);
@@ -1802,7 +1802,7 @@ TEST(CliIntegration, ReportsMultipleInputFiles)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("plus d'un fichier a ete fourni"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("plus d'un fichier a été fourni"), std::string::npos);
 }
 
 TEST(CliIntegration, ReportsRuntimeErrorsToStderr)
@@ -1823,7 +1823,7 @@ TEST(CliIntegration, ReportsRuntimeErrorsToStderr)
     EXPECT_NE(result.stderr_text.find("Traceback (most recent call last):"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("in principal"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("File \"" + main_file.string() + "\""), std::string::npos);
-    EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("indice hors limites"), std::string::npos);
 }
 
@@ -1983,7 +1983,7 @@ TEST(CliIntegration, BothBackendsPreserveImportedInterfaceIdentity)
             else
             {
                 EXPECT_NE(result.exit_code, 0);
-                EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos) << result.stderr_text;
+                EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos) << result.stderr_text;
             }
         }
     }
@@ -2067,7 +2067,7 @@ TEST(CliIntegration, BothBackendsPreserveImportedClassIdentity)
             if (!mutation.empty())
             {
                 EXPECT_NE(result.exit_code, 0);
-                EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos) << result.stderr_text;
+                EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos) << result.stderr_text;
             }
             else
                 EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
@@ -2296,7 +2296,7 @@ TEST(CliIntegration, BothBackendsImportClosedCollectionTypeAliases)
                 if (invalid)
                 {
                     EXPECT_NE(result.exit_code, 0);
-                    EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+                    EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
                 }
                 else
                 {
@@ -2981,7 +2981,7 @@ TEST(CliIntegration, VmBackendEnforcesInterfacesAndPrivateFields)
     EXPECT_EQ(valid.exit_code, 0);
     EXPECT_EQ(valid.stdout_text, "Ada\n");
     EXPECT_NE(private_access.exit_code, 0);
-    EXPECT_NE(private_access.stderr_text.find("champ prive"), std::string::npos);
+    EXPECT_NE(private_access.stderr_text.find("champ privé"), std::string::npos);
 }
 
 TEST(CliIntegration, VmBackendSupportsBlockScopedClassesAndInterfaces)
@@ -3182,7 +3182,7 @@ TEST(CliIntegration, BothBackendsPreserveCollectionContractsAcrossCallbacks)
             SCOPED_TRACE(std::string(backend) + " " + body);
             const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
             EXPECT_NE(result.exit_code, 0);
-            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+            EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
         }
     }
     std::filesystem::remove_all(root);
@@ -3237,7 +3237,7 @@ TEST(CliIntegration, BothBackendsProtectNestedCollectionsAndTypeAliases)
             const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
             EXPECT_NE(result.exit_code, 0);
             EXPECT_EQ(result.stdout_text, "pret\n");
-            EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+            EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
         }
     }
     std::filesystem::remove_all(root);
@@ -3288,7 +3288,7 @@ TEST(CliIntegration, BothBackendsPreserveGlobalCollectionContracts)
         SCOPED_TRACE(backend);
         const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
         EXPECT_NE(result.exit_code, 0);
-        EXPECT_NE(result.stderr_text.find("erreur d'execution"), std::string::npos);
+        EXPECT_NE(result.stderr_text.find("erreur d'exécution"), std::string::npos);
     }
     std::filesystem::remove_all(root);
 }
@@ -3863,6 +3863,73 @@ fonction principal() {
         EXPECT_NE(result.exit_code, 0);
         EXPECT_NE(result.stdout_text.find("4\n"), std::string::npos) << result.stdout_text;
         EXPECT_NE(result.stderr_text.find("Entier"), std::string::npos) << result.stderr_text;
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_diagnostic_parity";
+    const auto file = root / "main.lum";
+    // The two engines detect these conditions in separate code. When each owned its
+    // wording they drifted: the same division reported "division par zero" from one
+    // and "division par zéro interdite" from the other, and an unknown member named
+    // the member in one and blamed the receiver in the other. Every message a
+    // program can reach is now written once, in diagnostics/runtime_messages.hpp.
+    const std::vector<std::string> programs = {
+        "soit a = 1 / 0 afficher(a)",
+        "soit a = 1.0 / 0.0 afficher(a)",
+        "soit a = 1 % 0 afficher(a)",
+        "soit a = 9223372036854775807 + 1 afficher(a)",
+        "soit l = [1] afficher(l[5])",
+        "soit l = [1] afficher(l[-1])",
+        "soit l = [1] afficher(l[\"a\"])",
+        "soit d = {\"a\": 1} afficher(d[\"b\"])",
+        "soit d = {\"a\": 1} d.retirer(\"b\")",
+        "soit d = {\"a\": 1} d.zzz()",
+        "soit l = [1] l.zzz()",
+        "soit e = {1} e.zzz()",
+        "soit t = [1].en_liste_fixe(1) t[0] = 2",
+        "afficher(\"ab\"[9])",
+        "pour chaque x dans 3 { afficher(x) }",
+        "soit x = 1 x()",
+        "soit x = 1 afficher(x[0])",
+        "soit x = 1 x[0] = 2",
+        "afficher(\"zz\" en Entier)",
+        "afficher(\"zz\" en Décimal)",
+        "soit e = {1} e.union(3)",
+        "soit e: Ensemble[Entier] = {1} e.ajouter(\"x\")",
+        "soit l: Liste[Entier] = [1] l.ajouter(\"x\")",
+        "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d[\"b\"] = \"x\"",
+        "afficher(\"ab\".sous_texte(0, 99))",
+    };
+
+    const auto first_error_line = [](const std::string &text) {
+        std::istringstream stream(text);
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            if (line.find("erreur") != std::string::npos && line.find("File \"") == std::string::npos)
+            {
+                return line;
+            }
+        }
+        return std::string();
+    };
+
+    for (const std::string &program : programs)
+    {
+        write_source(file, "importer Maths\nfonction principal() { " + program + " }\n");
+        const auto vm = run_cli("--vm " + shell_quote(file.string()), root);
+        const auto tw = run_cli("--tw " + shell_quote(file.string()), root);
+        SCOPED_TRACE(program);
+        EXPECT_NE(vm.exit_code, 0);
+        EXPECT_NE(tw.exit_code, 0);
+        const std::string vm_error = first_error_line(vm.stderr_text);
+        EXPECT_FALSE(vm_error.empty()) << vm.stderr_text;
+        EXPECT_EQ(vm_error, first_error_line(tw.stderr_text));
+        // Runtime diagnostics are written in French, accents included.
+        EXPECT_NE(vm_error.find("erreur d'exécution"), std::string::npos) << vm_error;
     }
     std::filesystem::remove_all(root);
 }

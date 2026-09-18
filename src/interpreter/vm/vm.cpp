@@ -9,6 +9,7 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/parser/utf8.hpp"
 #include "lumiere/interpreter/runtime/numeric.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/runtime/collection_constraints.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
@@ -88,7 +89,7 @@ double numeric_value(const Value &value)
     {
         return static_cast<double>(value.as_entier());
     }
-    throw VmRuntimeError("VM: operation arithmetique attend des valeurs numeriques");
+    throw VmRuntimeError("VM: opération arithmétique attend des valeurs numériques");
 }
 
 bool is_truthy(const Value &value)
@@ -488,7 +489,7 @@ void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &l
     if (const auto &constraint = list->constraint;
         constraint && !matches_type_name(value, constraint->element_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
+        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(constraint->element_type), value.type_name()));
     }
     if (list->constraint)
         annotate_value(value, list->constraint->element_type, {});
@@ -501,7 +502,7 @@ void VmRuntimeServices::enforce_set_element(const std::shared_ptr<EnsembleData> 
     if (const auto &constraint = set->constraint;
         constraint && !matches_type_name(value, constraint->element_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + display_runtime_type(constraint->element_type));
+        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(constraint->element_type), value.type_name()));
     }
     if (set->constraint)
         annotate_value(value, set->constraint->element_type, {});
@@ -517,10 +518,17 @@ void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData>
     {
         return;
     }
-    if (!matches_type_name(key, constraint->key_type) || !matches_type_name(value, constraint->value_type))
+    if (!matches_type_name(key, constraint->key_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend " + display_runtime_type(constraint->key_type) + " -> " +
-                             display_runtime_type(constraint->value_type));
+        throw VmRuntimeError("VM: " + messages::type_attendu(context + " (clé)",
+                                                             display_runtime_type(constraint->key_type),
+                                                             key.type_name()));
+    }
+    if (!matches_type_name(value, constraint->value_type))
+    {
+        throw VmRuntimeError("VM: " + messages::type_attendu(context + " (valeur)",
+                                                             display_runtime_type(constraint->value_type),
+                                                             value.type_name()));
     }
     annotate_value(key, constraint->key_type, {});
     annotate_value(value, constraint->value_type, {});
@@ -577,7 +585,7 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
                     throw std::invalid_argument("caractères restants");
                 stack.push_back(Value::entier(value));
             }
-            catch (...) { throw VmRuntimeError("VM: conversion vers Entier impossible pour une valeur de type Texte"); }
+            catch (...) { throw VmRuntimeError("VM: " + messages::conversion_impossible("Entier", "Texte")); }
         }
         else
         {
@@ -601,13 +609,13 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
             const auto value = numeric::parse_decimal(operand.as_texte());
             if (!value)
             {
-                throw VmRuntimeError("VM: conversion vers Decimal impossible pour une valeur de type Texte");
+                throw VmRuntimeError("VM: " + messages::conversion_impossible("Décimal", "Texte"));
             }
             stack.push_back(Value::decimal(*value));
         }
         else
         {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Decimal");
+            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Décimal");
         }
         return;
     }
@@ -654,7 +662,7 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
             const auto character = utf8::decode_single_character(operand.as_texte());
             if (!character.has_value())
             {
-                throw VmRuntimeError("VM: conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
+                throw VmRuntimeError("VM: conversion vers Symbole impossible: le texte doit contenir exactement un caractère");
             }
             stack.push_back(Value::symbole(*character));
         }
@@ -723,7 +731,7 @@ void execute_add(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: addition attend deux valeurs numeriques ou au moins un Texte");
+    throw VmRuntimeError("VM: addition attend deux valeurs numériques ou au moins un Texte");
 }
 
 void execute_subtract(std::vector<Value> &stack)
@@ -743,7 +751,7 @@ void execute_subtract(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: soustraction attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: soustraction attend deux valeurs numériques");
 }
 
 void execute_multiply(std::vector<Value> &stack)
@@ -763,7 +771,7 @@ void execute_multiply(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: multiplication attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: multiplication attend deux valeurs numériques");
 }
 
 void execute_divide(std::vector<Value> &stack)
@@ -775,7 +783,7 @@ void execute_divide(std::vector<Value> &stack)
     {
         if (right.as_entier() == 0)
         {
-            throw VmRuntimeError("VM: division par zero");
+            throw VmRuntimeError("VM: " + messages::division_par_zero());
         }
         stack.push_back(checked_integer(numeric::divide(left.as_entier(), right.as_entier())));
         return;
@@ -786,13 +794,13 @@ void execute_divide(std::vector<Value> &stack)
         const double divisor = numeric_value(right);
         if (divisor == 0.0)
         {
-            throw VmRuntimeError("VM: division par zero");
+            throw VmRuntimeError("VM: " + messages::division_par_zero());
         }
         stack.push_back(Value::decimal(numeric_value(left) / divisor));
         return;
     }
 
-    throw VmRuntimeError("VM: division attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: division attend deux valeurs numériques");
 }
 
 void execute_modulo(std::vector<Value> &stack)
@@ -805,7 +813,7 @@ void execute_modulo(std::vector<Value> &stack)
     }
     if (right.as_entier() == 0)
     {
-        throw VmRuntimeError("VM: modulo par zero");
+        throw VmRuntimeError("VM: " + messages::modulo_par_zero());
     }
     stack.push_back(checked_integer(numeric::remainder(left.as_entier(), right.as_entier())));
 }
@@ -826,7 +834,7 @@ void execute_negate(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: negation attend une valeur numerique");
+    throw VmRuntimeError("VM: négation attend une valeur numérique");
 }
 
 void execute_not(std::vector<Value> &stack)
@@ -966,7 +974,7 @@ void execute_iteration_snapshot(std::vector<Value> &stack)
         }
     }
     else
-        throw VmRuntimeError("VM: cette valeur n'est pas iterable");
+        throw VmRuntimeError("VM: " + messages::valeur_non_iterable(iterable.type_name()));
     stack.push_back(Value::liste(std::move(snapshot)));
 }
 
@@ -994,7 +1002,7 @@ void execute_sequence_length(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: longueur demandee sur une valeur non iterable");
+    throw VmRuntimeError("VM: longueur demandee sur une valeur non itérable");
 }
 
 void execute_index_get(std::vector<Value> &stack)
@@ -1008,51 +1016,50 @@ void execute_index_get(std::vector<Value> &stack)
             stack.push_back(entry->second);
             return;
         }
-        throw VmRuntimeError("VM: cle introuvable dans le Dictionnaire");
+        throw VmRuntimeError("VM: " + messages::cle_introuvable());
     }
 
     if (!index.is_entier())
     {
-        throw VmRuntimeError("VM: l'index de sequence doit etre un Entier");
+        throw VmRuntimeError("VM: " + messages::indice_non_entier("une séquence"));
     }
 
     const int64_t raw_index = index.as_entier();
-    if (raw_index < 0)
-    {
-        throw VmRuntimeError("VM: indice negatif");
-    }
-    const std::size_t offset = static_cast<std::size_t>(raw_index);
+    const std::size_t offset = raw_index < 0 ? 0 : static_cast<std::size_t>(raw_index);
+    const auto out_of_range = [&](const std::size_t length) {
+        return VmRuntimeError("VM: " + messages::indice_hors_limites(raw_index, length, sequence.type_name()));
+    };
 
     if (sequence.is_liste())
     {
-        if (offset >= sequence.as_liste()->elements.size())
+        if (raw_index < 0 || offset >= sequence.as_liste()->elements.size())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(sequence.as_liste()->elements.size());
         }
         stack.push_back(sequence.as_liste()->elements[offset]);
         return;
     }
     if (sequence.is_liste_fixe())
     {
-        if (offset >= sequence.as_liste_fixe()->elements.size())
+        if (raw_index < 0 || offset >= sequence.as_liste_fixe()->elements.size())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(sequence.as_liste_fixe()->elements.size());
         }
         stack.push_back(sequence.as_liste_fixe()->elements[offset]);
         return;
     }
     if (sequence.is_texte())
     {
-        const auto character = utf8::character_at(sequence.as_texte(), offset);
+        const auto character = raw_index < 0 ? std::nullopt : utf8::character_at(sequence.as_texte(), offset);
         if (!character.has_value())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(utf8::character_count(sequence.as_texte()).value_or(0));
         }
         stack.push_back(Value::symbole(*character));
         return;
     }
 
-    throw VmRuntimeError("VM: indexation demandee sur une valeur non iterable");
+    throw VmRuntimeError("VM: " + messages::acces_indice_impossible(sequence.type_name()));
 }
 
 void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
@@ -1065,14 +1072,14 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
     {
         if (!index.is_entier())
         {
-            throw VmRuntimeError("VM: l'index de liste doit etre un Entier");
+            throw VmRuntimeError("VM: l'index de liste doit être un Entier");
         }
         const std::int64_t raw_index = index.as_entier();
         if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= object.as_liste()->elements.size())
         {
             throw VmRuntimeError("VM: index de liste hors limites");
         }
-        runtime.enforce_list_element(object.as_liste(), value, "l'affectation de liste");
+        runtime.enforce_list_element(object.as_liste(), value, "Liste.ajouter");
         object.as_liste()->elements[static_cast<std::size_t>(raw_index)] = value;
         stack.push_back(value);
         return;
@@ -1080,20 +1087,20 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
 
     if (object.is_liste_fixe())
     {
-        throw VmRuntimeError("VM: une ListeFixe est immuable : ses elements ne peuvent pas etre remplaces");
+        throw VmRuntimeError("VM: " + messages::liste_fixe_immuable());
     }
 
     if (object.is_dictionnaire())
     {
         auto dictionary = object.as_dictionnaire();
-        runtime.enforce_dictionary_entry(dictionary, index, value, "l'affectation de dictionnaire");
+        runtime.enforce_dictionary_entry(dictionary, index, value, "l'entrée du dictionnaire");
         require_dictionary_key(index);
         dictionary->set(index, value);
         stack.push_back(value);
         return;
     }
 
-    throw VmRuntimeError("VM: affectation par indice impossible pour ce type");
+    throw VmRuntimeError("VM: " + messages::affectation_indice_impossible(object.type_name()));
 }
 
 void require_member_arity(const std::string &signature,
@@ -1187,7 +1194,7 @@ Value execute_member_call(const Value &receiver,
         if (!argument.name.empty())
         {
             throw VmRuntimeError("VM: " + receiver.type_name() + "." + member +
-                                 " n'accepte pas d'arguments nommes");
+                                 " n'accepte pas d'arguments nommés");
         }
         args.push_back(argument.value);
     }
@@ -1323,7 +1330,7 @@ Value execute_member_call(const Value &receiver,
         if (member == "ajouter")
         {
             require_member_arity("Ensemble.ajouter", args, 1);
-            runtime.enforce_set_element(set, args[0], "l'ajout a un ensemble");
+            runtime.enforce_set_element(set, args[0], "Ensemble.ajouter");
             require_dictionary_key(args[0]);
             return Value::logique(set->insert(args[0]));
         }
@@ -1439,18 +1446,18 @@ Value execute_member_call(const Value &receiver,
             {
                 return removed;
             }
-            throw VmRuntimeError("VM: cle introuvable dans le dictionnaire");
+            throw VmRuntimeError("VM: " + messages::cle_introuvable());
         }
     }
 
-    throw VmRuntimeError("VM: membre introuvable '" + member + "' pour " + receiver.type_name());
+    throw VmRuntimeError("VM: " + messages::membre_introuvable(member, receiver.type_name()));
 }
 
 Value VmRuntimeServices::call(Value callee, const NativeArgs &args)
 {
     if (!callee.is_fonction())
     {
-        throw VmRuntimeError("VM: la valeur n'est pas appelable");
+        throw VmRuntimeError("VM: " + messages::valeur_non_appelable(callee.type_name()));
     }
     if (callee.as_fonction()->is_native())
     {
@@ -1836,7 +1843,7 @@ Value run_frames(VmExecutionState &execution,
         auto &locals = frame.locals;
         if (ip >= chunk.code.size())
         {
-            throw VmRuntimeError("VM: fonction terminee sans RETURN");
+            throw VmRuntimeError("VM: fonction terminée sans RETURN");
         }
 
         opcode_offset = ip;
@@ -2067,17 +2074,17 @@ Value run_frames(VmExecutionState &execution,
                 const VmMethodDescriptor *parent_method = find_vm_method(module, klass->parent, method.name);
                 if (method.is_override && parent_method == nullptr)
                 {
-                    throw VmRuntimeError("VM: remplace utilise sans methode parente correspondante: " + method.name);
+                    throw VmRuntimeError("VM: remplace utilise sans méthode parente correspondante: " + method.name);
                 }
                 if (!method.is_override && parent_method != nullptr)
                 {
-                    throw VmRuntimeError("VM: methode parente deja definie; utilisez remplace: " + method.name);
+                    throw VmRuntimeError("VM: méthode parente déjà définie; utilisez remplace: " + method.name);
                 }
                 if (parent_method != nullptr &&
                     (parent_method->parameter_types != method.parameter_types ||
                      parent_method->return_type != method.return_type))
                 {
-                    throw VmRuntimeError("VM: la methode remplacee doit conserver la meme signature: " + method.name);
+                    throw VmRuntimeError("VM: la méthode remplacee doit conserver la même signature: " + method.name);
                 }
             }
             for (const auto &[interface_name, interface] : klass->interfaces)
@@ -2098,18 +2105,18 @@ Value run_frames(VmExecutionState &execution,
                     if (implemented == nullptr)
                     {
                         throw VmRuntimeError("VM: la classe " + descriptor.name +
-                                             " ne realise pas la methode requise " + interface->name + "." + required.name);
+                                             " ne réalise pas la méthode requise " + interface->name + "." + required.name);
                     }
                     if (implemented->parameter_types != required.parameter_types ||
                         implemented->return_type != required.return_type)
                     {
-                        throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
+                        throw VmRuntimeError("VM: la méthode " + descriptor.name + "." + required.name +
                                              " ne respecte pas la signature requise par l'interface " + interface->name);
                     }
                     if (implemented->is_private)
                     {
-                        throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
-                                             " ne peut pas etre privee car elle realise l'interface " + interface->name);
+                        throw VmRuntimeError("VM: la méthode " + descriptor.name + "." + required.name +
+                                             " ne peut pas être privée car elle réalise l'interface " + interface->name);
                     }
                 }
             }
@@ -2203,19 +2210,19 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::LESS:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left < right; },
-                                    "VM: comparaison '<' attend deux valeurs numeriques");
+                                    "VM: comparaison '<' attend deux valeurs numériques");
             break;
         case Opcode::LESS_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left <= right; },
-                                    "VM: comparaison '<=' attend deux valeurs numeriques");
+                                    "VM: comparaison '<=' attend deux valeurs numériques");
             break;
         case Opcode::GREATER:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left > right; },
-                                    "VM: comparaison '>' attend deux valeurs numeriques");
+                                    "VM: comparaison '>' attend deux valeurs numériques");
             break;
         case Opcode::GREATER_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left >= right; },
-                                    "VM: comparaison '>=' attend deux valeurs numeriques");
+                                    "VM: comparaison '>=' attend deux valeurs numériques");
             break;
         case Opcode::CALL:
         {
@@ -2384,7 +2391,7 @@ Value run_frames(VmExecutionState &execution,
                 {
                     if (!argument.name.empty())
                     {
-                        throw VmRuntimeError("VM: " + name + " n'accepte pas d'arguments nommes");
+                        throw VmRuntimeError("VM: " + name + " n'accepte pas d'arguments nommés");
                     }
                 }
                 std::vector<Value> values;
@@ -2503,7 +2510,7 @@ Value run_frames(VmExecutionState &execution,
                                                                   module.members[member_index]);
                 if (method == nullptr)
                 {
-                    throw VmRuntimeError("VM: methode introuvable '" + module.members[member_index] + "'");
+                    throw VmRuntimeError("VM: méthode introuvable '" + module.members[member_index] + "'");
                 }
                 const bool private_access = !frame.locals.empty() &&
                                             frame.function->name.find('.') != std::string::npos &&
@@ -2511,7 +2518,7 @@ Value run_frames(VmExecutionState &execution,
                                             frame.locals[0].get().as_objet() == receiver.as_objet();
                 if (method->is_private && !private_access)
                 {
-                    throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
+                    throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
                 const FunctionBytecode &target = module.functions[method->function_index];
                 std::vector<Value> method_args = normalize_closure_arguments(target, args);
@@ -2555,7 +2562,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (stack.size() <= frame.stack_base)
             {
-                throw VmRuntimeError("VM: pile insuffisante pour l'acces membre");
+                throw VmRuntimeError("VM: pile insuffisante pour l'accès membre");
             }
             const Value receiver = pop_value(stack);
             if (receiver.is_objet())
@@ -2572,7 +2579,7 @@ Value run_frames(VmExecutionState &execution,
                                                 frame.locals[0].get().as_objet() == receiver.as_objet();
                     if (descriptor != nullptr && descriptor->is_private && !private_access)
                     {
-                        throw VmRuntimeError("VM: acces interdit au champ prive '" + descriptor->name + "'");
+                        throw VmRuntimeError("VM: accès interdit au champ privé '" + descriptor->name + "'");
                     }
                     stack.push_back(field->second);
                     break;
@@ -2592,7 +2599,7 @@ Value run_frames(VmExecutionState &execution,
                                             frame.locals[0].get().as_objet() == receiver.as_objet();
                 if (method->is_private && !private_access)
                 {
-                    throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
+                    throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
                 auto body = std::make_shared<VmClosureBody>();
                 body->function_index = method->function_index;
@@ -2639,7 +2646,7 @@ Value run_frames(VmExecutionState &execution,
                                         frame.locals[0].get().as_objet() == receiver.as_objet();
             if (field->is_private && !private_access)
             {
-                throw VmRuntimeError("VM: affectation interdite au champ prive '" + field->name + "'");
+                throw VmRuntimeError("VM: affectation interdite au champ privé '" + field->name + "'");
             }
             if (field->is_fixed)
             {
@@ -2954,7 +2961,7 @@ Value VM::run(const ModuleBytecode &module)
                 {
                     if (!argument.name.empty())
                     {
-                        throw VmRuntimeError("VM: arguments nommes ne sont pas pris en charge pour '" + name + "'");
+                        throw VmRuntimeError("VM: arguments nommés ne sont pas pris en charge pour '" + name + "'");
                     }
                     values.push_back(argument.value);
                 }

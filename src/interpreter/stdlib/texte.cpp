@@ -161,7 +161,7 @@ Value execute_texte_operation(IRuntime &runtime,
         const std::string separator = stdlib_expect_text(runtime, args[0].value, "Texte.separer", call_site);
         if (separator.empty())
         {
-            runtime.raise_runtime_error(call_site, "Texte.separer attend un separateur non vide");
+            runtime.raise_runtime_error(call_site, "Texte.separer attend un séparateur non vide");
         }
         Value result = Value::liste(split_text_items(text, separator));
         runtime.annotate_value(result, "Liste[Texte]", call_site);
@@ -247,14 +247,14 @@ Value execute_texte_operation(IRuntime &runtime,
         const int64_t count = stdlib_expect_integer(runtime, args[0].value, "Texte.repeter", call_site);
         if (count < 0)
         {
-            runtime.raise_runtime_error(call_site, "Texte.repeter attend un nombre non negatif");
+            runtime.raise_runtime_error(call_site, "Texte.repeter attend un nombre non négatif");
         }
         constexpr int64_t kMaxRepeatBytes = 10 * 1024 * 1024;
         if (text.empty() || count == 0)
             return Value::texte("");
         if (count > kMaxRepeatBytes / static_cast<int64_t>(text.size()))
         {
-            runtime.raise_runtime_error(call_site, "Texte.repeter: le resultat depasse la taille maximale autorisee");
+            runtime.raise_runtime_error(call_site, "Texte.repeter: le résultat dépasse la taille maximale autorisee");
         }
         std::string result;
         result.reserve(text.size() * static_cast<std::size_t>(count));
@@ -314,11 +314,11 @@ Value execute_texte_operation(IRuntime &runtime,
         const int64_t longueur = stdlib_expect_integer(runtime, args[1].value, "Texte.sous_texte", call_site);
         if (longueur < 0)
         {
-            runtime.raise_runtime_error(call_site, "longueur negative interdite");
+            runtime.raise_runtime_error(call_site, "longueur négative interdite");
         }
         if (static_cast<std::size_t>(longueur) > count - static_cast<std::size_t>(debut))
         {
-            runtime.raise_runtime_error(call_site, "sous_texte: la longueur depasse la taille du texte");
+            runtime.raise_runtime_error(call_site, "sous_texte: la longueur dépasse la taille du texte");
         }
         const auto begin = static_cast<std::size_t>(debut);
         const auto end = begin + static_cast<std::size_t>(longueur);
@@ -386,7 +386,7 @@ Value execute_texte_operation(IRuntime &runtime,
             call_site);
     }
 
-    runtime.raise_runtime_error(call_site, "operation Texte inconnue: " + operation);
+    runtime.raise_runtime_error(call_site, "opération Texte inconnue: " + operation);
     return Value::rien();
 }
 
@@ -406,7 +406,7 @@ void bind_texte_module_adapter(Module &module,
             }
             if (!args[0].name.empty())
             {
-                runtime.raise_runtime_error(native_args.site, "Texte." + name + " n'accepte pas d'arguments nommes");
+                runtime.raise_runtime_error(native_args.site, "Texte." + name + " n'accepte pas d'arguments nommés");
             }
             const std::string text = stdlib_expect_text(runtime, args[0].value, "Texte." + name, native_args.site);
             std::vector<RuntimeArgument> remaining(args.begin() + 1, args.end());

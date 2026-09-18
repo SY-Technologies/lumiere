@@ -35,7 +35,7 @@ public:
         if (m_values.count(name))
         {
             throw RuntimeError(
-                "le symbole '" + name + "' est deja declare dans cette portee"
+                "le symbole '" + name + "' est déjà déclaré dans cette portée"
             );
         }
         m_values[name] = Binding{std::move(val), false, std::move(declared_type)};
@@ -55,7 +55,7 @@ public:
             return m_parent->get(name);
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portee courante"
+            "le symbole '" + name + "' est introuvable dans la portée courante"
         );
     }
 
@@ -82,7 +82,7 @@ public:
             if (it->second.is_fixe)
             {
                 throw RuntimeError(
-                    "le symbole '" + name + "' est fixe et ne peut pas etre modifie"
+                    "le symbole '" + name + "' est fixe et ne peut pas être modifie"
                 );
             }
             it->second.value = std::move(val);
@@ -94,7 +94,7 @@ public:
             return;
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portee courante"
+            "le symbole '" + name + "' est introuvable dans la portée courante"
         );
     }
 
@@ -119,7 +119,7 @@ public:
             return m_parent->declared_type_of(name);
         }
         throw RuntimeError(
-            "le symbole '" + name + "' est introuvable dans la portee courante"
+            "le symbole '" + name + "' est introuvable dans la portée courante"
         );
     }
 

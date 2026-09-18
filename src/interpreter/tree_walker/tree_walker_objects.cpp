@@ -161,7 +161,7 @@ namespace lumiere
     {
         if (m_env == nullptr)
         {
-            throw_runtime_error(klass.name, "environnement d'execution absent");
+            throw_runtime_error(klass.name, "environnement d'exécution absent");
         }
 
         for (const TypeExpr &interface_name : klass.interfaces)
@@ -190,7 +190,7 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         klass.name,
-                        "la classe " + klass.name.lexeme + " ne realise pas la methode requise " +
+                        "la classe " + klass.name.lexeme + " ne réalise pas la méthode requise " +
                             name + "." + required_method->name.lexeme);
                 }
 
@@ -199,7 +199,7 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         implemented_method->name,
-                        "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
+                        "la méthode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
                             " ne respecte pas la signature requise par l'interface " + name);
                 }
 
@@ -207,8 +207,8 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         implemented_method->name,
-                        "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
-                            " ne peut pas etre privee car elle realise l'interface " + name);
+                        "la méthode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
+                            " ne peut pas être privée car elle réalise l'interface " + name);
                 }
             }
         }

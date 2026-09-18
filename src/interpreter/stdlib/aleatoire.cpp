@@ -34,7 +34,7 @@ void register_aleatoire_module(Module &module)
             const int64_t seed_raw = stdlib_expect_integer(runtime, args[0].value, "Aléatoire.graine", native_args.site);
             if (seed_raw < 0)
             {
-                runtime.raise_runtime_error(native_args.site, "Aléatoire.graine attend une valeur non negative");
+                runtime.raise_runtime_error(native_args.site, "Aléatoire.graine attend une valeur non négative");
             }
             state->generator.seed(static_cast<uint64_t>(seed_raw));
             return Value::rien();

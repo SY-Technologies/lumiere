@@ -2,6 +2,7 @@
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
 #include "lumiere/interpreter/runtime/numeric.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 
 #include <functional>
 #include <iostream>
@@ -24,7 +25,7 @@ Value checked_integer(TreeWalker &runtime, const Token &site,
 
 std::string describe_binary_operand_types(const Value &left, const Value &right)
 {
-    return "types recus: " + left.type_name() + " et " + right.type_name();
+    return "types reçus: " + left.type_name() + " et " + right.type_name();
 }
 
 std::string describe_expected_binary_types(const std::string &operation,
@@ -39,8 +40,7 @@ std::string describe_expected_unary_type(const std::string &operation,
                                          const Value &operand,
                                          const std::string &expected_type)
 {
-    return operation + " attend une valeur de type " + expected_type +
-           "; type recu: " + operand.type_name();
+    return messages::type_attendu(operation, expected_type, operand.type_name());
 }
 
 } // namespace
@@ -80,7 +80,7 @@ void TreeWalker::visit(LiteralExpr &expr)
         m_result = Value::rien();
         return;
     default:
-        throw_runtime_error(expr.token, "litteral non pris en charge");
+        throw_runtime_error(expr.token, "littéral non pris en charge");
     }
 }
 
@@ -93,12 +93,12 @@ void TreeWalker::visit(IdentifierExpr &expr)
     }
     if (expr.name.type == TokenType::PARENT)
     {
-        throw_runtime_error(expr.name, "parent doit etre utilise avec un acces membre");
+        throw_runtime_error(expr.name, "parent doit être utilise avec un accès membre");
     }
 
     if (m_env == nullptr)
     {
-        throw_runtime_error(expr.name, "environnement d'execution absent");
+        throw_runtime_error(expr.name, "environnement d'exécution absent");
     }
 
     try
@@ -126,7 +126,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         if (!left.is_logique())
         {
             throw_runtime_error(expr.op,
-                                "l'operateur 'et' attend une operande gauche de type Logique; type recu: " +
+                                "l'opérateur 'et' attend une operande gauche de type Logique; type reçu: " +
                                     left.type_name());
         }
 
@@ -141,7 +141,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         {
             throw_runtime_error(
                 expr.op,
-                describe_expected_binary_types("l'operateur 'et'", left, right, "deux operandes de type Logique"));
+                describe_expected_binary_types("l'opérateur 'et'", left, right, "deux operandes de type Logique"));
         }
 
         m_result = Value::logique(right.as_logique());
@@ -153,7 +153,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         if (!left.is_logique())
         {
             throw_runtime_error(expr.op,
-                                "l'operateur 'ou' attend une operande gauche de type Logique; type recu: " +
+                                "l'opérateur 'ou' attend une operande gauche de type Logique; type reçu: " +
                                     left.type_name());
         }
 
@@ -168,7 +168,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         {
             throw_runtime_error(
                 expr.op,
-                describe_expected_binary_types("l'operateur 'ou'", left, right, "deux operandes de type Logique"));
+                describe_expected_binary_types("l'opérateur 'ou'", left, right, "deux operandes de type Logique"));
         }
 
         m_result = Value::logique(right.as_logique());
@@ -197,7 +197,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("l'addition", left, right, "deux valeurs numeriques ou au moins un Texte"));
+            describe_expected_binary_types("l'addition", left, right, "deux valeurs numériques ou au moins un Texte"));
     case TokenType::MOINS:
         if (left.is_entier() && right.is_entier())
         {
@@ -211,7 +211,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la soustraction", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la soustraction", left, right, "deux valeurs numériques"));
     case TokenType::ETOILE:
         if (left.is_entier() && right.is_entier())
         {
@@ -225,13 +225,13 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la multiplication", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la multiplication", left, right, "deux valeurs numériques"));
     case TokenType::SLASH:
         if (left.is_entier() && right.is_entier())
         {
             if (right.as_entier() == 0)
             {
-                throw_runtime_error(expr.op, "division par zéro");
+                throw_runtime_error(expr.op, messages::division_par_zero());
             }
             m_result = checked_integer(*this, expr.op, numeric::divide(left.as_entier(), right.as_entier()));
             return;
@@ -241,20 +241,20 @@ void TreeWalker::visit(BinaryExpr &expr)
             const double divisor = assert_decimal(right, expr.op);
             if (divisor == 0.0)
             {
-                throw_runtime_error(expr.op, "division par zero interdite");
+                throw_runtime_error(expr.op, messages::division_par_zero());
             }
             m_result = Value::decimal(assert_decimal(left, expr.op) / divisor);
             return;
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la division", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la division", left, right, "deux valeurs numériques"));
     case TokenType::MODULO:
         if (left.is_entier() && right.is_entier())
         {
             if (right.as_entier() == 0)
             {
-                throw_runtime_error(expr.op, "modulo par zéro");
+                throw_runtime_error(expr.op, messages::modulo_par_zero());
             }
             m_result = checked_integer(*this, expr.op, numeric::remainder(left.as_entier(), right.as_entier()));
             return;
@@ -281,7 +281,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '<'", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '<'", left, right, "deux valeurs numériques"));
     case TokenType::INFERIEUR_EGAL:
         if (left.is_entier() && right.is_entier())
         {
@@ -295,7 +295,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '<='", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '<='", left, right, "deux valeurs numériques"));
     case TokenType::SUPERIEUR:
         if (left.is_entier() && right.is_entier())
         {
@@ -309,7 +309,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '>'", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '>'", left, right, "deux valeurs numériques"));
     case TokenType::SUPERIEUR_EGAL:
         if (left.is_entier() && right.is_entier())
         {
@@ -323,9 +323,9 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '>='", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '>='", left, right, "deux valeurs numériques"));
     default:
-        throw_runtime_error(expr.op, "operateur binaire non pris en charge");
+        throw_runtime_error(expr.op, "opérateur binaire non pris en charge");
     }
 }
 
@@ -349,14 +349,14 @@ void TreeWalker::evaluate_assignment(BinaryExpr &expr)
         return;
     }
 
-    throw_runtime_error(expr.op, "cible d'affectation invalide: une variable, un champ ou un acces par indice est attendu");
+    throw_runtime_error(expr.op, "cible d'affectation invalide: une variable, un champ ou un accès par indice est attendu");
 }
 
 void TreeWalker::assign_identifier(IdentifierExpr &target, Expr &value_expr)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(target.name, "environnement d'execution absent");
+        throw_runtime_error(target.name, "environnement d'exécution absent");
     }
 
     Value value = evaluate(value_expr);
@@ -405,7 +405,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
-            throw_runtime_error(target.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
+            throw_runtime_error(target.member, "'parent' ne peut être utilise ici: aucune classe parente n'est disponible");
         }
     }
 
@@ -417,7 +417,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     }
     if (field_decl->is_prive && !access_uses_ici(*target.object))
     {
-        throw_runtime_error(target.member, "acces interdit au champ prive '" + target.member.lexeme + "'");
+        throw_runtime_error(target.member, "accès interdit au champ privé '" + target.member.lexeme + "'");
     }
 
     Value value = evaluate(value_expr);
@@ -439,13 +439,13 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     if (object.is_liste_fixe())
     {
         throw_runtime_error(target.bracket,
-                            "une ListeFixe est immuable : ses elements ne peuvent pas etre remplaces");
+                            messages::liste_fixe_immuable());
     }
 
     if (!supports_mutable_index_assignment(object))
     {
         throw_runtime_error(target.bracket,
-                            "affectation par indice impossible: la cible doit etre une Liste ou un Dictionnaire");
+                            messages::affectation_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
@@ -454,9 +454,10 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
         auto list = object.as_liste();
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(target.bracket, "indice hors limites");
+            throw_runtime_error(target.bracket,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
-        enforce_list_element_constraint(list, value, target.bracket, "l'element de liste");
+        enforce_list_element_constraint(list, value, target.bracket, "Liste.ajouter");
         list->elements[static_cast<std::size_t>(position)] = value;
         m_result = std::move(value);
         return;
@@ -465,7 +466,7 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     if (object.is_dictionnaire())
     {
         auto dict = object.as_dictionnaire();
-        enforce_dict_entry_constraint(dict, key, value, target.bracket, "l'entree du dictionnaire");
+        enforce_dict_entry_constraint(dict, key, value, target.bracket, "l'entrée du dictionnaire");
         require_dictionary_key(key, target.bracket);
         dict->set(key, value);
         m_result = std::move(value);
@@ -473,7 +474,7 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     }
 
     throw_runtime_error(target.bracket,
-                        "affectation par indice impossible: la cible doit etre une Liste ou un Dictionnaire");
+                        messages::affectation_indice_impossible(object.type_name()));
 }
 
 void TreeWalker::visit(SetExpr &expr)
@@ -524,7 +525,7 @@ void TreeWalker::visit(UnaryExpr &expr)
             m_result = Value::decimal(-assert_decimal(operand, expr.op));
             return;
         }
-        throw_runtime_error(expr.op, describe_expected_unary_type("l'operateur unaire '-'", operand, "numerique"));
+        throw_runtime_error(expr.op, describe_expected_unary_type("l'opérateur unaire '-'", operand, "numerique"));
     case TokenType::NON:
         m_result = Value::logique(!is_truthy(operand));
         return;
@@ -532,7 +533,7 @@ void TreeWalker::visit(UnaryExpr &expr)
         break;
     }
 
-    throw_runtime_error(expr.op, "operateur unaire non pris en charge");
+    throw_runtime_error(expr.op, "opérateur unaire non pris en charge");
 }
 
 void TreeWalker::visit(CastExpr &expr)
@@ -570,7 +571,7 @@ void TreeWalker::visit(CastExpr &expr)
             }
             catch (...)
             {
-                throw_runtime_error(expr.target_type.source, "conversion vers Entier impossible pour une valeur de type Texte");
+                throw_runtime_error(expr.target_type.source, messages::conversion_impossible("Entier", "Texte"));
             }
         }
     }
@@ -594,7 +595,7 @@ void TreeWalker::visit(CastExpr &expr)
                 m_result = Value::decimal(*value);
                 return;
             }
-            throw_runtime_error(expr.target_type.source, "conversion vers Décimal impossible pour une valeur de type Texte");
+            throw_runtime_error(expr.target_type.source, messages::conversion_impossible("Décimal", "Texte"));
         }
     }
 
@@ -644,7 +645,7 @@ void TreeWalker::visit(CastExpr &expr)
             const std::optional<char32_t> symbol_char = utf8::decode_single_character(operand.as_texte());
             if (!symbol_char.has_value())
             {
-                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
+                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le texte doit contenir exactement un caractère");
             }
             m_result = Value::symbole(*symbol_char);
             return;
@@ -712,7 +713,7 @@ void TreeWalker::visit(CallExpr &expr)
             {
                 if (!arg.name.empty())
                 {
-                    throw_runtime_error(expr.paren, "ListeFixe.remplir n'accepte pas d'arguments nommes");
+                    throw_runtime_error(expr.paren, "ListeFixe.remplir n'accepte pas d'arguments nommés");
                 }
             }
 
@@ -727,7 +728,7 @@ void TreeWalker::visit(CallExpr &expr)
             const int64_t length = assert_entier(length_value, expr.paren);
             if (length < 0)
             {
-                throw_runtime_error(expr.paren, "la taille d'une ListeFixe ne peut pas etre negative");
+                throw_runtime_error(expr.paren, "la taille d'une ListeFixe ne peut pas être négative");
             }
 
             const Value fill_value = evaluate(*expr.args[2].value);
@@ -758,7 +759,7 @@ void TreeWalker::visit(CallExpr &expr)
     }
     if (!callee.is_fonction())
     {
-        throw_runtime_error(expr.paren, "la valeur appelee n'est pas une fonction");
+        throw_runtime_error(expr.paren, messages::valeur_non_appelable(callee.type_name()));
     }
 
     m_result = call_function(callee.as_fonction(), expr.args, expr.paren);
@@ -791,7 +792,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
             return;
         }
 
-        throw_runtime_error(expr.member, "acces membre impossible: la cible avant '.' doit etre un Objet");
+        throw_runtime_error(expr.member, messages::membre_introuvable(expr.member.lexeme, object.type_name()));
     }
 
     auto instance = object.as_objet();
@@ -800,7 +801,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
-            throw_runtime_error(expr.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
+            throw_runtime_error(expr.member, "'parent' ne peut être utilise ici: aucune classe parente n'est disponible");
         }
     }
 
@@ -819,7 +820,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
     {
         if (field_decl->is_prive && !access_uses_ici(*expr.object))
         {
-            throw_runtime_error(expr.member, "acces interdit au champ prive '" + expr.member.lexeme + "'");
+            throw_runtime_error(expr.member, "accès interdit au champ privé '" + expr.member.lexeme + "'");
         }
 
         auto field_it = instance->fields.find(expr.member.lexeme);
@@ -839,7 +840,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
         {
             if (function_decl->is_prive && !access_uses_ici(*expr.object))
             {
-                throw_runtime_error(expr.member, "acces interdit a la methode privee '" + expr.member.lexeme + "'");
+                throw_runtime_error(expr.member, "accès interdit à la méthode privée '" + expr.member.lexeme + "'");
             }
 
             m_result = Value::fonction(make_declared_function(
@@ -858,7 +859,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
         }
     }
 
-    throw_runtime_error(expr.member, "membre introuvable: '" + expr.member.lexeme + "'");
+    throw_runtime_error(expr.member, messages::membre_introuvable(expr.member.lexeme, object.type_name()));
 }
 
 void TreeWalker::visit(IndexAccessExpr &expr)
@@ -868,7 +869,7 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
     if (!supports_index_read(object))
     {
-        throw_runtime_error(expr.bracket, "acces par indice impossible pour une valeur de type " + object.type_name());
+        throw_runtime_error(expr.bracket, messages::acces_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
@@ -878,7 +879,8 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(expr.bracket,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
         m_result = list->elements[static_cast<std::size_t>(position)];
@@ -892,7 +894,8 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(expr.bracket,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
         m_result = list->elements[static_cast<std::size_t>(position)];
@@ -909,7 +912,7 @@ void TreeWalker::visit(IndexAccessExpr &expr)
             return;
         }
 
-        throw_runtime_error(expr.bracket, "cle introuvable dans le Dictionnaire");
+        throw_runtime_error(expr.bracket, messages::cle_introuvable());
     }
 
     if (object.is_texte())
@@ -925,7 +928,8 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
         if (position < 0 || static_cast<std::size_t>(position) >= *length)
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(expr.bracket,
+                                messages::indice_hors_limites(position, *length, object.type_name()));
         }
 
         const std::optional<char32_t> symbol_char = utf8::character_at(text, static_cast<std::size_t>(position));
@@ -938,7 +942,7 @@ void TreeWalker::visit(IndexAccessExpr &expr)
         return;
     }
 
-    throw_runtime_error(expr.bracket, "acces par indice impossible pour une valeur de type " + object.type_name());
+    throw_runtime_error(expr.bracket, messages::acces_indice_impossible(object.type_name()));
 }
 
 void TreeWalker::visit(PropagationExpr &expr)
@@ -1074,7 +1078,7 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
 
                 if (target_index == params.size())
                 {
-                    raise_runtime_error(call_site, "aucun parametre nomme '" + args[i].name + "'");
+                    raise_runtime_error(call_site, "aucun paramètre nommé '" + args[i].name + "'");
                 }
             }
             else
@@ -1095,7 +1099,7 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
 
             if (bound_arguments[target_index].has_value())
             {
-                raise_runtime_error(call_site, "le parametre '" + params[target_index].name + "' est fourni plusieurs fois");
+                raise_runtime_error(call_site, "le paramètre '" + params[target_index].name + "' est fourni plusieurs fois");
             }
 
             bound_arguments[target_index] = args[i].value;
@@ -1116,14 +1120,14 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
             }
             else
             {
-                raise_runtime_error(call_site, "argument manquant pour le parametre '" + parameter.name + "'");
+                raise_runtime_error(call_site, "argument manquant pour le paramètre '" + parameter.name + "'");
             }
 
             ensure_value_matches_annotation(
                 argument_value,
                 parameter.type,
                 site_token,
-                "le parametre '" + parameter.name + "'");
+                "le paramètre '" + parameter.name + "'");
             m_env->define(parameter.name, std::move(argument_value), resolved_annotation_name(parameter.type));
         }
 
@@ -1216,7 +1220,7 @@ Value TreeWalker::call_builtin(const std::string &name,
         {
             if (!args[i].name.empty())
             {
-                throw_runtime_error(call_site, "les arguments nommes ne sont pas pris en charge pour 'afficher'");
+                throw_runtime_error(call_site, "les arguments nommés ne sont pas pris en charge pour 'afficher'");
             }
 
             if (i > 0)
@@ -1254,7 +1258,7 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
         if (!args[0].name.empty())
         {
-            throw_runtime_error(call_site, "type_de n'accepte pas d'arguments nommes");
+            throw_runtime_error(call_site, "type_de n'accepte pas d'arguments nommés");
         }
 
         return Value::texte(runtime_type_name(evaluate(*args[0].value)));

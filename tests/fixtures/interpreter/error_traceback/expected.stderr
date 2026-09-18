@@ -4,4 +4,4 @@ Traceback (most recent call last):
   File "/Users/sylvainyabre/programming/tech/lumiere/tests/fixtures/interpreter/error_traceback/main.lum", line 3, column 18
       afficher(notes[4])
                      ^
-erreur d'execution: indice hors limites
+erreur d'exécution: indice hors limites : 4 pour Liste de taille 1

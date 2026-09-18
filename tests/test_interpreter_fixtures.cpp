@@ -780,7 +780,7 @@ TEST(InterpreterExpressions, RejectsRedeclarationInSameScope)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterExpressions, AllowsShadowingInInnerScope)
@@ -906,7 +906,7 @@ TEST(InterpreterCollections, RejectsDictionaryLookupForMissingKey)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("cle introuvable"), std::string::npos);
+    EXPECT_NE(error.find("clé introuvable"), std::string::npos);
 }
 
 TEST(InterpreterCollections, RejectsNonIterablePourTarget)
@@ -920,7 +920,7 @@ TEST(InterpreterCollections, RejectsNonIterablePourTarget)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("n'est pas iterable"), std::string::npos);
+    EXPECT_NE(error.find("n'est pas itérable"), std::string::npos);
 }
 
 TEST(InterpreterCollections, RejectsNegativeTextIndex)
@@ -1193,7 +1193,7 @@ TEST(InterpreterObjects, RejectsOverrideWithMismatchedSignature)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("meme signature"), std::string::npos);
+    EXPECT_NE(error.find("même signature"), std::string::npos);
 }
 
 TEST(InterpreterObjects, SupportsMemberAndIndexedAssignment)
@@ -1231,7 +1231,7 @@ TEST(InterpreterObjects, RejectsPrivateFieldAccessOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("champ prive"), std::string::npos);
+    EXPECT_NE(error.find("champ privé"), std::string::npos);
 }
 
 TEST(InterpreterObjects, AcceptsAccentlessAliasesForAccentedKeywords)
@@ -1288,7 +1288,7 @@ TEST(InterpreterObjects, RejectsPrivateMethodAccessOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("methode privee"), std::string::npos);
+    EXPECT_NE(error.find("méthode privée"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsBareParentUsage)
@@ -1343,7 +1343,7 @@ TEST(InterpreterObjects, RejectsMemberAccessOnNonObject)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("acces membre impossible"), std::string::npos);
+    EXPECT_NE(error.find("membre introuvable"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsAssignmentToPrivateFieldOutsideIci)
@@ -1359,7 +1359,7 @@ TEST(InterpreterObjects, RejectsAssignmentToPrivateFieldOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("champ prive"), std::string::npos);
+    EXPECT_NE(error.find("champ privé"), std::string::npos);
 }
 
 TEST(InterpreterObjects, EnforcesTypedConstructorFieldsAndAssignments)
@@ -1437,7 +1437,7 @@ TEST(InterpreterObjects, RejectsPrivateInterfaceImplementationMethod)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("ne peut pas etre privee"), std::string::npos);
+    EXPECT_NE(error.find("ne peut pas être privée"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsMethodCallOnNonCallableMember)
@@ -1512,7 +1512,7 @@ TEST(InterpreterObjects, RejectsRemplaceWithoutParentMethod)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("remplace utilise sans methode parente"), std::string::npos);
+    EXPECT_NE(error.find("remplace utilise sans méthode parente"), std::string::npos);
 }
 
 
@@ -1642,7 +1642,7 @@ TEST(InterpreterModules, RejectsSelectiveImportOfInternalMember)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("membre non exporte"), std::string::npos);
+    EXPECT_NE(error.find("membre non exporté"), std::string::npos);
 }
 
 TEST(InterpreterModules, RejectsUnknownModule)
@@ -1682,7 +1682,7 @@ TEST(InterpreterModules, RejectsDuplicateSelectiveBindings)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterModules, RejectsNamespaceAliasCollision)
@@ -1703,7 +1703,7 @@ TEST(InterpreterModules, RejectsNamespaceAliasCollision)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterModules, PreservesInheritedBehaviorAcrossNamespaceImports)
@@ -1751,7 +1751,7 @@ TEST(InterpreterModules, RejectsSelectiveImportOfUnknownExportedName)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("membre non exporte"), std::string::npos);
+    EXPECT_NE(error.find("membre non exporté"), std::string::npos);
 }
 
 TEST(InterpreterModules, NamespaceAndSelectiveImportCanCoexist)
@@ -2247,7 +2247,7 @@ TEST(InterpreterBuiltinModules, RejectsNamedArgumentsWhereUnsupported)
 
     EXPECT_FALSE(completed2);
     EXPECT_TRUE(output2.empty());
-    EXPECT_NE(error2.find("arguments nommes"), std::string::npos);
+    EXPECT_NE(error2.find("arguments nommés"), std::string::npos);
 }
 
 TEST(InterpreterBuiltinModulesMatrix, RejectsInvalidBuiltinArityAndTypes)
@@ -2579,7 +2579,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidTempsUsage)
             "fonction principal() {\n"
             "  Temps.attendre(Temps.millisecondes(-1))\n"
             "}\n",
-            "Temps.attendre attend une duree positive"
+            "Temps.attendre attend une durée positive"
         },
         {
             "importer Temps\n"
@@ -4234,7 +4234,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteOperations)
 
     EXPECT_FALSE(completed7);
     EXPECT_TRUE(output7.empty());
-    EXPECT_NE(error7.find("longueur negative interdite"), std::string::npos);
+    EXPECT_NE(error7.find("longueur négative interdite"), std::string::npos);
 
     auto [output8, completed8, error8] = execute_program_with_error(
         "fonction principal() {\n"
@@ -4343,7 +4343,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.contient(\"abc\", valeur: \"a\"))\n"
             "}\n",
-            "n'accepte pas d'arguments nommes"
+            "n'accepte pas d'arguments nommés"
         },
         {
             "importer Texte\n"
@@ -4371,7 +4371,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.convertir_decimal(\"3.14\"))\n"
             "}\n",
-            "Texte.convertir_decimal attend une valeur numerique"
+            "Texte.convertir_decimal attend une valeur numérique"
         },
         {
             "importer Texte\n"
@@ -4392,7 +4392,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.separer(\"abc\", \"\"))\n"
             "}\n",
-            "Texte.separer attend un separateur non vide"
+            "Texte.separer attend un séparateur non vide"
         },
     };
 
@@ -4488,7 +4488,7 @@ TEST(InterpreterFunctions, RejectsMismatchedNamedArgument)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("aucun parametre nomme"), std::string::npos);
+    EXPECT_NE(error.find("aucun paramètre nommé"), std::string::npos);
 }
 
 TEST(InterpreterFunctions, RejectsTooManyArguments)
@@ -4845,7 +4845,7 @@ TEST(InterpreterFunctions, EnforcesParameterTypes)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("parametre 'n'"), std::string::npos);
+    EXPECT_NE(error.find("paramètre 'n'"), std::string::npos);
     EXPECT_NE(error.find("Entier"), std::string::npos);
 }
 

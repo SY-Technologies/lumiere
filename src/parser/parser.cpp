@@ -340,7 +340,7 @@ namespace lumiere
             {
                 if (is_prive)
                 {
-                    error(peek(), "une classe de niveau fichier ne peut pas etre marquee 'prive'");
+                    error(peek(), "une classe de niveau fichier ne peut pas être marquée 'privé'");
                 }
                 return parse_class_decl(true);
             }
@@ -348,7 +348,7 @@ namespace lumiere
             {
                 if (is_prive)
                 {
-                    error(peek(), "une interface de niveau fichier ne peut pas etre marquee 'prive'");
+                    error(peek(), "une interface de niveau fichier ne peut pas être marquée 'privé'");
                 }
                 return parse_interface_decl(true);
             }
@@ -437,7 +437,7 @@ namespace lumiere
         while (check(TokenType::POINT) && m_tokens[m_current + 1].type == TokenType::IDENT)
         {
             advance();
-            const Token &segment = expect(TokenType::IDENT, "attendu un segment de package apres '.'");
+            const Token &segment = expect(TokenType::IDENT, "attendu un segment de package après '.'");
             module_name += ".";
             module_name += segment.lexeme;
         }
@@ -447,24 +447,24 @@ namespace lumiere
 
     std::vector<ImportStmt::ImportedMember> Parser::parse_imported_members()
     {
-        expect(TokenType::ACCOLADE_OUV, "attendu '{' pour ouvrir la liste des imports selectifs");
+        expect(TokenType::ACCOLADE_OUV, "attendu '{' pour ouvrir la liste des imports sélectifs");
 
         std::vector<ImportStmt::ImportedMember> members;
         do
         {
-            const Token &name = expect(TokenType::IDENT, "attendu un nom membre dans l'import selectif");
+            const Token &name = expect(TokenType::IDENT, "attendu un nom membre dans l'import sélectif");
             Token alias(TokenType::RIEN, "", name.line, name.column);
 
             if (check(TokenType::COMME))
             {
                 advance();
-                alias = expect(TokenType::IDENT, "attendu un alias apres 'comme'");
+                alias = expect(TokenType::IDENT, "attendu un alias après 'comme'");
             }
 
             members.emplace_back(name, alias);
         } while (match({TokenType::VIRGULE}));
 
-        expect(TokenType::ACCOLADE_FERM, "attendu '}' apres la liste des imports selectifs");
+        expect(TokenType::ACCOLADE_FERM, "attendu '}' après la liste des imports sélectifs");
         return members;
     }
 

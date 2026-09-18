@@ -53,7 +53,7 @@ void register_chemin_module(Module &module)
             {
                 if (!arg.name.empty())
                 {
-                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas d'arguments nommes");
+                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas d'arguments nommés");
                 }
                 if (!arg.value.is_texte())
                 {

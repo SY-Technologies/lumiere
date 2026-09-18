@@ -169,7 +169,7 @@ LirInstruction &LirFunction::append_instruction(const std::size_t block_index,
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: impossible d'ajouter une instruction apres un terminateur");
+        throw std::logic_error("LIR: impossible d'ajouter une instruction après un terminateur");
     }
 
     target_block.instructions.push_back(std::move(instruction));

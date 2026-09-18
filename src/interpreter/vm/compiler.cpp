@@ -681,7 +681,7 @@ LinkedUnit link_unit(LinkContext &context,
                             : std::numeric_limits<std::size_t>::max();
                     if (source == std::numeric_limits<std::size_t>::max())
                     {
-                        throw VmCompileError("VM: membre non exporte ou introuvable dans le module: " +
+                        throw VmCompileError("VM: membre non exporté ou introuvable dans le module: " +
                                              member.name.lexeme);
                     }
                     const std::string binding_name = member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme;
@@ -857,7 +857,7 @@ ModuleBytecode VmCompiler::compile(Program &program)
     }
     if (principal == nullptr)
     {
-        throw VmCompileError("VM: aucun point d'entree 'principal' n'a ete trouve");
+        throw VmCompileError("VM: aucun point d'entrée 'principal' n'a été trouvé");
     }
     if (!principal->params.empty())
     {
@@ -878,7 +878,7 @@ ModuleBytecode VmCompiler::compile(Program &program)
     }
     if (!found)
     {
-        throw VmCompileError("VM: point d'entree bytecode introuvable");
+        throw VmCompileError("VM: point d'entrée bytecode introuvable");
     }
 
     LirToBytecode emitter;

@@ -57,7 +57,7 @@ std::string token_label(const Token &token)
     out << "VM: forme AST invalide pour " << what;
     if (!token.lexeme.empty())
     {
-        out << " pres de '" << token.lexeme << "'";
+        out << " près de '" << token.lexeme << "'";
     }
     out << " (" << token.line << ":" << token.column << ")";
     throw VmCompileError(out.str());
@@ -94,7 +94,7 @@ Value literal_value(const Token &token)
     case TokenType::RIEN:
         return Value::rien();
     default:
-        invalid_ast("le litteral '" + token_label(token) + "'", token);
+        invalid_ast("le littéral '" + token_label(token) + "'", token);
     }
 }
 
@@ -200,7 +200,7 @@ public:
             const auto self = lookup_local("ici");
             if (!self.has_value())
             {
-                throw VmCompileError("VM: 'parent' ne peut etre utilise hors d'une methode");
+                throw VmCompileError("VM: 'parent' ne peut être utilise hors d'une méthode");
             }
             m_last_value = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
                                       {LirOperand::local(*self)},
@@ -308,7 +308,7 @@ public:
                                            m_global_types->contains(identifier->name.lexeme);
             if (!declared_variable && !m_functions.contains(identifier->name.lexeme))
             {
-                throw VmCompileError("VM: affectation a une variable globale non declaree '" +
+                throw VmCompileError("VM: affectation a une variable globale non déclarée '" +
                                      identifier->name.lexeme + "'");
             }
             LirOperand assigned = lower_expr(*expr.right);
@@ -385,7 +385,7 @@ public:
     {
         if (expr.elements.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
         {
-            throw VmCompileError("VM: trop d'elements dans un litteral d'ensemble");
+            throw VmCompileError("VM: trop d'éléments dans un littéral d'ensemble");
         }
 
         std::vector<LirOperand> operands;
@@ -402,7 +402,7 @@ public:
     {
         if (expr.entries.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
         {
-            throw VmCompileError("VM: trop d'entrees dans un litteral de dictionnaire");
+            throw VmCompileError("VM: trop d'entrées dans un littéral de dictionnaire");
         }
 
         std::vector<LirOperand> operands;
@@ -459,7 +459,7 @@ public:
     {
         if (expr.elements.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
         {
-            throw VmCompileError("VM: trop d'elements dans un litteral de liste");
+            throw VmCompileError("VM: trop d'éléments dans un littéral de liste");
         }
 
         std::vector<LirOperand> operands;
@@ -583,7 +583,7 @@ public:
                 }
                 if (target == params.size())
                 {
-                    throw VmCompileError("VM: aucun parametre nomme '" + arg.name + "'");
+                    throw VmCompileError("VM: aucun paramètre nommé '" + arg.name + "'");
                 }
             }
             else
@@ -601,7 +601,7 @@ public:
 
             if (bound_argument[target].has_value())
             {
-                throw VmCompileError("VM: le parametre '" + params[target].name + "' est fourni plusieurs fois");
+                throw VmCompileError("VM: le paramètre '" + params[target].name + "' est fourni plusieurs fois");
             }
             const std::size_t argument_local = allocate_hidden_local("$arg");
             bound_argument[target] = argument_local;
@@ -631,7 +631,7 @@ public:
             {
                 if (!params[i].default_value)
                 {
-                    throw VmCompileError("VM: argument manquant pour le parametre '" + params[i].name + "'");
+                    throw VmCompileError("VM: argument manquant pour le paramètre '" + params[i].name + "'");
                 }
                 append_call_argument(operands, "", constant_nil(expr.paren));
             }
@@ -709,7 +709,7 @@ public:
         }
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: variable locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: variable locale dupliquée '" + stmt.name.lexeme + "'");
         }
 
         const std::size_t local_index = m_next_local_index++;
@@ -736,7 +736,7 @@ public:
     {
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: fonction locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: fonction locale dupliquée '" + stmt.name.lexeme + "'");
         }
         const std::size_t local_index = m_next_local_index++;
         m_function.locals.push_back({local_index, stmt.name.lexeme});
@@ -771,7 +771,7 @@ public:
 
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: classe locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: classe locale dupliquée '" + stmt.name.lexeme + "'");
         }
         const std::size_t local = m_next_local_index++;
         m_function.locals.push_back({local, stmt.name.lexeme});
@@ -832,7 +832,7 @@ public:
 
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: interface locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: interface locale dupliquée '" + stmt.name.lexeme + "'");
         }
         LirInterfaceDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
@@ -889,7 +889,7 @@ public:
     {
         if (m_imports == nullptr || !m_imports->contains(&stmt))
         {
-            throw VmCompileError("VM: import non resolu '" + stmt.module_name.lexeme + "'");
+            throw VmCompileError("VM: import non résolu '" + stmt.module_name.lexeme + "'");
         }
         const ResolvedVmImport &resolved = m_imports->at(&stmt);
         for (const std::string &initializer : resolved.initializer_symbols)
@@ -902,7 +902,7 @@ public:
         {
             if (has_binding_in_current_scope(name))
             {
-                throw VmCompileError("VM: liaison d'import dupliquee '" + name + "'");
+                throw VmCompileError("VM: liaison d'import dupliquée '" + name + "'");
             }
             const std::size_t local = m_next_local_index++;
             m_function.locals.push_back({local, name});
@@ -932,7 +932,7 @@ public:
                     : &symbol->second;
                 if (symbol_name == nullptr)
                 {
-                    throw VmCompileError("VM: membre non exporte ou introuvable dans le module: " + member.name.lexeme);
+                    throw VmCompileError("VM: membre non exporté ou introuvable dans le module: " + member.name.lexeme);
                 }
                 const LirOperand value = emit_value(
                     LirOpcode::IR_OP_LOAD_GLOBAL,
@@ -1896,7 +1896,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
         {
             if (function->params.size() > 255)
             {
-                throw VmCompileError("VM: trop de parametres dans '" + function->name.lexeme + "'");
+                throw VmCompileError("VM: trop de paramètres dans '" + function->name.lexeme + "'");
             }
             if (function->body == nullptr)
             {
@@ -1904,7 +1904,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
             }
             if (!functions.emplace(function->name.lexeme, function).second)
             {
-                throw VmCompileError("VM: fonction globale dupliquee '" + function->name.lexeme + "'");
+                throw VmCompileError("VM: fonction globale dupliquée '" + function->name.lexeme + "'");
             }
             const std::size_t function_index = module.functions.size();
             functions_to_lower.push_back({function, function_index, false});
@@ -2002,7 +2002,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
                     variable->name.lexeme,
                     runtime_type_name(variable->type, type_aliases)).second)
             {
-                throw VmCompileError("VM: variable globale dupliquee '" + variable->name.lexeme + "'");
+                throw VmCompileError("VM: variable globale dupliquée '" + variable->name.lexeme + "'");
             }
             if (variable->is_fixe)
             {

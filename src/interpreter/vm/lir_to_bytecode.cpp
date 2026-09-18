@@ -19,7 +19,7 @@ std::uint8_t require_u8_index(const std::size_t index, const char *what)
 {
     if (index > 0xFF)
     {
-        throw VmCompileError(std::string("VM: ") + what + " depasse le format bytecode sur un octet");
+        throw VmCompileError(std::string("VM: ") + what + " dépasse le format bytecode sur un octet");
     }
     return static_cast<std::uint8_t>(index);
 }
@@ -28,7 +28,7 @@ std::uint16_t require_u16_offset(const std::size_t offset, const char *what)
 {
     if (offset > 0xFFFF)
     {
-        throw VmCompileError(std::string("VM: ") + what + " depasse le format bytecode sur deux octets");
+        throw VmCompileError(std::string("VM: ") + what + " dépasse le format bytecode sur deux octets");
     }
     return static_cast<std::uint16_t>(offset);
 }
@@ -217,7 +217,7 @@ void emit_instr(const LirModule &module,
     {
         const std::size_t function_index = instruction.operands.at(0).index;
         chunk.write_opcode(Opcode::CLOSURE, bc_loc(instruction.source));
-        chunk.write_u16(require_u16_offset(function_index, "l'index de fonction fermee"),
+        chunk.write_u16(require_u16_offset(function_index, "l'index de fonction fermée"),
                         bc_loc(instruction.source));
         chunk.write_byte(require_u8_index(instruction.operands.size() - 1, "le nombre de captures"),
                          bc_loc(instruction.source));
@@ -573,7 +573,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
                 if (source.kind != LirOperandKind::IR_OPERAND_LOCAL &&
                     source.kind != LirOperandKind::IR_OPERAND_CAPTURE)
                 {
-                    throw VmCompileError("VM: source de capture de methode invalide");
+                    throw VmCompileError("VM: source de capture de méthode invalide");
                 }
                 emitted.capture_sources.push_back({source.kind == LirOperandKind::IR_OPERAND_CAPTURE,
                                                    source.index});

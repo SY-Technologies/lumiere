@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <limits>
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/parser/utf8.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
@@ -246,7 +247,7 @@ namespace lumiere
     {
         if (!callee.is_fonction())
         {
-            raise_runtime_error(args.site, "appel impossible: la valeur cible doit etre une Fonction");
+            raise_runtime_error(args.site, "appel impossible: la valeur cible doit être une Fonction");
         }
 
         const auto function = callee.as_fonction();
@@ -547,7 +548,7 @@ namespace lumiere
                 auto *walker = dynamic_cast<TreeWalker *>(&runtime);
                 if (walker == nullptr)
                 {
-                    runtime.raise_runtime_error(native_args.site, "methode native non compatible");
+                    runtime.raise_runtime_error(native_args.site, "méthode native non compatible");
                 }
                 // Turn the call-site coordinates back into a Token for existing checks.
                 const Token site_token(TokenType::IDENT,
@@ -582,7 +583,7 @@ namespace lumiere
         {
             if (!arg.name.empty())
             {
-                throw_runtime_error(call_site, signature + " n'accepte pas d'arguments nommes");
+                throw_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
             }
         }
     }
@@ -772,7 +773,7 @@ namespace lumiere
     {
         if (!is_iterable_value(iterable))
         {
-            throw_runtime_error(site, "cette valeur n'est pas iterable");
+            throw_runtime_error(site, messages::valeur_non_iterable(iterable.type_name()));
         }
 
         if (const auto *elements = sequence_elements(iterable))
@@ -812,7 +813,7 @@ namespace lumiere
             return items;
         }
 
-        throw_runtime_error(site, "cette valeur n'est pas iterable");
+        throw_runtime_error(site, messages::valeur_non_iterable(iterable.type_name()));
     }
 
     std::string TreeWalker::to_texte(const Value &value) const
@@ -824,7 +825,7 @@ namespace lumiere
     {
         if (!value.is_entier())
         {
-            throw_runtime_error(token, "une valeur de type Entier est attendue");
+            throw_runtime_error(token, messages::indice_non_entier("une séquence"));
         }
         return value.as_entier();
     }
@@ -840,7 +841,7 @@ namespace lumiere
             return static_cast<double>(value.as_entier());
         }
 
-        throw_runtime_error(token, "une valeur numerique est attendue");
+        throw_runtime_error(token, "une valeur numérique est attendue");
     }
 
     std::string TreeWalker::assert_texte(const Value &value, const Token &token) const
