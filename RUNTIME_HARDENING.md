@@ -445,6 +445,48 @@ socket-dependent tests were skipped because the sandbox denied their bindings.
 Stack-use-after-return checks were enabled. Leak detection remains disabled
 pending cycle collection. The working-tree diff passes whitespace checks.
 
+### Dictionary keys and hash indexing — 2026-09-17
+
+A dictionary was an association list: every write appended, so a literal could
+hold two entries under one key. `{"a": 1, "b": 2, "a": 3}` had size three,
+lookup returned the first `"a"`, and `retirer("a")` uncovered the second. The
+same shape reached `Dictionnaire[Texte, Texte]` values built by LumiNet, where a
+repeated header name produced a repeated key. Insertion, lookup and removal now
+go through `DictData`, which holds at most one entry per key; reassigning a key
+overwrites in place and leaves it in its original position.
+
+Contracts fixed by this change:
+
+- Keys compare by `Value::operator==`, which both engines now share instead of
+  each carrying its own copy. `Entier` and `Décimal` never compare equal, so `1`
+  and `1.0` are two keys; `0.0` and `-0.0` are one. Text compares by bytes, with
+  no normalization. `Liste`, `Dictionnaire`, objects, functions, classes and
+  interfaces compare by identity, so two lists with equal contents are two keys.
+- A `ListeFixe` compares by content and is now immutable, so it can stay equal
+  to a key it was stored under. Element assignment is refused in both engines,
+  and the element-type checks that guarded those writes are gone.
+- A non-number is refused as a key. It is not equal to itself, so its entry
+  could never be found again, and `"nan".en_decimal()` reaches that value.
+- Entries keep insertion order. Removing a key and inserting it again puts it
+  at the end.
+
+`value_hash` mirrors `operator==` case for case and is the only thing the index
+consults; a unit test asserts that equal values across every runtime type hash
+equally, because a hash that disagrees with equality turns faster lookup into
+silently missing entries. The index is open-addressed with linear probing over
+positions into the entry vector. Below eight entries there is no index at all
+and lookup scans, so small dictionaries pay no allocation. Removal shifts later
+positions, so it rebuilds the index rather than patching it; the vector erase it
+follows is already linear. The entry vector became private for that reason —
+an index beside a publicly mutable vector is a trap.
+
+Measured on the validation host below, VM backend, five runs after one warm-up,
+inserting and then reading 50,000 text keys: 10.973501 s (10.960202–11.080839)
+before, 0.057346 s (0.057151–0.057710) after. The other five workloads moved by
+between 1% and 11% in the same direction, which is within this host's noise and
+is not claimed as an improvement. Peak memory was not measured; the index adds
+about one machine word per 0.75 entries above the threshold.
+
 ## Verification and measurement
 
 ```sh
@@ -483,10 +525,11 @@ so parallel CTest runs cannot overwrite each other's results.
    Implement
    cycle collection with explicit roots and allocation accounting, then enable
    leak checks. Long-running applications need bounded memory behavior.
-2. **Collection semantics before hashing.** Dictionaries and sets currently use
-   vectors. Define equality, numeric cross-type keys, duplicate keys, mutation,
-   and iteration order before adding a hash index. Hashing must agree with
-   equality, including edge cases; otherwise faster lookup becomes incorrect.
+2. **Set semantics and construction.** Dictionaries are specified and indexed.
+   `Ensemble` is not: it has a type, a runtime representation and constraint
+   handling, but nothing constructs one, so no program can hold a set. Decide
+   whether to give it a literal and the same key contract as a dictionary, or
+   to withdraw the type until it exists.
 3. **One conformance corpus.** Run language and stdlib fixtures under both
    engines, comparing values, errors, evaluation order, and side effects.
    Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.

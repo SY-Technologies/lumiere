@@ -29,15 +29,19 @@ suite passes with leak detection enabled.
 
 ## T3 — Specify and optimize dictionary/set semantics
 
-Status: pending; depends on T1
+Status: dictionaries complete — 2026-09-17; sets outstanding
 
-- Specify equality, numeric cross-type keys, duplicate handling, mutation, and
-  iteration order.
-- Add a shared conformance suite before changing storage.
-- Introduce hash indexing only with a hash function consistent with equality.
+- [x] Specify equality, numeric cross-type keys, duplicate handling, mutation,
+      and iteration order.
+- [x] Add a shared conformance suite before changing storage.
+- [x] Introduce hash indexing with a hash function consistent with equality.
+- [ ] Decide whether `Ensemble` is built or withdrawn: it has a type, a runtime
+      representation and constraint handling, but no syntax constructs one, so
+      no program can hold a set.
 
-Acceptance: both engines produce identical observable behavior and benchmarks
-show a material lookup improvement without semantic regressions.
+Acceptance: met for dictionaries. Both engines agree on every conformance
+fixture, and 50,000 keys fell from 10.97 s to 0.057 s with no measurable change
+to the other benchmark workloads.
 
 ## T4 — Build one cross-engine conformance and fuzzing corpus
 

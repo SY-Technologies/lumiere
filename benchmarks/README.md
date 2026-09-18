@@ -100,3 +100,35 @@ dispatch, allocation, or startup costs.
 
 All 382 tests passed in Release and ASan/UBSan, including networking tests.
 Stack-use-after-return detection was enabled; leak detection remains disabled.
+
+## Dictionary indexing checkpoint — 2026-09-17
+
+Environment: Ubuntu 22.04 on aarch64, GCC 11.4.0, CMake RelWithDebInfo, four
+cores. Both binaries built from this tree with identical options; the baseline
+is the commit immediately before dictionary lookup was indexed. Five measured
+runs per workload after one warm-up, VM backend, baseline first.
+
+| Workload | Before median (min–max), seconds | After median (min–max), seconds |
+| --- | --- | --- |
+| 1,000,000 integer-loop iterations | 0.143643 (0.141471–0.149304) | 0.139439 (0.138398–0.144340) |
+| 30,000 Unicode scalars | 0.009514 (0.009151–0.010253) | 0.008497 (0.008414–0.008588) |
+| 100,000 user-function calls | 0.050309 (0.049855–0.050473) | 0.048771 (0.048316–0.050289) |
+| 3,000 identity calls carrying 128 KiB text | 0.115194 (0.112363–0.115589) | 0.110566 (0.107923–0.111369) |
+| 200,000 typed-list appends | 0.071028 (0.067765–0.086133) | 0.066865 (0.065972–0.072548) |
+| 50,000 dictionary writes then reads | 10.973501 (10.960202–11.080839) | 0.057346 (0.057151–0.057710) |
+
+The dictionary workload is new and was added with this change. Lookup used to
+scan every entry, so writing and then reading n keys did work proportional to
+n squared; it is now proportional to n. At 50,000 keys that is about 191× less
+elapsed time, and the ratio grows with n, so this number describes this
+workload and not dictionaries in general. The other five workloads moved
+between 1% and 11% in the same direction, which is within this host's run-to-run
+spread and is not claimed as an improvement.
+
+This host is not the macOS arm64 machine used for the earlier checkpoints, so
+these absolute numbers are not comparable with the tables above — only the
+before and after columns here are comparable with each other. Peak memory was
+not measured. All 415 tests passed in RelWithDebInfo and in an
+AddressSanitizer/UndefinedBehaviorSanitizer Debug build with leak detection
+disabled, excluding the five example tests, which need to delete files the
+sandbox used here forbids.
