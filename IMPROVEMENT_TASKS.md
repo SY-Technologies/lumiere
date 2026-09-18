@@ -82,12 +82,33 @@ Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences
       corpus sources and generates boundary programs; every finding is shrunk to
       a minimal reproduction on disk. A crash, a hang, a leaked C++ artifact in a
       message, or a disagreement between the engines all count as findings.
-- [ ] Look into one unreproduced crash. `InterpreterBuiltinModules.
-      SupportsLumiNetCanalStandalone` segfaulted once under a parallel ctest run
-      and has not recurred in the several full runs since, in either build. That
-      test drives a real socket from the main thread while the interpreter runs
-      on a worker, so it is the one place two threads are live at once; a crash
-      there is worth a look even when it will not reproduce on demand.
+- [ ] **Fix the collector's thread safety.** `SupportsLumiNetCanalStandalone`
+      crashes about one run in six, on its own:
+
+          for i in $(seq 1 30); do build/lumiere_unit_tests \
+            --gtest_filter='InterpreterBuiltinModules.SupportsLumiNetCanalStandalone'; done
+
+      Under the sanitizer it is a heap-use-after-free at `CycleCollector::collect`,
+      reading a candidate that the test's worker thread freed. The mechanism:
+      `collect()` swaps the candidate buffer into a local, and the worker's
+      `on_destroyed` then does its swap-removal against the *new* buffer, so the
+      freed object stays in the collector's local copy and is read there.
+
+      The cause is mine. T2 assumed the runtime has no threads, which is true of
+      `src/` but not of embedders: this test runs an interpreter on a worker
+      while the main thread is live, and `g_candidates`, `g_live` and
+      `detail::candidates_pending` are plain process-globals shared between them.
+      The debug object registry needed a mutex for exactly this reason and got
+      one; the general conclusion was not drawn, which was the error.
+
+      Two ways out, and it is a design decision rather than a patch:
+      make the collector's state `thread_local`, so a runtime owns its own
+      collector and two interpreters never share one — cheap on the hot path but
+      needs care about destruction order at thread exit; or guard the state with
+      a lock, which is obviously correct but puts a lock on the release path that
+      `collect_cycles_if_due` was deliberately built to keep at two loads and a
+      compare. Either way, measure before choosing, and state in the API which
+      one Lumière promises.
 - [ ] Fuzz malformed bytecode against the verifier. The verifier's guarantee —
       that anything it accepts cannot make the interpreter read out of bounds —
       is the one property here with no test behind it.
