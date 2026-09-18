@@ -2,6 +2,8 @@
 #include "lumiere/parser/utf8.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <type_traits>
 
 #include <sstream>
 
@@ -54,46 +56,193 @@ Value Value::with_trace_frame(const TraceFrame &frame) const
     return value;
 }
 
-DictEntry *DictData::find(const Value &key)
+namespace
 {
-    for (DictEntry &entry : entries)
+
+/** Below this many entries, a scan beats an index and its allocation. */
+constexpr std::size_t kIndexThreshold = 8;
+
+std::size_t hash_mix(const std::size_t seed, const std::size_t value)
+{
+    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+template <typename T>
+struct IsSharedPtr : std::false_type
+{
+};
+
+template <typename T>
+struct IsSharedPtr<std::shared_ptr<T>> : std::true_type
+{
+};
+
+} // namespace
+
+std::size_t value_hash(const Value &value)
+{
+    const auto tag = static_cast<std::size_t>(value.type);
+    switch (value.type)
     {
-        if (entry.first == key)
+    case Value::Type::RIEN:
+        return hash_mix(tag, 0);
+    case Value::Type::ENTIER:
+        return hash_mix(tag, std::hash<std::int64_t>{}(value.as_entier()));
+    case Value::Type::DECIMAL:
+    {
+        const double number = value.as_decimal();
+        // 0.0 and -0.0 compare equal, so they must hash alike. A non-number is
+        // refused as a key, but the function stays total.
+        if (number == 0.0)
         {
-            return &entry;
+            return hash_mix(tag, std::hash<double>{}(0.0));
         }
+        if (std::isnan(number))
+        {
+            return hash_mix(tag, 1);
+        }
+        return hash_mix(tag, std::hash<double>{}(number));
     }
-    return nullptr;
+    case Value::Type::LOGIQUE:
+        return hash_mix(tag, value.as_logique() ? 1 : 0);
+    case Value::Type::SYMBOLE:
+        return hash_mix(tag, static_cast<std::size_t>(value.as_symbole()));
+    case Value::Type::TEXTE:
+        return hash_mix(tag, std::hash<std::string>{}(value.as_texte()));
+    case Value::Type::LISTE_FIXE:
+    {
+        // Compared by content, so hashed by content.
+        std::size_t seed = tag;
+        if (const auto &list = value.as_liste_fixe())
+        {
+            for (const Value &element : list->elements)
+            {
+                seed = hash_mix(seed, value_hash(element));
+            }
+        }
+        return seed;
+    }
+    case Value::Type::RESULTAT:
+    {
+        const auto &result = value.as_resultat();
+        if (result == nullptr)
+        {
+            return hash_mix(tag, 0);
+        }
+        return hash_mix(hash_mix(tag, result->success ? 1 : 0), value_hash(result->payload));
+    }
+    default:
+        break;
+    }
+
+    // Everything left is a handle, compared by identity and so hashed by address.
+    return hash_mix(tag, std::visit([](const auto &held) -> std::size_t {
+                        if constexpr (IsSharedPtr<std::decay_t<decltype(held)>>::value)
+                        {
+                            return std::hash<const void *>{}(static_cast<const void *>(held.get()));
+                        }
+                        else
+                        {
+                            return 0;
+                        }
+                    },
+                                    value.data));
+}
+
+std::size_t DictData::probe(const Value &key, const std::size_t hash) const
+{
+    const std::size_t mask = m_index.size() - 1;
+    std::size_t slot = hash & mask;
+    while (m_index[slot] != 0 && !(m_entries[m_index[slot] - 1].first == key))
+    {
+        slot = (slot + 1) & mask;
+    }
+    return slot;
+}
+
+void DictData::rebuild_index()
+{
+    if (m_entries.size() < kIndexThreshold)
+    {
+        m_index.clear();
+        return;
+    }
+
+    std::size_t capacity = 16;
+    while (capacity * 3 < (m_entries.size() + 1) * 4)
+    {
+        capacity *= 2;
+    }
+
+    m_index.assign(capacity, 0);
+    for (std::size_t position = 0; position < m_entries.size(); ++position)
+    {
+        const Value &key = m_entries[position].first;
+        m_index[probe(key, value_hash(key))] = position + 1;
+    }
+}
+
+DictEntry *DictData::find_mutable(const Value &key)
+{
+    if (m_index.empty())
+    {
+        for (DictEntry &entry : m_entries)
+        {
+            if (entry.first == key)
+            {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+
+    const std::size_t slot = probe(key, value_hash(key));
+    return m_index[slot] == 0 ? nullptr : &m_entries[m_index[slot] - 1];
 }
 
 const DictEntry *DictData::find(const Value &key) const
 {
-    return const_cast<DictData *>(this)->find(key);
+    return const_cast<DictData *>(this)->find_mutable(key);
 }
 
 bool DictData::set(Value key, Value value)
 {
-    if (DictEntry *existing = find(key))
+    if (DictEntry *existing = find_mutable(key))
     {
         existing->second = std::move(value);
         return false;
     }
-    entries.emplace_back(std::move(key), std::move(value));
+
+    m_entries.emplace_back(std::move(key), std::move(value));
+    if (m_entries.size() < kIndexThreshold)
+    {
+        return true;
+    }
+    if (m_index.empty() || (m_entries.size() + 1) * 4 > m_index.size() * 3)
+    {
+        rebuild_index();
+        return true;
+    }
+
+    const Value &stored = m_entries.back().first;
+    m_index[probe(stored, value_hash(stored))] = m_entries.size();
     return true;
 }
 
 bool DictData::erase(const Value &key, Value &removed)
 {
-    for (auto it = entries.begin(); it != entries.end(); ++it)
+    DictEntry *entry = find_mutable(key);
+    if (entry == nullptr)
     {
-        if (it->first == key)
-        {
-            removed = std::move(it->second);
-            entries.erase(it);
-            return true;
-        }
+        return false;
     }
-    return false;
+
+    removed = std::move(entry->second);
+    m_entries.erase(m_entries.begin() + (entry - m_entries.data()));
+    // Removal shifts every later position, so the index is rebuilt rather than
+    // patched. The vector erase is already linear.
+    rebuild_index();
+    return true;
 }
 
 std::optional<std::string> dictionary_key_rejection(const Value &key)
@@ -192,15 +341,15 @@ std::string Value::to_string() const
         break;
     case Type::DICTIONNAIRE:
         out << "{";
-        for (std::size_t i = 0; i < as_dictionnaire()->entries.size(); ++i)
+        for (std::size_t i = 0; i < as_dictionnaire()->size(); ++i)
         {
             if (i > 0)
             {
                 out << ", ";
             }
-            out << as_dictionnaire()->entries[i].first.to_string()
+            out << as_dictionnaire()->items()[i].first.to_string()
                 << ": "
-                << as_dictionnaire()->entries[i].second.to_string();
+                << as_dictionnaire()->items()[i].second.to_string();
         }
         out << "}";
         break;

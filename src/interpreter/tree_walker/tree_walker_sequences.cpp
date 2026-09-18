@@ -193,14 +193,14 @@ namespace lumiere
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Dictionnaire.taille", call_site);
-                return Value::entier(static_cast<int64_t>(dict->entries.size())); });
+                return Value::entier(static_cast<int64_t>(dict->size())); });
         }
         if (member.lexeme == "vide")
         {
             return make_tree_walker_native_method(std::move(receiver), [this, dict](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
                                                   {
                 require_positional_args(args, 0, 0, "Dictionnaire.vide", call_site);
-                return Value::logique(dict->entries.empty()); });
+                return Value::logique(dict->empty()); });
         }
         if (member.lexeme == "contient")
         {
@@ -221,7 +221,7 @@ namespace lumiere
                 {
                     key_type = dict->constraint->key_type;
                 }
-                for (const auto &entry : dict->entries)
+                for (const auto &entry : dict->items())
                 {
                     keys->elements.push_back(entry.first);
                 }
@@ -240,7 +240,7 @@ namespace lumiere
                 {
                     value_type = dict->constraint->value_type;
                 }
-                for (const auto &entry : dict->entries)
+                for (const auto &entry : dict->items())
                 {
                     values->elements.push_back(entry.second);
                 }
@@ -263,7 +263,7 @@ namespace lumiere
                 }
                 const std::string pair_element_type = key_type == value_type ? key_type : "Universel";
 
-                for (const auto &entry : dict->entries)
+                for (const auto &entry : dict->items())
                 {
                     auto pair = std::make_shared<ListeFixeData>();
                     pair->elements.push_back(entry.first);

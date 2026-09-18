@@ -478,7 +478,7 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
 void TreeWalker::visit(DictionaryExpr &expr)
 {
     auto data = std::make_shared<DictData>();
-    data->entries.reserve(expr.entries.size());
+    data->reserve(expr.entries.size());
 
     for (auto &entry : expr.entries)
     {

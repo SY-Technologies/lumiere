@@ -189,7 +189,7 @@ bool value_contains(IRuntime &runtime,
 
     if (container.is_dictionnaire())
     {
-        for (const auto &entry : container.as_dictionnaire()->entries)
+        for (const auto &entry : container.as_dictionnaire()->items())
         {
             if (runtime.is_equal(entry.first, expected))
             {

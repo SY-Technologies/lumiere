@@ -374,7 +374,7 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+        for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
         {
             if (!matches_type_name(key, arguments[0]) || !matches_type_name(entry_value, arguments[1]))
             {
@@ -462,7 +462,7 @@ void VmRuntimeServices::annotate_value(const Value &value,
     {
         if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{std::string(arguments[0]), std::string(arguments[1])}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &[key, element] : value.as_dictionnaire()->entries)
+        for (const auto &[key, element] : value.as_dictionnaire()->items())
         {
             annotate_value(key, arguments[0], site);
             annotate_value(element, arguments[1], site);
@@ -879,7 +879,7 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
     }
 
     auto data = std::make_shared<DictData>();
-    data->entries.reserve(entry_count);
+    data->reserve(entry_count);
 
     const std::size_t start = stack.size() - value_count;
     for (std::size_t i = start; i < stack.size(); i += 2)
@@ -1232,12 +1232,12 @@ Value execute_member_call(const Value &receiver,
         if (member == "taille")
         {
             require_member_arity("Dictionnaire.taille", args, 0);
-            return Value::entier(static_cast<std::int64_t>(dictionary->entries.size()));
+            return Value::entier(static_cast<std::int64_t>(dictionary->size()));
         }
         if (member == "vide")
         {
             require_member_arity("Dictionnaire.vide", args, 0);
-            return Value::logique(dictionary->entries.empty());
+            return Value::logique(dictionary->empty());
         }
         if (member == "contient")
         {
@@ -1248,7 +1248,7 @@ Value execute_member_call(const Value &receiver,
         {
             require_member_arity("Dictionnaire." + member, args, 0);
             auto result = std::make_shared<ListeData>();
-            for (const auto &entry : dictionary->entries)
+            for (const auto &entry : dictionary->items())
             {
                 result->elements.push_back(member == "cles" ? entry.first : entry.second);
             }
@@ -1265,7 +1265,7 @@ Value execute_member_call(const Value &receiver,
         {
             require_member_arity("Dictionnaire.paires", args, 0);
             auto pairs = std::make_shared<ListeData>();
-            for (const auto &entry : dictionary->entries)
+            for (const auto &entry : dictionary->items())
             {
                 auto pair = std::make_shared<ListeFixeData>();
                 pair->elements = {entry.first, entry.second};

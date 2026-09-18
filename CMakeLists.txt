@@ -219,6 +219,7 @@ if(BUILD_TESTING)
         tests/test_lexer.cpp
         tests/test_numeric.cpp
         tests/test_collection_constraints.cpp
+        tests/test_value_hash.cpp
         tests/test_analysis.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp

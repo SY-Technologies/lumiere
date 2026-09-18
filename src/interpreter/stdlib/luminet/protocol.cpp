@@ -47,7 +47,7 @@ std::vector<std::pair<std::string, std::string>> expect_header_entries(IRuntime 
     }
 
     std::vector<std::pair<std::string, std::string>> headers;
-    for (const auto &entry : value.as_dictionnaire()->entries)
+    for (const auto &entry : value.as_dictionnaire()->items())
     {
         if (!entry.first.is_texte() || !entry.second.is_texte())
         {

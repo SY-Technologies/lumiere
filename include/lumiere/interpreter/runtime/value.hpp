@@ -58,23 +58,40 @@ using DictEntry = std::pair<Value, Value>;
  * @brief Association table holding at most one entry per key.
  *
  * Entries keep insertion order, and reassigning an existing key keeps that
- * key's original position. Every mutation goes through these operations so
- * neither engine can build a dictionary with duplicate keys.
+ * key's original position. Lookup consults an open-addressed index over
+ * value_hash once the table grows past a handful of entries; below that it
+ * scans, which spares small dictionaries an allocation they would not profit
+ * from. The entry vector is private because the index stores positions into
+ * it, and any removal shifts them.
  */
 struct DictData
 {
-    std::vector<DictEntry> entries;
     std::optional<DictConstraint> constraint;
 
+    /** @brief The entries, in insertion order. */
+    [[nodiscard]] const std::vector<DictEntry> &items() const { return m_entries; }
+    [[nodiscard]] std::size_t size() const { return m_entries.size(); }
+    [[nodiscard]] bool empty() const { return m_entries.empty(); }
+    void reserve(const std::size_t count) { m_entries.reserve(count); }
+
     /** @brief Entry whose key equals @p key, or nullptr. */
-    DictEntry *find(const Value &key);
-    const DictEntry *find(const Value &key) const;
+    [[nodiscard]] const DictEntry *find(const Value &key) const;
 
     /** @brief Inserts or overwrites @p key. Returns true when a new key was added. */
     bool set(Value key, Value value);
 
     /** @brief Removes @p key, writing its value to @p removed. Returns false if absent. */
     bool erase(const Value &key, Value &removed);
+
+private:
+    std::vector<DictEntry> m_entries;
+    /** Positions into m_entries, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
+
+    DictEntry *find_mutable(const Value &key);
+    void rebuild_index();
+    /** @brief Slot holding @p key, or the empty slot where it belongs. */
+    [[nodiscard]] std::size_t probe(const Value &key, std::size_t hash) const;
 };
 
 /**
@@ -87,6 +104,14 @@ struct DictData
  * is admissible.
  */
 std::optional<std::string> dictionary_key_rejection(const Value &key);
+
+/**
+ * @brief Hash consistent with Value::operator==.
+ *
+ * Equal values must hash equally. Change this function and that operator
+ * together, or dictionary lookup starts missing entries that are present.
+ */
+std::size_t value_hash(const Value &value);
 struct ResultData;
 
 struct Value

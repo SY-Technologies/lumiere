@@ -68,7 +68,7 @@ namespace lumiere
         }
         if (type.name == "Dictionnaire" && type.children.size() == 2 && value.is_dictionnaire())
         {
-            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+            for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
             {
                 if (!matches_type_name(key, type.children[0]) ||
                     !matches_type_name(entry_value, type.children[1]))
@@ -278,7 +278,7 @@ namespace lumiere
                 return false;
             }
 
-            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+            for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
             {
                 if (!matches_type_name(key, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)) ||
                     !matches_type_name(entry_value, Token(TokenType::IDENT, generic_args[1], type_token.line, type_token.column)))
@@ -467,7 +467,7 @@ namespace lumiere
         {
             if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{generic_args[0], generic_args[1]}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
-            for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
+            for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
             {
                 register_value_annotation(key, Token(TokenType::IDENT, generic_args[0], annotation.line, annotation.column));
                 register_value_annotation(entry_value, Token(TokenType::IDENT, generic_args[1], annotation.line, annotation.column));
