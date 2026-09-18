@@ -43,15 +43,32 @@ inline std::string decimal_to_text(const double value)
     // digits with a sign, a point and an exponent: comfortably under this.
     std::array<char, 64> buffer{};
     const auto [end, failure] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-    if (failure == std::errc{})
-    {
-        return std::string(buffer.data(), end);
-    }
 
     // Unreachable with a buffer this size, and the fallback still round-trips
     // rather than inventing a value.
-    const int written = std::snprintf(buffer.data(), buffer.size(), "%.17g", value);
-    return written > 0 ? std::string(buffer.data(), static_cast<std::size_t>(written)) : std::string("0");
+    std::string text;
+    if (failure == std::errc{})
+    {
+        text.assign(buffer.data(), end);
+    }
+    else
+    {
+        const int written = std::snprintf(buffer.data(), buffer.size(), "%.17g", value);
+        text = written > 0 ? std::string(buffer.data(), static_cast<std::size_t>(written)) : "0";
+    }
+
+    // A whole-numbered Décimal keeps its point. Entier and Décimal are distinct
+    // types here -- they are not even equal as dictionary keys -- so printing
+    // 2.0 as "2" makes two values that are not equal print identically, and the
+    // text no longer reads back as the type it came from. An exponent already
+    // marks the value as a Décimal, so only the plain form needs the suffix.
+    if (text.find('.') == std::string::npos &&
+        text.find('e') == std::string::npos &&
+        text.find('E') == std::string::npos)
+    {
+        text += ".0";
+    }
+    return text;
 }
 
 inline constexpr auto minimum = std::numeric_limits<std::int64_t>::min();

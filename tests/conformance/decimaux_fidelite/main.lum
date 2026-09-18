@@ -22,6 +22,19 @@ fonction principal() {
     // Un subnormal est un Décimal représentable comme un autre.
     afficher(5e-324)
 
+    // Un Décimal de valeur entière garde son point : Entier et Décimal sont des
+    // types distincts — ils ne sont même pas égaux comme clés de dictionnaire —
+    // donc 2.0 affiché « 2 » ferait afficher identiquement deux valeurs qui ne
+    // sont pas égales, et le texte ne se relirait plus dans son type d'origine.
+    afficher(2.0)
+    afficher(-0.0)
+    afficher(100.0)
+    afficher(2.0 == 2)
+    afficher("x" + 2.0)
+
+    // Un exposant marque déjà la valeur comme Décimal.
+    afficher(1e10)
+
     // Ce qui est affiché se relit à l'identique.
     afficher((0.1 + 0.2) == 0.30000000000000004)
     afficher("1.7976931348623157e+308".en_decimal())

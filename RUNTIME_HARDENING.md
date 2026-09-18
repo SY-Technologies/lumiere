@@ -28,12 +28,17 @@ LIR are prerequisites for a backend as much as for the interpreter.
   skips leading blanks and then counts them as consumed. Decimal parsing is now
   `std::from_chars`, which is locale-independent, so the language's own numbers
   no longer depend on the environment's decimal separator.
-- A `Décimal` is printed as the shortest text that reads back as the same value.
-  Stream formatting defaults to six significant digits, so `123456789.125` came
-  out as `1.23457e+08` and `0.1 + 0.2` as `0.3`: the runtime reported a number
-  it had not computed, and printed output could not be pasted back into a
-  program. `Maths.tan(Maths.pi / 4)` now prints `0.9999999999999999`, which is
-  what it is.
+- A `Décimal` is printed as the shortest text that reads back as the same value
+  and as the same type. Stream formatting defaults to six significant digits, so
+  `123456789.125` came out as `1.23457e+08` and `0.1 + 0.2` as `0.3`: the runtime
+  reported a number it had not computed, and printed output could not be pasted
+  back into a program. `Maths.tan(Maths.pi / 4)` now prints `0.9999999999999999`,
+  which is what it is.
+- A whole-numbered `Décimal` keeps its point: `2.0` prints `2.0`, not `2`.
+  `Entier` and `Décimal` are distinct types that are not even equal as dictionary
+  keys, so printing `2.0` as `2` made two values that are not equal print
+  identically, and the text no longer read back as the type it came from. An
+  exponent already marks a value as a `Décimal`, so `1e10` prints `1e+10`.
 - A decimal literal whose magnitude the type cannot hold is refused, with a
   source location, rather than rounded to zero or to an infinity — the same
   principle as trapping integer overflow instead of wrapping. A subnormal such

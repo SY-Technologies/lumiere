@@ -169,7 +169,7 @@ TEST(CliIntegration, BothBackendsPreserveRepresentableNumericBoundaries)
         SCOPED_TRACE(backend);
         const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
         EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
-        EXPECT_EQ(result.stdout_text, "0\n-9223372036854775808\n-2\n-0.5\n");
+        EXPECT_EQ(result.stdout_text, "0\n-9223372036854775808\n-2.0\n-0.5\n");
     }
 }
 
@@ -1435,7 +1435,7 @@ TEST(CliIntegration, ExecutesVmExplicitCasts)
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
-    EXPECT_EQ(result.stdout_text, "42\n123\nvrai\n65\nB\n9\n");
+    EXPECT_EQ(result.stdout_text, "42.0\n123\nvrai\n65\nB\n9\n");
     EXPECT_TRUE(result.stderr_text.empty());
 }
 
@@ -3044,7 +3044,7 @@ TEST(CliIntegration, VmBackendSupportsUserAndBuiltinModuleImports)
     std::filesystem::remove_all(root);
 
     EXPECT_EQ(result.exit_code, 0);
-    EXPECT_EQ(result.stdout_text, "init\n40\n6\n9\n");
+    EXPECT_EQ(result.stdout_text, "init\n40\n6\n9.0\n");
     EXPECT_TRUE(result.stderr_text.empty()) << result.stderr_text;
 }
 
@@ -3692,7 +3692,7 @@ TEST(CliIntegration, BothBackendsRejectNonFiniteNumericText)
             SCOPED_TRACE(std::string(backend) + " " + source);
             const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
             EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
-            EXPECT_EQ(result.stdout_text, "-1\n");
+            EXPECT_EQ(result.stdout_text, "-1.0\n");
         }
     }
     std::filesystem::remove_all(root);
@@ -3715,7 +3715,7 @@ fonction principal() {
         SCOPED_TRACE(backend);
         const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
         EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
-        EXPECT_EQ(result.stdout_text, "1000\n1000\n0.0015\n200\n");
+        EXPECT_EQ(result.stdout_text, "1000.0\n1000.0\n0.0015\n200.0\n");
     }
 
     // A letter touching a number used to split into two tokens, which turned a

@@ -905,7 +905,7 @@ TEST(InterpreterCasts, SupportsPrimitiveCasts)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "42\n123\nvrai\n65\nB\n9\n");
+    EXPECT_EQ(output, "42.0\n123\nvrai\n65\nB\n9\n");
 }
 
 TEST(InterpreterCasts, SupportsUnicodeSymbolLiteralsAndTextToSymbolCast)
@@ -3796,10 +3796,11 @@ TEST(InterpreterBuiltinModules, SupportsMathsModule)
     // tan(pi/4) is 0.9999999999999999 in double arithmetic, and pi is not
     // 3.14159. Both used to print rounded to six significant digits, which hid
     // what the runtime had actually computed; decimals now print the shortest
-    // text that reads back as the same value.
+    // text that reads back as the same value, and a whole-numbered Décimal
+    // keeps its point so it cannot be mistaken for an Entier.
     EXPECT_EQ(output,
-              "vrai\n7\n2.5\n4\n2\n4\n3\n4\n3\n9\n3\n32\n1\n2\n3\n1\n1\n"
-              "0.9999999999999999\nvrai\n3.141592653589793\n180\nvrai\nvrai\nvrai\nvrai\n");
+              "vrai\n7\n2.5\n4\n2.0\n4\n3\n4\n3\n9.0\n3.0\n32.0\n1.0\n2.0\n3.0\n1.0\n1.0\n"
+              "0.9999999999999999\nvrai\n3.141592653589793\n180.0\nvrai\nvrai\nvrai\nvrai\n");
 }
 
 TEST(InterpreterBuiltinModules, SupportsSelectiveImportFromMathsModule)
@@ -3814,7 +3815,7 @@ TEST(InterpreterBuiltinModules, SupportsSelectiveImportFromMathsModule)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "8\n3\n27\nvrai\n");
+    EXPECT_EQ(output, "8\n3\n27.0\nvrai\n");
 }
 
 TEST(InterpreterBuiltinModules, PreservesMathsAliasesForCompatibility)
@@ -3831,7 +3832,7 @@ TEST(InterpreterBuiltinModules, PreservesMathsAliasesForCompatibility)
 
     EXPECT_TRUE(completed);
     // tangente(pi/4) is not exactly 1; see SupportsMathsModule above.
-    EXPECT_EQ(output, "6\n3\n1\n1\n0.9999999999999999\n");
+    EXPECT_EQ(output, "6\n3\n1.0\n1.0\n0.9999999999999999\n");
 }
 
 TEST(InterpreterBuiltinModules, RejectsInvalidMathsUsage)

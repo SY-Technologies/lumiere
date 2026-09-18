@@ -88,6 +88,19 @@ TEST(Numeric, DecimalTextKeeps0Point1Plus0Point2Honest)
     EXPECT_EQ(decimal_to_text(123456789.125), "123456789.125");
 }
 
+TEST(Numeric, DecimalTextKeepsThePointOnWholeValues)
+{
+    // Entier and Décimal are distinct types, so a Décimal must not print as
+    // something that reads back as an Entier.
+    EXPECT_EQ(decimal_to_text(2.0), "2.0");
+    EXPECT_EQ(decimal_to_text(-0.0), "-0.0");
+    EXPECT_EQ(decimal_to_text(100.0), "100.0");
+    // An exponent already marks the value as a Décimal.
+    EXPECT_EQ(decimal_to_text(1e10), "1e+10");
+    // A value that already has a point keeps exactly one.
+    EXPECT_EQ(decimal_to_text(0.5), "0.5");
+}
+
 TEST(Numeric, DecimalTextNamesTheNonNumbersInFrench)
 {
     EXPECT_EQ(decimal_to_text(std::numeric_limits<double>::quiet_NaN()), "non_nombre");

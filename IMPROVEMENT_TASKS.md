@@ -82,6 +82,12 @@ Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences
       corpus sources and generates boundary programs; every finding is shrunk to
       a minimal reproduction on disk. A crash, a hang, a leaked C++ artifact in a
       message, or a disagreement between the engines all count as findings.
+- [ ] Look into one unreproduced crash. `InterpreterBuiltinModules.
+      SupportsLumiNetCanalStandalone` segfaulted once under a parallel ctest run
+      and has not recurred in the several full runs since, in either build. That
+      test drives a real socket from the main thread while the interpreter runs
+      on a worker, so it is the one place two threads are live at once; a crash
+      there is worth a look even when it will not reproduce on demand.
 - [ ] Fuzz malformed bytecode against the verifier. The verifier's guarantee —
       that anything it accepts cannot make the interpreter read out of bounds —
       is the one property here with no test behind it.
