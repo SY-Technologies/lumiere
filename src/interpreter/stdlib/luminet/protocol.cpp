@@ -65,7 +65,8 @@ Value make_text_dictionary_value(IRuntime &runtime,
     auto dict = std::make_shared<DictData>();
     for (const auto &entry : entries)
     {
-        dict->entries.push_back({Value::texte(entry.first), Value::texte(entry.second)});
+        // A repeated header name must not create a second entry under the same key.
+        dict->set(Value::texte(entry.first), Value::texte(entry.second));
     }
     Value result = Value::dictionnaire(std::move(dict));
     runtime.annotate_value(result, "Dictionnaire[Texte, Texte]", site);
