@@ -56,14 +56,21 @@ every discovered mismatch or crash.
 
 ## T5 — Profile representative workloads
 
-Status: pending; benefits from T2 accounting
+Status: baseline measured — 2026-09-17; optimization blocked on T2
 
-- Add allocation, peak-memory, and VM-instruction counters.
-- Establish representative workloads in addition to microbenchmarks.
-- Optimize measured value copies, temporary lifetimes, and native-call setup.
+- [x] Measure against a compiled baseline rather than against our own history:
+      `scripts/compare-languages.py` reports 430x C and 1.39x slower than CPython.
+- [x] Attribute the cost: the 48-byte non-trivial `Value` is about 40% of
+      execution on the integer loop.
+- [x] Remove the per-instruction source-location lookup (8.6%).
+- [ ] Add allocation, peak-memory, and VM-instruction counters.
+- [ ] Establish representative workloads in addition to microbenchmarks.
+- [ ] Replace the value representation — blocked on T2, since a trivially
+      copyable value cannot hold a `shared_ptr`.
 
 Acceptance: benchmark reports include reproducible baselines and explain each
-optimization using measured time and memory changes.
+optimization using measured time and memory changes. Note that no interpreter
+reaches the Go target; see the hardening notes.
 
 ## T6 — Define international text contracts
 

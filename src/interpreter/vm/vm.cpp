@@ -1848,9 +1848,12 @@ Value run_frames(VmExecutionState &execution,
 
         opcode_offset = ip;
         const Opcode opcode = read_opcode(chunk, ip);
-        const SourceLocation dispatch_location = opcode_offset < chunk.locations.size()
-                                                     ? chunk.locations[opcode_offset]
-                                                     : SourceLocation{};
+        // Only the call opcodes below need this, and looking it up for every
+        // instruction cost a bounds check and a copy on the hottest path there is.
+        const auto dispatch_location = [&chunk, &opcode_offset]() {
+            return opcode_offset < chunk.locations.size() ? chunk.locations[opcode_offset]
+                                                          : SourceLocation{};
+        };
         switch (opcode)
         {
         case Opcode::CONSTANT:
@@ -1949,7 +1952,7 @@ Value run_frames(VmExecutionState &execution,
                                              {},
                                              stack.size(),
                                              {},
-                                             dispatch_location));
+                                             dispatch_location()));
             break;
         }
         case Opcode::GET_LOCAL:
@@ -2283,7 +2286,7 @@ Value run_frames(VmExecutionState &execution,
                                                  values,
                                                  stack.size(),
                                                  body->captures,
-                                                 dispatch_location));
+                                                 dispatch_location()));
                 break;
             }
             const Value *receiver = function != nullptr && function->is_method() ? &function->receiver : nullptr;
@@ -2347,7 +2350,7 @@ Value run_frames(VmExecutionState &execution,
                                                  values,
                                                  stack.size(),
                                                  {},
-                                                 dispatch_location));
+                                                 dispatch_location()));
                 break;
             }
             if (global_defined[global_index] && globals[global_index].is_fonction())
@@ -2381,7 +2384,7 @@ Value run_frames(VmExecutionState &execution,
                                                  values,
                                                  stack.size(),
                                                  body->captures,
-                                                 dispatch_location));
+                                                 dispatch_location()));
                 break;
             }
             const auto native = natives.find(name);
@@ -2500,7 +2503,7 @@ Value run_frames(VmExecutionState &execution,
                                                      values,
                                                      stack.size(),
                                                      body->captures,
-                                                     dispatch_location));
+                                                     dispatch_location()));
                     break;
                 }
                 const VmMethodDescriptor *method = find_vm_method(module,
@@ -2529,7 +2532,7 @@ Value run_frames(VmExecutionState &execution,
                                                  stack.size(),
                                                  find_vm_method_captures(receiver.as_objet()->klass,
                                                                          method->function_index),
-                                                 dispatch_location));
+                                                 dispatch_location()));
                 break;
             }
 

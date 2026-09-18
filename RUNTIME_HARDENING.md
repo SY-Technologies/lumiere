@@ -537,6 +537,62 @@ This is the first checkpoint that makes a mistyped result a compile error:
 assigning `Dictionnaire[Texte, Entier].clés()` to a `Liste[Entier]` now reports
 `attend Liste[Entier]; reçu Liste[Texte]` instead of running.
 
+### Where the VM's time actually goes — 2026-09-17
+
+Earlier checkpoints compared Lumière against its own history, which can only
+show that a change helped. The stated target is Go, so the gap has to be
+measured against compiled code. `scripts/compare-languages.py` runs the same
+1,000,000-iteration integer loop through whatever is installed; on the
+validation host below, seven runs after one warm-up:
+
+| Runtime | Median | Versus C |
+| --- | --- | --- |
+| C, `-O2` | 0.30 ms | 1× |
+| CPython 3.10 | 91.62 ms | 310× |
+| Lumière VM | 127.04 ms | 430× |
+| Lumière tree-walk | 444.84 ms | 1505× |
+
+Process startup is 0.9 ms, so almost all of that is execution. Two things follow.
+The VM is 430× a compiled baseline, and it is 1.39× *slower* than CPython, which
+is the reference point for a slow interpreter. Being behind CPython is not a
+property of interpreters in general; it is specific to this one.
+
+Most of the difference is the value representation. `Value` is a
+`std::variant` with a `std::string` alternative: 48 bytes, neither trivially
+copyable nor trivially destructible, so every push, pop, local read and local
+write runs a generated fourteen-way visitor instead of moving bytes. Modelling
+one iteration of that loop — the same pushes, pops, local reads and local writes
+the VM performs — costs 50.0 ms per million iterations with the current `Value`
+and 13.9 ms with a 16-byte trivially copyable tagged value. That is about 40% of
+execution, and removing it would land the loop near 90 ms: level with CPython,
+still 300× C.
+
+One concrete waste was found and removed rather than modelled. The dispatch loop
+read `chunk.locations[ip]` on every instruction, a bounds check and a struct
+copy, to build a source location that only six call opcodes use. Computing it
+where it is used took the loop from 138.9 ms to 127.0 ms, 8.6% less, with no
+change in behaviour.
+
+Hoisting the `try` out of the per-instruction loop was also tried, on the theory
+that re-entering the region stopped the compiler from keeping state in
+registers. Measured over twenty-one runs it was 128.2 ms against 127.0 ms —
+neutral, and it was reverted. Zero-cost exception handling means the
+non-throwing path was never paying for the entry. It is recorded here so the
+idea is not tried a third time.
+
+The conclusion is a sequencing one, and it changes the order of the priorities
+below. A trivially copyable `Value` cannot hold a `shared_ptr`, so the small
+value depends on the runtime owning its heap objects through its own reference
+counting — which is the object model that cycle collection needs anyway. Bounded
+memory is therefore not only a reliability milestone; it is the prerequisite for
+the representation change that the speed depends on.
+
+None of this reaches Go. An interpreter that dispatches one instruction at a
+time is 10× to 100× off compiled code even when it is written well, and the
+measurements above put the achievable interpreter target near 90 ms against C's
+0.30 ms. Matching Go means compiling to native code, ahead of time or through a
+JIT, and that is a decision about what the project is, not an optimization.
+
 ## Verification and measurement
 
 ```sh
@@ -584,10 +640,13 @@ so parallel CTest runs cannot overwrite each other's results.
 3. **One conformance corpus.** Run language and stdlib fixtures under both
    engines, comparing values, errors, evaluation order, and side effects.
    Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.
-4. **Profile representative workloads.** Add allocation and instruction counts,
-   then target value copies, temporary-slot lifetimes, and native-call argument
-   construction. Do not start a JIT or replace the value representation based
-   on a single microbenchmark. Track peak memory as well as time.
+4. **Value representation, after the object model.** Profiling now says the
+   48-byte non-trivial `Value` is about 40% of execution, so replacing it with a
+   small trivially copyable value is the largest lever inside the interpreter —
+   worth roughly 28% on the integer loop. It cannot be done first: the small
+   value needs the runtime to own its heap objects through its own reference
+   counting, which is priority 1's work. Measure allocation and instruction
+   counts alongside it, and track peak memory as well as time.
 5. **International text support.** Choose explicit normalization, grapheme,
    collation, case-folding, and locale contracts. Use maintained Unicode data
    rather than hand-written accent tables. Preserve the scalar APIs so their
