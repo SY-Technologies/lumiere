@@ -93,24 +93,6 @@ bool is_truthy(const Value &value)
 
 bool values_equal(const Value &left, const Value &right)
 {
-    if (left.is_liste_fixe() && right.is_liste_fixe())
-    {
-        const auto left_elements = left.as_liste_fixe();
-        const auto right_elements = right.as_liste_fixe();
-        if (left_elements->elements.size() != right_elements->elements.size())
-        {
-            return false;
-        }
-        for (std::size_t i = 0; i < left_elements->elements.size(); ++i)
-        {
-            if (!values_equal(left_elements->elements[i], right_elements->elements[i]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
     return left == right;
 }
 

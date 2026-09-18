@@ -604,25 +604,6 @@ namespace lumiere
 
     bool TreeWalker::is_equal(const Value &a, const Value &b) const
     {
-        if (a.is_liste_fixe() && b.is_liste_fixe())
-        {
-            const auto left = a.as_liste_fixe();
-            const auto right = b.as_liste_fixe();
-            if (left->elements.size() != right->elements.size())
-            {
-                return false;
-            }
-
-            for (std::size_t i = 0; i < left->elements.size(); ++i)
-            {
-                if (!is_equal(left->elements[i], right->elements[i]))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         return a == b;
     }
 

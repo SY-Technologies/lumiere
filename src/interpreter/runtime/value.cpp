@@ -69,6 +69,26 @@ bool Value::operator==(const Value &other) const
                as_resultat()->payload == other.as_resultat()->payload;
     }
 
+    if (is_liste_fixe())
+    {
+        // A fixed list is a value, not a handle: two of them are equal when their
+        // elements are. std::vector reapplies this operator element by element, so
+        // nested fixed lists compare structurally and every other type keeps its own
+        // rule. Both engines used to carry this case separately, which left the
+        // payload comparison above matching allocations instead of contents.
+        const auto &left = as_liste_fixe();
+        const auto &right = other.as_liste_fixe();
+        if (left == right)
+        {
+            return true;
+        }
+        if (left == nullptr || right == nullptr)
+        {
+            return false;
+        }
+        return left->elements == right->elements;
+    }
+
     return data == other.data;
 }
 
