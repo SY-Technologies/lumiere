@@ -188,7 +188,15 @@ void bind_object_method(const Ref<LumiereObject> &object,
                         const std::string &name,
                         LumiereFunction::NativeHandler handler)
 {
-    object->fields[name] = Value::fonction(make_native_function(std::move(handler)));
+    auto function = make_native_function(std::move(handler));
+    // A handler bound here reaches the instance, and the native state hanging
+    // off it, through raw pointers -- never through a Ref of its own, which the
+    // collector could not see inside the std::function. This single declared
+    // reference is what keeps both alive, and it is an edge tracing follows and
+    // a collection can break. Declaring it once here keeps the detail out of
+    // the forty-odd binding sites.
+    function->native_captures.push_back(object);
+    object->fields[name] = Value::fonction(std::move(function));
 }
 
 std::string header_value_or_empty(const std::vector<std::pair<std::string, std::string>> &headers,

@@ -4,6 +4,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <map>
+#include <string>
+#include <typeinfo>
+#include <cstdlib>
 
 namespace lumiere
 {
@@ -72,6 +77,90 @@ TEST(CycleCollector, ReclaimsACycleThroughADictionary)
     EXPECT_EQ(RefCounted::live_count(), before);
 }
 
+namespace
+{
+
+/** @brief A native state that keeps Values, as a server keeps its handlers. */
+struct HandlerState final : NativeState
+{
+    Value handler = Value::rien();
+
+    void trace_references(RefVisitor &visitor) const override
+    {
+        trace_value(handler, visitor);
+    }
+
+    void clear_references() override { handler = Value::rien(); }
+};
+
+} // namespace
+
+// The shape a standard-library server makes: an instance owns C++ state, the
+// state holds the handler it will call, and the handler is a native function
+// bound back onto the instance. Nothing here is visible to C++ reflection, so
+// this only collects because the state reports its Values and the function
+// declares what it captured.
+TEST(CycleCollector, ReclaimsACycleThroughNativeStateAndADeclaredCapture)
+{
+    const std::size_t before = settled_live_count();
+    {
+        auto object = make_ref<LumiereObject>();
+        auto state = make_ref<HandlerState>();
+        object->native_state = state;
+
+        auto handler = make_ref<LumiereFunction>();
+        handler->name = "gestionnaire";
+        // What the C++ lambda would capture as a raw pointer, declared here.
+        handler->native_captures.push_back(object);
+
+        state->handler = Value::fonction(handler);
+    }
+    EXPECT_GT(RefCounted::live_count(), before);
+
+    EXPECT_GE(collect_cycles(), 3u);
+    EXPECT_EQ(RefCounted::live_count(), before);
+}
+
+// Under-reporting an edge is the safe direction: it leaks, it never frees
+// something live. This pins that the unsafe direction stays impossible to reach
+// by accident -- a state that reports nothing keeps its cycle alive rather than
+// letting the sweep free an object the handler still points at.
+TEST(CycleCollector, LeavesACycleAliveWhenNativeStateReportsNothing)
+{
+    struct SilentState final : NativeState
+    {
+        Value handler = Value::rien();
+
+        void trace_references(RefVisitor &) const override {}
+        void clear_references() override { handler = Value::rien(); }
+    };
+
+    const std::size_t before = settled_live_count();
+    auto *leaked = new SilentState();
+    {
+        auto object = make_ref<LumiereObject>();
+        auto state = Ref<SilentState>(leaked);
+        object->native_state = state;
+
+        auto handler = make_ref<LumiereFunction>();
+        handler->native_captures.push_back(object);
+        state->handler = Value::fonction(handler);
+    }
+    EXPECT_EQ(collect_cycles(), 0u);
+    // Still here, and still consistent: the cycle leaks rather than breaking.
+    EXPECT_GT(RefCounted::live_count(), before);
+    EXPECT_TRUE(leaked->handler.is_fonction());
+
+    // Clean up by hand so the leak does not reach the sanitizer. The handle is
+    // not optional: the state is kept alive only by the cycle it is part of, so
+    // breaking the cycle from inside it would free it mid-assignment.
+    {
+        const Ref<SilentState> keep(leaked);
+        leaked->handler = Value::rien();
+    }
+    EXPECT_EQ(RefCounted::live_count(), before);
+}
+
 TEST(CycleCollector, KeepsACycleThatIsStillReachable)
 {
     const std::size_t before = settled_live_count();
@@ -135,5 +224,52 @@ TEST(CycleCollector, KeepsRepeatedGarbageBounded)
     EXPECT_LT(high_water, before + 1000);
     EXPECT_EQ(RefCounted::live_count(), before);
 }
+
+namespace
+{
+
+/**
+ * @brief Collects once after the last test, so leak detection can be enabled.
+ *
+ * A test that builds an interpreter leaves its environments behind in a cycle,
+ * exactly as a program does. The runtime collects those when a backend is
+ * destroyed; the tests destroy theirs on the stack and then end, so the sweep
+ * has to happen here for the sanitizer's check at exit to see a settled heap.
+ */
+class CollectAtExit final : public ::testing::Environment
+{
+public:
+    void TearDown() override
+    {
+        if (std::getenv("LUMIERE_CYCLE_DEBUG") != nullptr)
+        {
+            std::fprintf(stderr, "[cycles] avant: vivants=%zu candidats=%zu\n",
+                         RefCounted::live_count(), cycle_candidate_count());
+            const std::size_t freed = collect_cycles();
+            std::fprintf(stderr, "[cycles] apres: vivants=%zu liberes=%zu candidats=%zu\n",
+                         RefCounted::live_count(), freed, cycle_candidate_count());
+#ifndef NDEBUG
+            std::map<std::string, std::size_t> by_type;
+            for (const RefCounted *object : live_objects())
+            {
+                ++by_type[typeid(*object).name()];
+            }
+            for (const auto &[name, count] : by_type)
+            {
+                std::fprintf(stderr, "[cycles]   %zu x %s\n", count, name.c_str());
+            }
+#endif
+            return;
+        }
+        collect_cycles();
+    }
+};
+
+const bool registered = [] {
+    ::testing::AddGlobalTestEnvironment(new CollectAtExit());
+    return true;
+}();
+
+} // namespace
 
 } // namespace lumiere

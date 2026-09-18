@@ -746,10 +746,59 @@ temporary source/output paths between builds. Concurrent suites can overwrite
 or remove each other's files even though parallel tests within one suite pass.
 
 Linux CI additionally runs address, undefined-behavior, and float-cast-overflow
-sanitizers. Undefined behavior is fatal. Leak detection is explicitly disabled
-until reference cycles are handled; a passing sanitizer run is not evidence
-that the runtime is leak-free. Example CLI tests now isolate their output files
-so parallel CTest runs cannot overwrite each other's results.
+sanitizers. Undefined behavior is fatal. Leak detection is now enabled: the
+complete suite of 441 tests passes with `ASAN_OPTIONS=detect_leaks=1`, and
+`scripts/check-leaks` runs nine programs under both engines and requires every
+one of them clean. A sanitizer run is therefore evidence about leaks again.
+Sanitized builds get a longer per-test timeout, because a handful of CLI tests
+spawn a dozen subprocesses each and every one of them runs several times slower
+under a sanitizer. Example CLI tests isolate their output files so parallel
+CTest runs cannot overwrite each other's results.
+
+## Reference cycles
+
+Collection is Bacon-Rajan, run from the reference counts themselves. That
+choice is what makes it usable here: a tracing collector needs to enumerate its
+roots, and the tree walker holds `Value`s in C++ locals throughout, so there is
+no root set to enumerate. Counting-based collection does not need one.
+
+The safety property the whole design rests on is that tracing is allowed to be
+incomplete but never wrong. Reporting fewer edges than an object holds leaves a
+cycle uncollected -- a leak. Reporting an edge the object does not hold frees
+something still in use. Everything below follows from keeping errors on the
+first side.
+
+Both engines are now covered. `Environment`, the three runtime body types and
+`RuntimeModuleState` are counted objects that report what they hold, and
+capture cells are counted too, so a closure capturing itself is a cycle the
+collector can see. Collection runs on loop back edges and function returns in
+both engines, so a loop that builds cycles stays bounded rather than growing
+until the program ends: a 200,000-pair stress program peaks at 5.9 MB under the
+VM and 5.2 MB under the tree walker, against 129 MB and 135 MB before.
+
+Two kinds of reference are invisible to tracing by construction, and both are
+handled by inverting the ownership rather than by trying to see into them:
+
+- A capture inside a native handler's `std::function` cannot be enumerated in
+  C++. The contract is therefore that a native handler captures a counted
+  object as a raw pointer, and the owning reference is declared in
+  `LumiereFunction::native_captures`, which tracing does reach. A handler bound
+  to an instance declares that instance, and reaches its state through it.
+- The C++ state hanging off an instance -- a socket, a server's route table --
+  used to be a `std::shared_ptr<void>`, which is opaque for the same reason. It
+  is now a `NativeState`, a counted object like any other, with both tracing
+  virtuals left pure so that a new state has to answer the question rather than
+  inherit a silent "I hold nothing".
+
+Both holes were real and both leaked: a `ServeurHTTP` holding its handlers, and
+LumiTest's context object holding the very methods bound onto it, each retained
+their whole defining scope. Debug builds keep a registry of live objects
+(`live_objects()`) so that a cycle which survives a collection can be identified
+by type instead of inferred; it is how those two were found.
+
+The cost is at the noise floor on the VM and roughly 0 to 5 per cent on the tree
+walker, measured by building the previous commit in the same session and running
+the two binaries back to back.
 
 ## Next engineering priorities
 
@@ -757,10 +806,8 @@ so parallel CTest runs cannot overwrite each other's results.
    to their allocations, with conservative non-weakening re-annotation rules.
    Next audit native nominal identity, semantic module identity, and
    chained-alias shadowing,
-   then decide whether richer mutable-generic type relations are needed.
-   Implement
-   cycle collection with explicit roots and allocation accounting, then enable
-   leak checks. Long-running applications need bounded memory behavior.
+   then decide whether richer mutable-generic type relations are needed. Cycle
+   collection and leak checks are done; see "Reference cycles" above.
 2. **Argument types for builtin members.** Result types are now known, but the
    parameters of a builtin collection member are still `Universel`, so
    `notes.ajouter("x")` on a `Liste[Entier]` is caught at run time rather than
@@ -770,13 +817,13 @@ so parallel CTest runs cannot overwrite each other's results.
 3. **One conformance corpus.** Run language and stdlib fixtures under both
    engines, comparing values, errors, evaluation order, and side effects.
    Fuzz UTF-8, parser inputs, numeric boundaries, and malformed bytecode.
-4. **Value representation, after the object model.** Profiling now says the
-   48-byte non-trivial `Value` is about 40% of execution, so replacing it with a
-   small trivially copyable value is the largest lever inside the interpreter —
-   worth roughly 28% on the integer loop. It cannot be done first: the small
-   value needs the runtime to own its heap objects through its own reference
-   counting, which is priority 1's work. Measure allocation and instruction
-   counts alongside it, and track peak memory as well as time.
+4. **Value representation.** Profiling said the 48-byte non-trivial `Value` was
+   about 40% of execution. It is now 24 bytes and holds a `Ref` rather than a
+   `shared_ptr`, which was the part that had to wait for the runtime to own its
+   own heap objects. Going further — a small trivially copyable value — is now
+   unblocked and remains the largest lever inside the interpreter. Measure
+   allocation and instruction counts alongside it, and peak memory as well as
+   time.
 5. **International text support.** Choose explicit normalization, grapheme,
    collation, case-folding, and locale contracts. Use maintained Unicode data
    rather than hand-written accent tables. Preserve the scalar APIs so their

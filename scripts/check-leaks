@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Runs programs under a leak-detecting build and reports which ones retain memory.
 #
-# Leak detection has been disabled in the sanitizer suite because reference
-# cycles are not collected yet. That is still true for cycles, but everything
-# else is now freed deterministically: the runtime owns its heap values through
-# its own reference counts rather than through shared_ptr, and a value's last
-# reference destroys it.
+# Both engines must run clean, cycles included. The runtime owns its heap values
+# through its own reference counts, so a value's last reference destroys it, and
+# what reference counting cannot reclaim on its own -- a cycle -- the collector
+# reclaims once the last outside reference is gone.
 #
-# This script pins that down. Every program listed here must run clean, so a
-# regression in ownership shows up as a leak rather than as slow growth in a
-# long-running process.
+# This script pins that down. Every program listed here must run clean under
+# both backends, so a regression in ownership shows up as a leak here rather
+# than as slow growth in a long-running process.
 #
 #   cmake -S . -B build_asan -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
 #     -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined" \
@@ -40,43 +39,27 @@ programs=(
 )
 
 failures=0
-walker_leaks=0
 for program in "${programs[@]}"; do
     printf '%-42s ' "$program"
 
-    vm_output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --vm "$root/$program" 2>&1)
-    if printf '%s' "$vm_output" | grep -q 'leak of'; then
-        printf 'vm=FUITE  '
-        printf '%s\n' "$vm_output" | grep -E 'SUMMARY|leak of' | head -2
-        failures=$((failures + 1))
-    else
-        printf 'vm=propre  '
-    fi
-
-    tw_output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" --tw "$root/$program" 2>&1)
-    if printf '%s' "$tw_output" | grep -q 'leak of'; then
-        echo "tw=fuite (connu)"
-        walker_leaks=$((walker_leaks + 1))
-    else
-        echo "tw=propre"
-    fi
+    for backend in --vm --tw; do
+        label=${backend#--}
+        output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" "$backend" "$root/$program" 2>&1)
+        if printf '%s' "$output" | grep -q 'leak of'; then
+            printf '%s=FUITE  ' "$label"
+            printf '%s\n' "$output" | grep -E 'SUMMARY|leak of' | head -2
+            failures=$((failures + 1))
+        else
+            printf '%s=propre  ' "$label"
+        fi
+    done
+    echo
 done
 
 echo
-if [ "$walker_leaks" -ne 0 ]; then
-    cat <<'NOTE'
-Le tree-walker retient encore ses environnements. Un Environment détient son
-parent par shared_ptr, et le propriétaire de fermeture d'une fonction est
-l'environnement qui contient cette fonction : l'environnement global et
-'principal' forment donc un cycle sur tout programme. Ni Environment ni les
-corps de fonction ne sont encore des objets comptés, donc le collecteur ne peut
-pas les voir. C'est la suite de T2.
-NOTE
-fi
-
 if [ "$failures" -ne 0 ]; then
-    echo "$failures programme(s) retiennent de la mémoire sous la VM."
+    echo "$failures exécution(s) retiennent de la mémoire."
     exit 1
 fi
 
-echo "VM : aucune fuite, cycles compris."
+echo "Aucune fuite sur les deux moteurs, cycles compris."

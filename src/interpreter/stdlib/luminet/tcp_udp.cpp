@@ -77,7 +77,7 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
                 raise_network_error(runtime, native_args.site, "LumiNet.TCP.connecter", socket_error_text("connexion"));
             }
 
-            auto state = std::make_shared<TcpConnectionState>();
+            auto state = make_ref<TcpConnectionState>();
             state->fd = fd;
             return make_tcp_connection_value(state, peer_address.empty() ? host : peer_address, port, make_native_function);
                 });
@@ -88,7 +88,7 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
         "Serveur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "LumiNet.TCP.Serveur", native_args.site);
-            return make_tcp_server_value(std::make_shared<TcpServerState>(), make_native_function);
+            return make_tcp_server_value(make_ref<TcpServerState>(), make_native_function);
         });
     return Value::objet(std::move(tcp));
 }
@@ -152,7 +152,7 @@ Value make_luminet_udp_module(const NativeFunctionFactory &make_native_function)
                 raise_network_error(runtime, native_args.site, "LumiNet.UDP.ouvrir", socket_error_text("port"));
             }
 
-            auto state = std::make_shared<UdpSocketState>();
+            auto state = make_ref<UdpSocketState>();
             state->fd = fd;
             state->port = ntohs(bound.sin_port);
             return make_udp_socket_value(state, make_native_function);

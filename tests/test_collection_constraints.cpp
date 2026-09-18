@@ -31,7 +31,7 @@ TEST(CollectionConstraints, EnvironmentAliasesResolveInDefinitionScope)
     const auto named = [](const std::string &name) {
         return TypeExpr::named(Token(TokenType::IDENT, name, 0, 0));
     };
-    auto outer = std::make_shared<Environment>();
+    auto outer = make_ref<Environment>();
     outer->define_type_alias("Base", named("Entier"));
     outer->define_type_alias("Nombre", named("Base"));
     Environment inner(outer);

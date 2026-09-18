@@ -44,32 +44,43 @@ namespace lumiere
     }
 
 
-    using NativeStatePtr = std::shared_ptr<void>;
+    using NativeStatePtr = Ref<NativeState>;
 
-    struct TcpConnectionState
+    struct TcpConnectionState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
 
-        ~TcpConnectionState();
+        ~TcpConnectionState() override;
+
+        // A socket and two flags: nothing the collector owns.
+        void trace_references(RefVisitor &) const override {}
+        void clear_references() override {}
     };
 
-    struct TcpServerState
+    struct TcpServerState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         std::atomic<bool> stopped{false};
         Value on_connection = Value::rien();
 
-        ~TcpServerState();
+        ~TcpServerState() override;
+
+        void trace_references(RefVisitor &visitor) const override;
+        void clear_references() override;
     };
 
-    struct UdpSocketState
+    struct UdpSocketState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
         int port = 0;
 
-        ~UdpSocketState();
+        ~UdpSocketState() override;
+
+        // A socket, a flag and a port: nothing the collector owns.
+        void trace_references(RefVisitor &) const override {}
+        void clear_references() override {}
     };
 
     struct HttpRoute
@@ -79,7 +90,7 @@ namespace lumiere
         Value handler = Value::rien();
     };
 
-    struct HttpServerState
+    struct HttpServerState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         std::atomic<bool> stopped{false};
@@ -87,10 +98,13 @@ namespace lumiere
         std::vector<HttpRoute> routes;
         std::vector<std::pair<std::string, Value>> canal_routes;
 
-        ~HttpServerState();
+        ~HttpServerState() override;
+
+        void trace_references(RefVisitor &visitor) const override;
+        void clear_references() override;
     };
 
-    struct CanalClientState
+    struct CanalClientState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         bool closed = false;
@@ -103,10 +117,13 @@ namespace lumiere
         Value on_close = Value::rien();
         Value on_error = Value::rien();
 
-        ~CanalClientState();
+        ~CanalClientState() override;
+
+        void trace_references(RefVisitor &visitor) const override;
+        void clear_references() override;
     };
 
-    struct CanalServerState
+    struct CanalServerState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         std::atomic<bool> stopped{false};
@@ -115,14 +132,21 @@ namespace lumiere
         Value on_disconnect = Value::rien();
         Value on_error = Value::rien();
 
-        ~CanalServerState();
+        ~CanalServerState() override;
+
+        void trace_references(RefVisitor &visitor) const override;
+        void clear_references() override;
     };
 
-    struct HttpResponseWriterState
+    struct HttpResponseWriterState : NativeState
     {
         SocketHandle fd = kInvalidSocketHandle;
         bool sent = false;
         std::vector<std::pair<std::string, std::string>> headers;
+
+        // A socket, a flag and plain header text: nothing the collector owns.
+        void trace_references(RefVisitor &) const override {}
+        void clear_references() override {}
     };
 
     struct ParsedHttpUrl
@@ -156,7 +180,7 @@ namespace lumiere
     void attach_native_state(const Ref<LumiereObject> &object, NativeStatePtr state);
 
     template <typename State>
-    std::shared_ptr<State> require_native_state(IRuntime &runtime,
+    Ref<State> require_native_state(IRuntime &runtime,
                                                 const Ref<LumiereObject> &object,
                                                 const std::string &expected_type,
                                                 const std::string &context,
@@ -172,7 +196,7 @@ namespace lumiere
             runtime.raise_runtime_error(site, context + " requiert un " + expected_type);
         }
 
-        auto state = std::static_pointer_cast<State>(object->native_state);
+        auto state = dynamic_ref_cast<State>(object->native_state);
         if (state == nullptr)
         {
             runtime.raise_runtime_error(site, context + " requiert un " + expected_type + " valide");
@@ -313,18 +337,18 @@ namespace lumiere
                                   const RuntimeSite &site);
     std::string guess_content_type(const std::string &path);
     void send_http_response(IRuntime &runtime,
-                            const std::shared_ptr<HttpResponseWriterState> &state,
+                            const Ref<HttpResponseWriterState> &state,
                             int64_t status,
                             const std::string &body,
                             std::vector<std::pair<std::string, std::string>> headers,
                             const std::string &context,
                             const RuntimeSite &site);
     Value make_http_response_writer_value(IRuntime &runtime,
-                                          const std::shared_ptr<HttpResponseWriterState> &state,
+                                          const Ref<HttpResponseWriterState> &state_ref,
                                           const NativeFunctionFactory &make_native_function,
                                           const RuntimeSite &site);
     void run_canal_loop(IRuntime &runtime,
-                        const std::shared_ptr<CanalClientState> &state,
+                        const Ref<CanalClientState> &state,
                         bool server_dispatch_mode,
                         const Value &server_message_callback,
                         const Value &server_disconnect_callback,
@@ -332,20 +356,20 @@ namespace lumiere
                         Value client_value,
                         const RuntimeSite &site);
     Value make_canal_client_value(IRuntime &runtime,
-                                  const std::shared_ptr<CanalClientState> &state,
+                                  const Ref<CanalClientState> &state_ref,
                                   const NativeFunctionFactory &make_native_function,
                                   const RuntimeSite &site);
-    Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
+    Value make_canal_server_value(const Ref<CanalServerState> &state_ref,
                                   const NativeFunctionFactory &make_native_function);
-    Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state,
+    Value make_tcp_connection_value(const Ref<TcpConnectionState> &state_ref,
                                     const std::string &address,
                                     int64_t port,
                                     const NativeFunctionFactory &make_native_function);
-    Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
+    Value make_tcp_server_value(const Ref<TcpServerState> &state_ref,
                                 const NativeFunctionFactory &make_native_function);
-    Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
+    Value make_http_server_value(const Ref<HttpServerState> &state_ref,
                                  const NativeFunctionFactory &make_native_function);
-    Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
+    Value make_udp_socket_value(const Ref<UdpSocketState> &state_ref,
                                 const NativeFunctionFactory &make_native_function);
 
     Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_function);

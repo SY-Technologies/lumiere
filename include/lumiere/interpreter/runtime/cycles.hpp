@@ -79,4 +79,15 @@ inline std::size_t collect_cycles_if_due()
 /** @brief Candidate count at which collect_cycles_if_due() runs a collection. */
 void set_cycle_collection_threshold(std::size_t candidates) noexcept;
 
+#ifndef NDEBUG
+/**
+ * @brief Every counted object still alive, for diagnosing a cycle that survived.
+ *
+ * Debug builds only. live_count() says how many objects a collection failed to
+ * reclaim; this says which, so their dynamic types name the edge that
+ * trace_references is not reporting.
+ */
+[[nodiscard]] std::vector<const RefCounted *> live_objects();
+#endif
+
 } // namespace lumiere

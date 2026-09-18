@@ -165,6 +165,11 @@ struct ResultData;
  * pointee's type: the buffer is stored without const so it can share the one
  * type-erased handle every heap value uses.
  */
+
+
+struct CellData;
+using CellRef = Ref<CellData>;
+
 struct TexteData : RefCounted
 {
     std::string text;
@@ -455,9 +460,9 @@ struct ResultData : RefCounted
 //  LumiereFunction
 //  A callable, either a user-defined function (eg obj.do_something())
 //  or a bound method carrying its receiver (eg ici.do_something())
-struct RuntimeFunctionBody
+struct RuntimeFunctionBody : RefCounted
 {
-    virtual ~RuntimeFunctionBody() = default;
+    ~RuntimeFunctionBody() override = default;
 };
 
 struct LumiereFunction : RefCounted
@@ -469,9 +474,16 @@ struct LumiereFunction : RefCounted
     using NativeHandler = std::function<Value(IRuntime &, const NativeArgs &)>;
 
     std::string                     name;
-    std::shared_ptr<RuntimeFunctionBody> body;
+    Ref<RuntimeFunctionBody> body;
     Value                           receiver;
     NativeHandler                   native_handler;
+    // A native handler is an opaque std::function: nothing can enumerate what
+    // it captured, so a counted object captured inside it is a reference the
+    // collector can neither see nor break, and any cycle through it survives
+    // forever. The contract is therefore that a handler captures such an object
+    // as a raw pointer and the owning reference is declared here, where tracing
+    // reaches it.
+    std::vector<Ref<RefCounted>>    native_captures;
     std::size_t                     min_arity = 0;
     std::size_t                     max_arity = 0;
 
@@ -494,21 +506,21 @@ struct LumiereFunction : RefCounted
 
 };
 
-struct RuntimeClassBody
+struct RuntimeClassBody : RefCounted
 {
-    virtual ~RuntimeClassBody() = default;
+    ~RuntimeClassBody() override = default;
 };
 
-struct RuntimeInterfaceBody
+struct RuntimeInterfaceBody : RefCounted
 {
-    virtual ~RuntimeInterfaceBody() = default;
+    ~RuntimeInterfaceBody() override = default;
 };
 
 struct LumiereClass : RefCounted
 {
     std::string name;
     std::string type_identity;
-    std::shared_ptr<RuntimeClassBody> body;
+    Ref<RuntimeClassBody> body;
     Ref<LumiereClass> parent;
     std::unordered_map<std::string, Ref<LumiereInterface>> interfaces;
 
@@ -521,11 +533,23 @@ struct LumiereInterface : RefCounted
 {
     std::string name;
     std::string type_identity;
-    std::shared_ptr<RuntimeInterfaceBody> body;
+    Ref<RuntimeInterfaceBody> body;
 
     void trace_references(RefVisitor &visitor) const override;
     void clear_references() override;
 
+};
+
+//  NativeState
+//  Base for the C++ state a standard-library object hangs off an instance: a
+//  socket, a parser, a server's route table. It derives from RefCounted and
+//  leaves trace_references/clear_references pure on purpose. A state that keeps
+//  Lumiere Values -- a server holding the handlers it will call -- closes a
+//  reference cycle through them, and the collector can only break that cycle if
+//  the state reports those Values. Making every state author answer, even when
+//  the answer is "I hold none", is what stops a new state leaking in silence.
+struct NativeState : RefCounted
+{
 };
 
 //  LumiereObject
@@ -533,7 +557,7 @@ struct LumiereInterface : RefCounted
 struct LumiereObject : RefCounted
 {
     Ref<LumiereClass>           klass;
-    std::shared_ptr<void>                   native_state;
+    Ref<NativeState>            native_state;
     std::unordered_map<std::string, Value> fields;
 
     void trace_references(RefVisitor &visitor) const override;
@@ -541,14 +565,14 @@ struct LumiereObject : RefCounted
 
 };
 
-struct RuntimeModuleState
+struct RuntimeModuleState : RefCounted
 {
-    virtual ~RuntimeModuleState() = default;
+    ~RuntimeModuleState() override = default;
 };
 
 struct Module {
     std::string name;
-    std::shared_ptr<RuntimeModuleState> state;
+    Ref<RuntimeModuleState> state;
     std::unordered_map<std::string, Value> members;
     std::unordered_set<std::string> public_members;
     std::unordered_map<std::string, TypeExpr> type_aliases;
@@ -619,5 +643,30 @@ inline Ref<const ResultData> Value::as_resultat() const
     assert(is_resultat());
     return Ref<const ResultData>(static_cast<const ResultData *>(m_ref.get()));
 }
+
+/**
+ * @brief A captured local, shared between a closure and the frame that made it.
+ *
+ * Counted like any other heap value so that a closure capturing itself is a
+ * cycle the collector can see rather than one it must step around.
+ */
+struct CellData : RefCounted
+{
+    Value value;
+
+    CellData() = default;
+    explicit CellData(Value initial);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+};
+
+/**
+ * @brief Reports the heap object a Value holds, if it holds one.
+ *
+ * Every trace_references that stores Values goes through here, so a Value's
+ * representation stays the one thing that knows which tags carry a reference.
+ */
+void trace_value(const Value &value, RefVisitor &visitor);
 
 } // namespace lumiere

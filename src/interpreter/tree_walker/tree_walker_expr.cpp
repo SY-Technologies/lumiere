@@ -1046,12 +1046,12 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
     };
 
     Environment *previous_env = m_env;
-    std::shared_ptr<Environment> previous_env_owner = m_env_owner;
+    Ref<Environment> previous_env_owner = m_env_owner;
     Value previous_self = m_self;
     // Start a fresh call frame whose parent is the function's saved closure.
     // Parameters and locals land in this new frame; captured names resolve
     // through the parent chain preserved by function_closure_owner(...).
-    m_env_owner = std::make_shared<Environment>(function_closure_owner(*function));
+    m_env_owner = make_ref<Environment>(function_closure_owner(*function));
     m_env = m_env_owner.get();
     m_env->set_source_identity(function_source_identity(*function));
     m_self = function->receiver;

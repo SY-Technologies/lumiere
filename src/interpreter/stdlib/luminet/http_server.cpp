@@ -7,11 +7,14 @@
 namespace lumiere
 {
 
-Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
+Value make_http_server_value(const Ref<HttpServerState> &state_ref,
                              const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ServeurHTTP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
 
     const auto add_route = [state](IRuntime &runtime,
                                    const NativeArgs &native_args,
@@ -161,7 +164,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                 {
                     const std::string raw = recv_http_message(runtime, active_client_fd, "ServeurHTTP.écouter", native_args.site);
                     HttpRequestData request = parse_http_request(runtime, raw, "ServeurHTTP.écouter", native_args.site);
-                    auto writer_state = std::make_shared<HttpResponseWriterState>();
+                    auto writer_state = make_ref<HttpResponseWriterState>();
                     writer_state->fd = active_client_fd;
                     Value request_value;
                     Value response_value;
@@ -219,7 +222,7 @@ Value make_http_server_value(const std::shared_ptr<HttpServerState> &state,
                                  native_args.site);
                         writer_state->sent = true;
 
-                        auto canal_state = std::make_shared<CanalClientState>();
+                        auto canal_state = make_ref<CanalClientState>();
                         canal_state->fd = active_client_fd;
                         active_client_fd = kInvalidSocketHandle;
                         canal_state->client_side = false;

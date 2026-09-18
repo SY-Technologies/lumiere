@@ -6,13 +6,16 @@
 namespace lumiere
 {
 
-Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state,
+Value make_tcp_connection_value(const Ref<TcpConnectionState> &state_ref,
                                 const std::string &address,
                                 int64_t port,
                                 const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ConnexionTCP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
     object->fields["adresse"] = Value::texte(address);
     object->fields["port"] = Value::entier(port);
 
@@ -156,11 +159,14 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
     return Value::objet(std::move(object));
 }
 
-Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
+Value make_tcp_server_value(const Ref<TcpServerState> &state_ref,
                             const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ServeurTCP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
 
     object->fields["quand_connexion"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
@@ -262,7 +268,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                     raise_network_error(runtime, native_args.site, "ServeurTCP.écouter", socket_error_text("acceptation"));
                 }
 
-                auto client_state = std::make_shared<TcpConnectionState>();
+                auto client_state = make_ref<TcpConnectionState>();
                 client_state->fd = client_fd;
                 try
                 {

@@ -17,7 +17,7 @@ equal-spelling declarations from different owners remain incompatible.
 
 ## T2 — Bound runtime memory with cycle collection
 
-Status: collecting — 2026-09-18; tree-walker environments outstanding
+Status: complete — 2026-09-18
 
 - [x] Give the runtime its own ownership: heap values carry an intrusive,
       non-atomic reference count instead of being held by `shared_ptr`.
@@ -32,15 +32,23 @@ Status: collecting — 2026-09-18; tree-walker environments outstanding
       program went from 129 MB to 5.9 MB of peak resident memory.
 - [x] Enable leak detection for the VM: `scripts/check-leaks` is clean on nine
       programs, cycles included.
-- [ ] Make the tree walker's environments and function bodies counted objects,
-      so their cycles come within the collector's reach. An `Environment` owns
-      its parent by `shared_ptr` and a function's closure owner is the
-      environment holding it, so every program leaks that pair today.
-- [ ] Decide what to do about captures inside a native handler's `std::function`,
-      which cannot be enumerated and so cannot be traced.
+- [x] Make the tree walker's environments and function bodies counted objects,
+      so their cycles come within the collector's reach. `Environment`,
+      `RuntimeFunctionBody`, `RuntimeClassBody`, `RuntimeInterfaceBody` and
+      `RuntimeModuleState` are counted and traced; capture cells are counted
+      too, so a closure capturing itself is a cycle the collector can see.
+- [x] Collect on the tree walker's loop back edges as the VM does, so a loop
+      building cycles no longer grows without bound. The same stress program
+      went from 135 MB to 5.2 MB of peak resident memory under `--tw`.
+- [x] Close the native-handler hole. A capture inside a `std::function` cannot
+      be enumerated, so the contract is now the reverse: a native handler
+      captures a counted object as a raw pointer, and the owning reference is
+      declared in `LumiereFunction::native_captures`, where tracing reaches it.
+      `NativeState` gives the same treatment to the C++ state hanging off an
+      instance, with both virtuals left pure so a new state must answer.
 
-Acceptance: met for the VM. The complete suite passes with leak detection
-enabled once the tree walker's environments are counted.
+Acceptance: met. The complete suite of 441 tests passes with leak detection
+enabled, and `scripts/check-leaks` is clean on both engines, cycles included.
 
 ## T3 — Specify and optimize dictionary/set semantics
 
@@ -71,7 +79,7 @@ every discovered mismatch or crash.
 
 ## T5 — Profile representative workloads
 
-Status: baseline measured — 2026-09-17; optimization blocked on T2
+Status: baseline measured — 2026-09-17; value representation unblocked by T2
 
 - [x] Measure against a compiled baseline rather than against our own history:
       `scripts/compare-languages.py` reports 430x C and 1.39x slower than CPython.
@@ -80,8 +88,8 @@ Status: baseline measured — 2026-09-17; optimization blocked on T2
 - [x] Remove the per-instruction source-location lookup (8.6%).
 - [ ] Add allocation, peak-memory, and VM-instruction counters.
 - [ ] Establish representative workloads in addition to microbenchmarks.
-- [ ] Replace the value representation — blocked on T2, since a trivially
-      copyable value cannot hold a `shared_ptr`.
+- [ ] Replace the value representation. No longer blocked: `Value` holds a
+      `Ref`, not a `shared_ptr`, and is down to 24 bytes.
 
 Acceptance: benchmark reports include reproducible baselines and explain each
 optimization using measured time and memory changes. Note that no interpreter

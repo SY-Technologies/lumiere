@@ -294,7 +294,15 @@ if(BUILD_TESTING)
         )
 
         include(GoogleTest)
-        gtest_discover_tests(lumiere_unit_tests PROPERTIES TIMEOUT 30)
+        # A handful of CLI tests spawn a dozen subprocesses each. Under a
+        # sanitizer every one of those runs several times slower, which is what
+        # pushes them past a timeout sized for an ordinary build rather than any
+        # change in what they do.
+        set(LUMIERE_TEST_TIMEOUT 30)
+        if(CMAKE_CXX_FLAGS MATCHES "-fsanitize")
+            set(LUMIERE_TEST_TIMEOUT 180)
+        endif()
+        gtest_discover_tests(lumiere_unit_tests PROPERTIES TIMEOUT ${LUMIERE_TEST_TIMEOUT})
     else()
         message(STATUS "Skipping lumiere_unit_tests: test sources are empty.")
     endif()

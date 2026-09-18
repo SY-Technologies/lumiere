@@ -241,7 +241,7 @@ std::string guess_content_type(const std::string &path)
 }
 
 void send_http_response(IRuntime &runtime,
-                        const std::shared_ptr<HttpResponseWriterState> &state,
+                        const Ref<HttpResponseWriterState> &state,
                         int64_t status,
                         const std::string &body,
                         std::vector<std::pair<std::string, std::string>> headers,
@@ -316,12 +316,15 @@ void send_http_response(IRuntime &runtime,
 }
 
 Value make_http_response_writer_value(IRuntime &runtime,
-                                      const std::shared_ptr<HttpResponseWriterState> &state,
+                                      const Ref<HttpResponseWriterState> &state_ref,
                                       const NativeFunctionFactory &make_native_function,
                                       const RuntimeSite &site)
 {
     auto object = make_hidden_typed_object("RéponseServeurHTTP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
 
     object->fields["définir_entête"] = Value::fonction(make_native_function(
         [state](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
@@ -340,7 +343,10 @@ Value make_http_response_writer_value(IRuntime &runtime,
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer", native_args.site);
             send_http_response(inner_runtime,
-                               state,
+                               // send_http_response keeps its own handle for
+                               // the duration of the send; the handler holds
+                               // only the raw pointer.
+                               Ref<HttpResponseWriterState>(state),
                                stdlib_expect_integer(inner_runtime, args[0].value, "RéponseServeurHTTP.envoyer", native_args.site),
                                stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.envoyer", native_args.site),
                                {},
@@ -356,7 +362,10 @@ Value make_http_response_writer_value(IRuntime &runtime,
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(inner_runtime, args, 2, "RéponseServeurHTTP.envoyer_json", native_args.site);
             send_http_response(inner_runtime,
-                               state,
+                               // send_http_response keeps its own handle for
+                               // the duration of the send; the handler holds
+                               // only the raw pointer.
+                               Ref<HttpResponseWriterState>(state),
                                stdlib_expect_integer(inner_runtime, args[0].value, "RéponseServeurHTTP.envoyer_json", native_args.site),
                                stdlib_expect_text(inner_runtime, args[1].value, "RéponseServeurHTTP.envoyer_json", native_args.site),
                                {{"Content-Type", "application/json"}},
@@ -390,7 +399,10 @@ Value make_http_response_writer_value(IRuntime &runtime,
             std::ostringstream buffer;
             buffer << file.rdbuf();
             send_http_response(inner_runtime,
-                               state,
+                               // send_http_response keeps its own handle for
+                               // the duration of the send; the handler holds
+                               // only the raw pointer.
+                               Ref<HttpResponseWriterState>(state),
                                status,
                                buffer.str(),
                                {{"Content-Type", guess_content_type(path)}},
@@ -410,7 +422,10 @@ Value make_http_response_writer_value(IRuntime &runtime,
                 ? stdlib_expect_integer(inner_runtime, args[1].value, "RéponseServeurHTTP.rediriger", native_args.site)
                 : 302;
             send_http_response(inner_runtime,
-                               state,
+                               // send_http_response keeps its own handle for
+                               // the duration of the send; the handler holds
+                               // only the raw pointer.
+                               Ref<HttpResponseWriterState>(state),
                                status,
                                "",
                                {{"Location", url}},

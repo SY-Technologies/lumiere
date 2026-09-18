@@ -294,9 +294,35 @@ Two smaller findings came out of the work, both measured:
   Moving the destruction out of line, leaving a decrement and a branch inline,
   was worth roughly 3 ms on the integer loop.
 
-Leak detection is the other half of this change. The sanitizer suite has had it
-disabled throughout this project because reference cycles are not collected. That
-is still true of cycles, but everything else is now freed deterministically:
-`scripts/check-leaks` runs nine example and benchmark programs under a
-leak-detecting build and all nine are clean. A program that builds a reference
-cycle still leaks, which is the remaining part of T2 and now the only part.
+Leak detection is the other half of this change. The sanitizer suite had it
+disabled throughout this project because reference cycles were not collected.
+They are now, on both engines, so leak detection is on: the complete suite of
+441 tests passes with `ASAN_OPTIONS=detect_leaks=1`, and `scripts/check-leaks`
+runs nine example and benchmark programs under both engines with every one of
+the eighteen runs clean.
+
+## Cost of collecting cycles on both engines
+
+Measured by building the previous commit in the same session and running the
+two binaries back to back, seven samples each, median reported.
+
+| Benchmark | VM before | VM after | TW before | TW after |
+| --- | --- | --- | --- | --- |
+| integer_loop | 80.6 ms | 78.5 ms | 375.0 ms | 383.9 ms |
+| text_iteration | 5.35 ms | 5.21 ms | 10.94 ms | 11.86 ms |
+| function_calls | 31.7 ms | 30.9 ms | 454.3 ms | 450.7 ms |
+| text_calls | 2.56 ms | 2.47 ms | 15.31 ms | 14.06 ms |
+| typed_list | 53.1 ms | 47.6 ms | 133.4 ms | 138.9 ms |
+| dictionary_lookup | 49.3 ms | 49.7 ms | 89.9 ms | 90.5 ms |
+
+The VM is unchanged to within noise. The tree walker pays between nothing and
+about five per cent, which is what making its environments and function bodies
+counted objects costs; the numbers move in both directions across the suite and
+none of the differences is large against the run-to-run spread.
+
+What it buys is bounded memory rather than speed. A program that allocates
+200,000 two-node cycles in a loop used to peak at 135 MB under the tree walker,
+because nothing collected during the run; it now peaks at 5.2 MB, and finishes
+slightly faster for touching less memory. The VM figure is 5.9 MB against 129 MB
+before. Collection runs on loop back edges in both engines, gated by a candidate
+threshold whose common answer — not yet — is two loads and a comparison.

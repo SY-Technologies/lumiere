@@ -217,7 +217,7 @@ void stdlib_bind_public_function(Module &module,
 }
 
 bool register_builtin_module(Module &module,
-                             std::shared_ptr<LumiTestModuleState> lumitest_state)
+                             Ref<LumiTestModuleState> lumitest_state)
 {
     if (module.name == "Chemin")
     {
@@ -251,7 +251,7 @@ bool register_builtin_module(Module &module,
         register_lumitest_module(module,
                                  lumitest_state != nullptr
                                      ? std::move(lumitest_state)
-                                     : std::make_shared<LumiTestModuleState>());
+                                     : make_ref<LumiTestModuleState>());
     else
     {
         return false;

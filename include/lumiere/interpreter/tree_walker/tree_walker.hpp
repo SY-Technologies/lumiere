@@ -169,7 +169,17 @@ namespace lumiere
         struct TreeWalkerInterfaceBody;
         struct TreeWalkerModuleState : RuntimeModuleState
         {
-            std::shared_ptr<Environment> environment;
+            Ref<Environment> environment;
+
+            void trace_references(RefVisitor &visitor) const override
+            {
+                if (environment)
+                {
+                    visitor.visit(environment.get());
+                }
+            }
+
+            void clear_references() override { environment.reset(); }
         };
 
         class StackFrameGuard
@@ -187,7 +197,7 @@ namespace lumiere
 
         Value m_result;               // for expression results
         Environment *m_env = nullptr; // current scope, never null during execution
-        std::shared_ptr<Environment> m_env_owner;
+        Ref<Environment> m_env_owner;
         Value m_self; // current ici binding — RIEN if free function
         std::unordered_map<std::string, std::shared_ptr<Module>> m_modules;
         std::unordered_set<std::string> m_loading_modules;
@@ -296,7 +306,7 @@ namespace lumiere
          */
         Ref<LumiereFunction> make_declared_function(FunctionDeclStmt &decl,
                                                                 Value receiver,
-                                                                std::shared_ptr<Environment> closure,
+                                                                Ref<Environment> closure,
                                                                 std::string source_identity = {}) const;
 
         /**
@@ -307,7 +317,7 @@ namespace lumiere
          */
         Ref<LumiereFunction> make_declared_function(FunctionExpr &expr,
                                                                 Value receiver,
-                                                                std::shared_ptr<Environment> closure,
+                                                                Ref<Environment> closure,
                                                                 std::string source_identity = {}) const;
 
         /**
@@ -638,14 +648,14 @@ namespace lumiere
         /**
          * @brief Returns the shared owner that keeps a captured closure environment alive.
          */
-        std::shared_ptr<Environment> function_closure_owner(const LumiereFunction &function) const;
+        Ref<Environment> function_closure_owner(const LumiereFunction &function) const;
         const std::string &function_source_identity(const LumiereFunction &function) const;
 
         /**
          * @brief Returns the class declaration behind a class value, if present.
          */
         ClassDeclStmt *class_decl(const Ref<LumiereClass> &klass) const;
-        std::shared_ptr<Environment> class_closure_owner(const Ref<LumiereClass> &klass) const;
+        Ref<Environment> class_closure_owner(const Ref<LumiereClass> &klass) const;
         const std::string &class_source_identity(const Ref<LumiereClass> &klass) const;
         Token class_annotation(const Ref<LumiereClass> &klass, const TypeExpr &type) const;
         Ref<LumiereInterface> resolve_interface_value(const TypeExpr &type) const;

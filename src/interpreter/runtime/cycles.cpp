@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <vector>
 
+#ifndef NDEBUG
+#include <mutex>
+#include <unordered_set>
+#endif
+
 namespace lumiere
 {
 
@@ -16,6 +21,19 @@ namespace
 {
 
 std::size_t g_live = 0;
+#ifndef NDEBUG
+// Debug builds keep the identity of every live object, not just the count.
+// A cycle the collector fails to reclaim is otherwise invisible: the count
+// says how many survived, this says what they are.
+//
+// The runtime itself never runs on two threads, but an embedder can drive it
+// from one thread while another is alive -- the test harness runs a server
+// program on a worker thread -- and an unsynchronised container would be
+// corrupted by that. The lock costs nothing outside debug builds, where this
+// registry does not exist at all.
+std::unordered_set<const RefCounted *> g_live_objects;
+std::mutex g_live_objects_mutex;
+#endif
 std::vector<const RefCounted *> g_candidates;
 bool g_collecting = false;
 
@@ -142,9 +160,27 @@ void CycleCollector::gather_white(const RefCounted *root, std::vector<const RefC
     }
 }
 
-RefCounted::RefCounted() { ++g_live; }
+RefCounted::RefCounted()
+{
+    ++g_live;
+#ifndef NDEBUG
+    {
+        const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
+        g_live_objects.insert(this);
+    }
+#endif
+}
 
-RefCounted::~RefCounted() { --g_live; }
+RefCounted::~RefCounted()
+{
+    --g_live;
+#ifndef NDEBUG
+    {
+        const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
+        g_live_objects.erase(this);
+    }
+#endif
+}
 
 std::size_t RefCounted::live_count() noexcept { return g_live; }
 
@@ -284,5 +320,13 @@ std::size_t CycleCollector::collect()
 }
 
 std::size_t collect_cycles() { return CycleCollector::collect(); }
+
+#ifndef NDEBUG
+std::vector<const RefCounted *> live_objects()
+{
+    const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
+    return {g_live_objects.begin(), g_live_objects.end()};
+}
+#endif
 
 } // namespace lumiere

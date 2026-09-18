@@ -1,5 +1,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 
+#include "lumiere/interpreter/runtime/cycles.hpp"
+
 namespace lumiere
 {
 
@@ -275,6 +277,11 @@ void TreeWalker::visit(ForStmt &stmt)
 
     for (const Value &item : items)
     {
+        // The same back edge the VM collects on: between two iterations nothing
+        // is part-way through an update, so the counts the collector reads are
+        // settled. Without this a loop that builds cycles grows without bound
+        // until the program ends, however short-lived each cycle is.
+        collect_cycles_if_due();
         ScopeGuard guard(m_env, m_env_owner);
         m_env->define(stmt.variable.lexeme, item);
 
@@ -297,6 +304,7 @@ void TreeWalker::visit(WhileStmt &stmt)
 {
     while (is_truthy(evaluate(*stmt.condition)))
     {
+        collect_cycles_if_due();
         try
         {
             execute(*stmt.body);

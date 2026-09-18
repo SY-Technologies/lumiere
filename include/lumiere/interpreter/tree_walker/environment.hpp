@@ -14,7 +14,7 @@ namespace lumiere
 //  Each block, function call, and catch clause
 //  gets its own Environment pushed on top of
 //  its parent.
-class Environment
+class Environment : public RefCounted
 {
 public:
     struct Binding
@@ -24,9 +24,38 @@ public:
         std::string declared_type;
     };
 
-    explicit Environment(std::shared_ptr<Environment> parent = nullptr)
+    explicit Environment(Ref<Environment> parent = nullptr)
         : m_parent_owner(std::move(parent)),
           m_parent(m_parent_owner.get()) {}
+
+    /**
+     * @brief Reports the parent scope and every bound value.
+     *
+     * An environment holding a function whose closure owner is that same
+     * environment is a cycle, and it is the one every program makes: the global
+     * scope holds `principal`, which was defined in the global scope.
+     */
+    void trace_references(RefVisitor &visitor) const override
+    {
+        if (m_parent_owner)
+        {
+            visitor.visit(m_parent_owner.get());
+        }
+        for (const auto &[name, binding] : m_values)
+        {
+            if (RefCounted *held = binding.value.ref())
+            {
+                visitor.visit(held);
+            }
+        }
+    }
+
+    void clear_references() override
+    {
+        m_values.clear();
+        m_parent_owner.reset();
+        m_parent = nullptr;
+    }
 
     // Creates a new binding in THIS scope only.
     // Throws if the name is already defined here
@@ -248,7 +277,7 @@ private:
     std::unique_ptr<AliasTable> m_type_aliases;
     std::unique_ptr<std::string> m_source_path;
     std::unique_ptr<std::string> m_source_identity;
-    std::shared_ptr<Environment> m_parent_owner;
+    Ref<Environment> m_parent_owner;
     Environment                          *m_parent = nullptr;
     std::unordered_map<std::string, Binding> m_values;
 };
@@ -263,13 +292,13 @@ class ScopeGuard
 public:
     // Reference to the caller's current environment pointer, so reassigning it
     // here updates the original variable rather than a local copy.
-    ScopeGuard(Environment *&current, std::shared_ptr<Environment> &current_owner)
+    ScopeGuard(Environment *&current, Ref<Environment> &current_owner)
         : m_current(current),
           m_current_owner(current_owner),
           m_previous(current),
           m_previous_owner(current_owner)
     {
-        m_current_owner = std::make_shared<Environment>(m_previous_owner);
+        m_current_owner = make_ref<Environment>(m_previous_owner);
         m_current = m_current_owner.get();
     }
 
@@ -291,7 +320,7 @@ private:
     // Reference to the caller's shared owner of the current Environment.
     // This keeps the active scope alive and lets the guard restore it.
     // without the owner, reassigning the pointer would leave the object out of reach and dangling
-    std::shared_ptr<Environment> &m_current_owner;
+    Ref<Environment> &m_current_owner;
 
     // Saved raw pointer to the previously active Environment before entering
     // the new scope.
@@ -299,7 +328,7 @@ private:
 
     // Saved shared owner of the previously active Environment, used to keep
     // the old scope alive and restore ownership when the guard is destroyed.
-    std::shared_ptr<Environment> m_previous_owner;
+    Ref<Environment> m_previous_owner;
 };
 
 } // namespace lumiere

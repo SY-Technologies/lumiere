@@ -229,6 +229,13 @@ private:
     T *m_raw = nullptr;
 };
 
+/** @brief Narrows a handle, yielding an empty one when the type does not match. */
+template <typename T, typename U>
+[[nodiscard]] Ref<T> dynamic_ref_cast(const Ref<U> &ref) noexcept
+{
+    return Ref<T>(dynamic_cast<T *>(ref.get()));
+}
+
 /** @brief Allocates a T and returns the first handle to it. */
 template <typename T, typename... Arguments>
 [[nodiscard]] Ref<T> make_ref(Arguments &&...arguments)

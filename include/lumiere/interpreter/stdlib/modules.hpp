@@ -70,12 +70,17 @@ struct LumiTestModuleState : RuntimeModuleState
     std::vector<std::string> group_stack;
     std::vector<GroupContext> group_contexts;
     bool abort_requested = false;
+
+    // The hooks are Lumière functions, so a hook closing over the group that
+    // holds it would otherwise be a cycle out of the collector's reach.
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
 };
 
 void register_lumitest_module(Module &module,
-                              std::shared_ptr<LumiTestModuleState> state);
+                              Ref<LumiTestModuleState> state);
 bool register_builtin_module(Module &module,
-                             std::shared_ptr<LumiTestModuleState> lumitest_state = nullptr);
+                             Ref<LumiTestModuleState> lumitest_state = nullptr);
 bool try_resolve_texte_native_member(const Value &object,
                                      std::string_view member_name,
                                      const NativeMethodFactory &make_native_method,

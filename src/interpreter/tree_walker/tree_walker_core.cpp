@@ -77,20 +77,50 @@ namespace lumiere
         // the defining scope has otherwise been exited. closure is a raw pointer
         // because the environment-walking code wants direct pointer access;
         // closure_owner exists so that raw pointer never dangles.
-        std::shared_ptr<Environment> closure_owner;
+        Ref<Environment> closure_owner;
         std::string source_identity;
+
+        // The captured scope is the other half of the cycle every program makes:
+        // this function lives in the environment it closed over.
+        void trace_references(RefVisitor &visitor) const override
+        {
+            if (closure_owner)
+            {
+                visitor.visit(closure_owner.get());
+            }
+        }
+
+        void clear_references() override
+        {
+            closure_owner.reset();
+            closure = nullptr;
+        }
     };
 
     struct TreeWalker::TreeWalkerClassBody : RuntimeClassBody
     {
         ClassDeclStmt *decl = nullptr;
-        std::shared_ptr<Environment> closure_owner;
+        Ref<Environment> closure_owner;
         std::string source_identity;
+
+        void trace_references(RefVisitor &visitor) const override
+        {
+            if (closure_owner)
+            {
+                visitor.visit(closure_owner.get());
+            }
+        }
+
+        void clear_references() override { closure_owner.reset(); }
     };
 
     struct TreeWalker::TreeWalkerInterfaceBody : RuntimeInterfaceBody
     {
         InterfaceDeclStmt *decl = nullptr;
+
+        // Only an AST pointer, which the collector does not own.
+        void trace_references(RefVisitor &) const override {}
+        void clear_references() override {}
     };
 
     TreeWalker::TreeWalker() = default;
@@ -103,7 +133,7 @@ namespace lumiere
 
     void TreeWalker::execute(Program &program)
     {
-        m_env_owner = std::make_shared<Environment>();
+        m_env_owner = make_ref<Environment>();
         m_env = m_env_owner.get();
         m_env->set_source_path(program.source_path);
         m_env->set_source_identity(
@@ -181,7 +211,7 @@ namespace lumiere
     {
         if (m_env == nullptr)
         {
-            m_env_owner = std::make_shared<Environment>();
+            m_env_owner = make_ref<Environment>();
             m_env = m_env_owner.get();
             auto error_interface =
                 make_ref<LumiereInterface>();
@@ -228,8 +258,8 @@ namespace lumiere
             return {};
         }
 
-        // casting because it->second->state is std::shared_ptr<RuntimeModuleState>
-        const auto state = std::dynamic_pointer_cast<LumiTestModuleState>(it->second->state);
+        // casting because it->second->state is Ref<RuntimeModuleState>
+        const auto state = dynamic_ref_cast<LumiTestModuleState>(it->second->state);
         if (state == nullptr)
         {
             return {};
@@ -351,12 +381,12 @@ namespace lumiere
 
     Ref<LumiereFunction> TreeWalker::make_declared_function(FunctionDeclStmt &decl,
                                                                         Value receiver,
-                                                                        std::shared_ptr<Environment> closure,
+                                                                        Ref<Environment> closure,
                                                                         std::string source_identity) const
     {
         auto function = make_ref<LumiereFunction>();
         function->name = decl.name.lexeme;
-        auto body = std::make_shared<TreeWalkerFunctionBody>();
+        auto body = make_ref<TreeWalkerFunctionBody>();
         body->decl = &decl;
         body->closure = closure.get();
         body->source_identity = source_identity.empty() ? closure->source_identity() : std::move(source_identity);
@@ -372,12 +402,12 @@ namespace lumiere
 
     Ref<LumiereFunction> TreeWalker::make_declared_function(FunctionExpr &expr,
                                                                         Value receiver,
-                                                                        std::shared_ptr<Environment> closure,
+                                                                        Ref<Environment> closure,
                                                                         std::string source_identity) const
     {
         auto function = make_ref<LumiereFunction>();
         function->name = "<anonyme>";
-        auto body = std::make_shared<TreeWalkerFunctionBody>();
+        auto body = make_ref<TreeWalkerFunctionBody>();
         body->expr = &expr;
         body->closure = closure.get();
         body->source_identity = source_identity.empty() ? closure->source_identity() : std::move(source_identity);
@@ -396,7 +426,7 @@ namespace lumiere
         auto klass = make_ref<LumiereClass>();
         klass->name = decl.name.lexeme;
         klass->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
-        auto body = std::make_shared<TreeWalkerClassBody>();
+        auto body = make_ref<TreeWalkerClassBody>();
         body->decl = &decl;
         body->closure_owner = m_env_owner;
         body->source_identity = m_env->source_identity();
@@ -428,7 +458,7 @@ namespace lumiere
         auto iface = make_ref<LumiereInterface>();
         iface->name = decl.name.lexeme;
         iface->type_identity = nominal_type_identity(m_env->source_identity(), decl.name);
-        auto body = std::make_shared<TreeWalkerInterfaceBody>();
+        auto body = make_ref<TreeWalkerInterfaceBody>();
         body->decl = &decl;
         iface->body = std::move(body);
         return iface;
@@ -436,44 +466,44 @@ namespace lumiere
 
     FunctionDeclStmt *TreeWalker::function_decl(const LumiereFunction &function) const
     {
-        auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        auto body = dynamic_ref_cast<TreeWalkerFunctionBody>(function.body);
         return body ? body->decl : nullptr;
     }
 
     FunctionExpr *TreeWalker::function_expr(const LumiereFunction &function) const
     {
-        auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        auto body = dynamic_ref_cast<TreeWalkerFunctionBody>(function.body);
         return body ? body->expr : nullptr;
     }
 
     Environment *TreeWalker::function_closure(const LumiereFunction &function) const
     {
-        auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        auto body = dynamic_ref_cast<TreeWalkerFunctionBody>(function.body);
         return body ? body->closure : nullptr;
     }
 
-    std::shared_ptr<Environment> TreeWalker::function_closure_owner(const LumiereFunction &function) const
+    Ref<Environment> TreeWalker::function_closure_owner(const LumiereFunction &function) const
     {
-        auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        auto body = dynamic_ref_cast<TreeWalkerFunctionBody>(function.body);
         return body ? body->closure_owner : nullptr;
     }
 
     const std::string &TreeWalker::function_source_identity(const LumiereFunction &function) const
     {
-        const auto body = std::dynamic_pointer_cast<TreeWalkerFunctionBody>(function.body);
+        const auto body = dynamic_ref_cast<TreeWalkerFunctionBody>(function.body);
         static const std::string empty;
         return body ? body->source_identity : empty;
     }
 
-    std::shared_ptr<Environment> TreeWalker::class_closure_owner(const Ref<LumiereClass> &klass) const
+    Ref<Environment> TreeWalker::class_closure_owner(const Ref<LumiereClass> &klass) const
     {
-        const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
+        const auto body = klass ? dynamic_ref_cast<TreeWalkerClassBody>(klass->body) : nullptr;
         return body ? body->closure_owner : nullptr;
     }
 
     const std::string &TreeWalker::class_source_identity(const Ref<LumiereClass> &klass) const
     {
-        const auto body = klass ? std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body) : nullptr;
+        const auto body = klass ? dynamic_ref_cast<TreeWalkerClassBody>(klass->body) : nullptr;
         static const std::string empty;
         return body ? body->source_identity : empty;
     }
@@ -500,7 +530,7 @@ namespace lumiere
             return nullptr;
         }
 
-        auto body = std::dynamic_pointer_cast<TreeWalkerClassBody>(klass->body);
+        auto body = dynamic_ref_cast<TreeWalkerClassBody>(klass->body);
         return body ? body->decl : nullptr;
     }
 
@@ -521,7 +551,7 @@ namespace lumiere
             return nullptr;
         }
 
-        auto body = std::dynamic_pointer_cast<TreeWalkerInterfaceBody>(iface->body);
+        auto body = dynamic_ref_cast<TreeWalkerInterfaceBody>(iface->body);
         return body ? body->decl : nullptr;
     }
 
@@ -532,7 +562,7 @@ namespace lumiere
             return nullptr;
         }
 
-        auto state = std::dynamic_pointer_cast<TreeWalkerModuleState>(module->state);
+        auto state = dynamic_ref_cast<TreeWalkerModuleState>(module->state);
         return state ? state->environment.get() : nullptr;
     }
 

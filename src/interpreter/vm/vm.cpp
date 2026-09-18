@@ -1501,16 +1501,16 @@ Value make_bound_member(Value receiver,
 struct LocalSlot
 {
     Value value = Value::rien();
-    std::shared_ptr<Value> cell;
+    CellRef cell;
 
-    Value &get() { return cell ? *cell : value; }
+    Value &get() { return cell ? cell->value : value; }
 
-    std::shared_ptr<Value> capture()
+    CellRef capture()
     {
         // Only escaping locals need stable, shared storage. All readers and
         // writers use the same cell after its first capture.
         if (!cell)
-            cell = std::make_shared<Value>(std::move(value));
+            cell = make_ref<CellData>(std::move(value));
         return cell;
     }
 };
@@ -1521,10 +1521,10 @@ struct CallFrame
     std::size_t ip = 0;
     std::size_t stack_base = 0;
     std::vector<LocalSlot> locals;
-    std::vector<std::shared_ptr<Value>> captures;
+    std::vector<CellRef> captures;
     SourceLocation call_site {};
 
-    std::shared_ptr<Value> capture(bool from_capture, std::size_t index)
+    CellRef capture(bool from_capture, std::size_t index)
     {
         if (index >= (from_capture ? captures.size() : locals.size()))
             throw VmRuntimeError("VM: source de capture invalide");
@@ -1535,18 +1535,50 @@ struct CallFrame
 struct VmClosureBody final : RuntimeFunctionBody
 {
     std::size_t function_index = 0;
-    std::vector<std::shared_ptr<Value>> captures;
+    std::vector<CellRef> captures;
+
+    void trace_references(RefVisitor &visitor) const override
+    {
+        for (const CellRef &cell : captures)
+        {
+            if (cell)
+            {
+                visitor.visit(cell.get());
+            }
+        }
+    }
+
+    void clear_references() override { captures.clear(); }
 };
 
 struct VmClassBody final : RuntimeClassBody
 {
     std::size_t descriptor_index = 0;
-    std::unordered_map<std::size_t, std::vector<std::shared_ptr<Value>>> method_captures;
+    std::unordered_map<std::size_t, std::vector<CellRef>> method_captures;
+
+    void trace_references(RefVisitor &visitor) const override
+    {
+        for (const auto &[index, cells] : method_captures)
+        {
+            for (const CellRef &cell : cells)
+            {
+                if (cell)
+                {
+                    visitor.visit(cell.get());
+                }
+            }
+        }
+    }
+
+    void clear_references() override { method_captures.clear(); }
 };
 
 struct VmInterfaceBody final : RuntimeInterfaceBody
 {
     std::size_t descriptor_index = 0;
+
+    void trace_references(RefVisitor &) const override {}
+    void clear_references() override {}
 };
 
 const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
@@ -1556,7 +1588,7 @@ const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
     {
         return nullptr;
     }
-    const auto body = std::dynamic_pointer_cast<VmClassBody>(klass->body);
+    const auto body = dynamic_ref_cast<VmClassBody>(klass->body);
     if (body == nullptr || body->descriptor_index >= module.classes.size())
     {
         return nullptr;
@@ -1610,12 +1642,12 @@ const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
     return nullptr;
 }
 
-std::vector<std::shared_ptr<Value>> find_vm_method_captures(Ref<LumiereClass> klass,
+std::vector<CellRef> find_vm_method_captures(Ref<LumiereClass> klass,
                                                             const std::size_t function_index)
 {
     while (klass != nullptr)
     {
-        const auto body = std::dynamic_pointer_cast<VmClassBody>(klass->body);
+        const auto body = dynamic_ref_cast<VmClassBody>(klass->body);
         if (body != nullptr)
         {
             const auto captures = body->method_captures.find(function_index);
@@ -1708,7 +1740,7 @@ CallFrame make_call_frame(const ModuleBytecode &module,
                           const std::size_t function_index,
                           const std::vector<Value> &args,
                           const std::size_t stack_base,
-                          std::vector<std::shared_ptr<Value>> captures = {},
+                          std::vector<CellRef> captures = {},
                           const SourceLocation call_site = {})
 {
     if (function_index >= module.functions.size())
@@ -1788,7 +1820,7 @@ struct VmExecutionState
 Value run_frames(VmExecutionState &execution,
                  const std::size_t entry_function_index,
                  std::vector<Value> entry_arguments = {},
-                 std::vector<std::shared_ptr<Value>> entry_captures = {},
+                 std::vector<CellRef> entry_captures = {},
                  const SourceLocation entry_call_site = {})
 {
     const ModuleBytecode &module = execution.module;
@@ -1941,7 +1973,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: initialiseur de module invalide");
             }
-            const auto body = std::dynamic_pointer_cast<VmClosureBody>(globals[index].as_fonction()->body);
+            const auto body = dynamic_ref_cast<VmClosureBody>(globals[index].as_fonction()->body);
             if (body == nullptr || body->function_index >= initialized_functions.size())
             {
                 throw VmRuntimeError("VM: corps d'initialiseur de module invalide");
@@ -1986,7 +2018,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de capture invalide");
             }
-            stack.push_back(*frame.captures[index]);
+            stack.push_back(frame.captures[index]->value);
             break;
         }
         case Opcode::SET_CAPTURE:
@@ -1996,7 +2028,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de capture invalide");
             }
-            *frame.captures[index] = pop_value(stack);
+            frame.captures[index]->value = pop_value(stack);
             break;
         }
         case Opcode::CLOSURE:
@@ -2007,7 +2039,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de fermeture invalide");
             }
-            auto body = std::make_shared<VmClosureBody>();
+            auto body = make_ref<VmClosureBody>();
             body->function_index = function_index;
             body->captures.reserve(capture_count);
             for (std::size_t i = 0; i < capture_count; ++i)
@@ -2039,7 +2071,7 @@ Value run_frames(VmExecutionState &execution,
             auto klass = make_ref<LumiereClass>();
             klass->name = descriptor.name;
             klass->type_identity = descriptor.type_identity;
-            auto body = std::make_shared<VmClassBody>();
+            auto body = make_ref<VmClassBody>();
             body->descriptor_index = descriptor_index;
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
@@ -2100,7 +2132,7 @@ Value run_frames(VmExecutionState &execution,
                 {
                     continue;
                 }
-                const auto interface_body = std::dynamic_pointer_cast<VmInterfaceBody>(interface->body);
+                const auto interface_body = dynamic_ref_cast<VmInterfaceBody>(interface->body);
                 if (interface_body == nullptr || interface_body->descriptor_index >= module.interfaces.size())
                 {
                     throw VmRuntimeError("VM: interface non compatible avec le backend: " + interface->name);
@@ -2140,7 +2172,7 @@ Value run_frames(VmExecutionState &execution,
             auto interface = make_ref<LumiereInterface>();
             interface->name = module.interfaces[descriptor_index].name;
             interface->type_identity = module.interfaces[descriptor_index].type_identity;
-            auto body = std::make_shared<VmInterfaceBody>();
+            auto body = make_ref<VmInterfaceBody>();
             body->descriptor_index = descriptor_index;
             interface->body = std::move(body);
             stack.push_back(Value::interface(std::move(interface)));
@@ -2280,7 +2312,7 @@ Value run_frames(VmExecutionState &execution,
             const auto function = callee.is_fonction() ? callee.as_fonction() : nullptr;
             if (function != nullptr && !function->is_native())
             {
-                auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                auto body = dynamic_ref_cast<VmClosureBody>(function->body);
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction non compatible avec le backend VM");
@@ -2382,7 +2414,7 @@ Value run_frames(VmExecutionState &execution,
                         NativeArgs{nullptr, &call_args, std::move(site)}));
                     break;
                 }
-                const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction globale incompatible");
@@ -2501,7 +2533,7 @@ Value run_frames(VmExecutionState &execution,
                                                             NativeArgs{nullptr, &args, site}));
                         break;
                     }
-                    const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                    const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
                     if (body == nullptr)
                     {
                         throw VmRuntimeError("VM: corps de membre incompatible");
@@ -2614,7 +2646,7 @@ Value run_frames(VmExecutionState &execution,
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
-                auto body = std::make_shared<VmClosureBody>();
+                auto body = make_ref<VmClosureBody>();
                 body->function_index = method->function_index;
                 body->captures = find_vm_method_captures(receiver.as_objet()->klass,
                                                          method->function_index);
@@ -2932,7 +2964,7 @@ Value VM::run(const ModuleBytecode &module)
     // bound native methods for the entire execution, not just one frame stack.
     execution.runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {
         const auto function = callee.as_fonction();
-        const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+        const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
         if (body == nullptr || args.arguments == nullptr || body->function_index >= module.functions.size())
             throw VmRuntimeError("VM: fermeture bytecode invalide");
         auto values = normalize_closure_arguments(module.functions[body->function_index], *args.arguments);
@@ -2960,7 +2992,7 @@ Value VM::run(const ModuleBytecode &module)
         }
         if (const auto function = function_indices.find(name); function != function_indices.end())
         {
-            auto body = std::make_shared<VmClosureBody>();
+            auto body = make_ref<VmClosureBody>();
             body->function_index = function->second;
             auto closure = make_ref<LumiereFunction>();
             closure->name = name;

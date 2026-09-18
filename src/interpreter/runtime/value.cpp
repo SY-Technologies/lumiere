@@ -543,9 +543,6 @@ std::string Value::type_name() const
 // bodies, which are not counted objects yet. Leaving an edge out only means a
 // cycle through it is kept alive, never that something live is freed.
 
-namespace
-{
-
 void trace_value(const Value &value, RefVisitor &visitor)
 {
     if (RefCounted *held = value.ref())
@@ -553,8 +550,6 @@ void trace_value(const Value &value, RefVisitor &visitor)
         visitor.visit(held);
     }
 }
-
-} // namespace
 
 void ListeData::trace_references(RefVisitor &visitor) const
 {
@@ -609,17 +604,43 @@ void ResultData::trace_references(RefVisitor &visitor) const { trace_value(paylo
 
 void ResultData::clear_references() { payload = Value::rien(); }
 
-void LumiereFunction::trace_references(RefVisitor &visitor) const { trace_value(receiver, visitor); }
+CellData::CellData(Value initial) : value(std::move(initial)) {}
+
+void CellData::trace_references(RefVisitor &visitor) const { trace_value(value, visitor); }
+
+void CellData::clear_references() { value = Value::rien(); }
+
+void LumiereFunction::trace_references(RefVisitor &visitor) const
+{
+    trace_value(receiver, visitor);
+    if (body)
+    {
+        visitor.visit(body.get());
+    }
+    for (const Ref<RefCounted> &captured : native_captures)
+    {
+        if (captured)
+        {
+            visitor.visit(captured.get());
+        }
+    }
+}
 
 void LumiereFunction::clear_references()
 {
     receiver = Value::rien();
+    // The handler goes before its captures: it may hold raw pointers into them.
     native_handler = nullptr;
+    native_captures.clear();
     body.reset();
 }
 
 void LumiereClass::trace_references(RefVisitor &visitor) const
 {
+    if (body)
+    {
+        visitor.visit(body.get());
+    }
     if (parent)
     {
         visitor.visit(parent.get());
@@ -640,7 +661,13 @@ void LumiereClass::clear_references()
     body.reset();
 }
 
-void LumiereInterface::trace_references(RefVisitor &) const {}
+void LumiereInterface::trace_references(RefVisitor &visitor) const
+{
+    if (body)
+    {
+        visitor.visit(body.get());
+    }
+}
 
 void LumiereInterface::clear_references() { body.reset(); }
 
@@ -653,6 +680,13 @@ void LumiereObject::trace_references(RefVisitor &visitor) const
     for (const auto &[name, field] : fields)
     {
         trace_value(field, visitor);
+    }
+    // The native half of the instance can hold Values of its own; a server's
+    // route table is the usual case. Without this edge the cycle it closes
+    // back to the defining scope would never be collectable.
+    if (native_state)
+    {
+        visitor.visit(native_state.get());
     }
 }
 

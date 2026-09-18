@@ -697,6 +697,10 @@ int run_tester_command(const TestCliOptions &options)
     for (const auto &file_path : files)
     {
         const int file_status = run_test_file(file_path, options, aggregate);
+        // The file's tree walker is gone by now, so anything it kept alive in a
+        // cycle -- a test context object holding the very methods bound onto
+        // it, for one -- is unreachable, and this is where it is reclaimed.
+        lumiere::collect_cycles();
         if (file_status != 0)
         {
             return file_status;
@@ -738,7 +742,11 @@ int main(int argc, char *argv[])
     {
         if (argc == 1)
         {
-            return run_repl();
+            const int status = run_repl();
+            // Same reason as the tester loop: the session's interpreter is gone,
+            // so its cycles are collectable now and not before.
+            lumiere::collect_cycles();
+            return status;
         }
 
         if (argc >= 2 && std::string(argv[1]) == "tester")

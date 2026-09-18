@@ -15,8 +15,8 @@ namespace lumiere
     {
         auto module = std::make_shared<Module>();
         module->name = module_name;
-        auto state = std::make_shared<TreeWalkerModuleState>();
-        state->environment = std::make_shared<Environment>();
+        auto state = make_ref<TreeWalkerModuleState>();
+        state->environment = make_ref<Environment>();
         auto error_interface =
             make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
@@ -25,10 +25,10 @@ namespace lumiere
             Value::interface(std::move(error_interface)));
         module->state = state;
 
-        std::shared_ptr<LumiTestModuleState> lumitest_state;
+        Ref<LumiTestModuleState> lumitest_state;
         if (module_name == "LumiTest")
         {
-            lumitest_state = std::make_shared<LumiTestModuleState>();
+            lumitest_state = make_ref<LumiTestModuleState>();
             lumitest_state->options = m_lumitest_options;
         }
 
@@ -97,8 +97,8 @@ namespace lumiere
     {
         auto module = std::make_shared<Module>();
         module->name = module_name;
-        auto state = std::make_shared<TreeWalkerModuleState>();
-        state->environment = std::make_shared<Environment>();
+        auto state = make_ref<TreeWalkerModuleState>();
+        state->environment = make_ref<Environment>();
         state->environment->set_source_path(path.string());
         state->environment->set_source_identity(path.string());
         auto error_interface =
@@ -110,7 +110,7 @@ namespace lumiere
         module->state = state;
 
         Environment *previous_env = m_env;
-        std::shared_ptr<Environment> previous_env_owner = m_env_owner;
+        Ref<Environment> previous_env_owner = m_env_owner;
         const Value previous_self = m_self;
         const std::string previous_source_path = m_current_source_path;
         const std::string previous_source_text = m_current_source_text;
