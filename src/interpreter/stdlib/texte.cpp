@@ -1,6 +1,7 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -355,30 +356,16 @@ Value execute_texte_operation(IRuntime &runtime,
     if (operation == "en_decimal")
     {
         stdlib_expect_positional(runtime, args, 0, "Texte.en_decimal", call_site);
-        try
+        if (const auto value = numeric::parse_decimal(text))
         {
-            std::size_t consumed = 0;
-            const double value = std::stod(text, &consumed);
-            if (consumed != text.size())
-            {
-                return stdlib_failure(
-                    stdlib_error_value(
-                        "Texte.ErreurConversion",
-                        "en_decimal",
-                        "le texte ne représente pas un Décimal valide"),
-                    call_site);
-            }
-            return stdlib_success(Value::decimal(value));
+            return stdlib_success(Value::decimal(*value));
         }
-        catch (const std::exception &)
-        {
-            return stdlib_failure(
-                stdlib_error_value(
-                    "Texte.ErreurConversion",
-                    "en_decimal",
-                    "le texte ne représente pas un Décimal valide"),
-                call_site);
-        }
+        return stdlib_failure(
+            stdlib_error_value(
+                "Texte.ErreurConversion",
+                "en_decimal",
+                "le texte ne représente pas un Décimal valide"),
+            call_site);
     }
     if (operation == "en_logique")
     {

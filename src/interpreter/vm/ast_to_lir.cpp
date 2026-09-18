@@ -1,3 +1,4 @@
+#include "lumiere/interpreter/runtime/numeric.hpp"
 #include "ast_to_lir.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
@@ -70,9 +71,10 @@ Value literal_value(const Token &token)
     switch (token.type)
     {
     case TokenType::ENTIER_LIT:
-        return Value::entier(std::stoll(token.lexeme));
+        // The lexer already refused a literal that does not fit.
+        return Value::entier(numeric::parse_integer_literal(token.lexeme).value_or(0));
     case TokenType::DECIMAL_LIT:
-        return Value::decimal(std::stod(token.lexeme));
+        return Value::decimal(std::stod(numeric::without_digit_separators(token.lexeme)));
     case TokenType::TEXTE_LIT:
         return Value::texte(token.lexeme.substr(1, token.lexeme.size() - 2));
     case TokenType::SYMBOLE_LIT:

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <sstream>
 #include "lumiere/lexer/tokenizer.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 #include "lumiere/lexer/scanner.hpp"
 #include "lumiere/parser/utf8.hpp"
 
@@ -318,22 +319,68 @@ namespace lumiere
     }
     Token Tokenizer::scan_number()
     {
-        while (is_digit(m_scanner.peek()))
-        {
-            m_scanner.advance();
-        }
-
-        // check for decimal point followed by more digits
-        if (m_scanner.peek() == '.' && is_digit(m_scanner.peek_next()))
-        {
-            m_scanner.advance(); // consume '.'
-            while (is_digit(m_scanner.peek()))
+        // A digit separator is only a separator between two digits, so a leading or
+        // trailing underscore is left behind for the check at the end to report.
+        const auto consume_digits = [this]() {
+            while (is_digit(m_scanner.peek()) ||
+                   (m_scanner.peek() == '_' && is_digit(m_scanner.peek_next())))
             {
                 m_scanner.advance();
             }
+        };
+
+        consume_digits();
+
+        // check for decimal point followed by more digits
+        bool is_decimal = false;
+        if (m_scanner.peek() == '.' && is_digit(m_scanner.peek_next()))
+        {
+            is_decimal = true;
+            m_scanner.advance(); // consume '.'
+            consume_digits();
+        }
+
+        // An exponent belongs to the number only when digits follow it, through an
+        // optional sign. Anything else leaves the 'e' to start an identifier, which
+        // the trailing check below then reports.
+        if (m_scanner.peek() == 'e' || m_scanner.peek() == 'E')
+        {
+            const Scanner::State before_exponent = m_scanner.save();
+            m_scanner.advance(); // consume 'e'
+            if (m_scanner.peek() == '+' || m_scanner.peek() == '-')
+            {
+                m_scanner.advance();
+            }
+            if (is_digit(m_scanner.peek()))
+            {
+                is_decimal = true;
+                consume_digits();
+            }
+            else
+            {
+                m_scanner.restore(before_exponent);
+            }
+        }
+
+        // A letter touching the end of a number is always a mistake, and reading it
+        // as a separate identifier hid the missing exponent syntax behind a runtime
+        // "variable introuvable".
+        if (is_alpha_start(static_cast<unsigned char>(m_scanner.peek())))
+        {
+            return error_token("nombre invalide — un caractere ne peut pas suivre immediatement un nombre");
+        }
+
+        if (is_decimal)
+        {
             return make_token(TokenType::DECIMAL_LIT);
         }
 
+        // Reported here rather than at conversion, where the source location is gone.
+        if (!numeric::parse_integer_literal(m_scanner.lexeme()))
+        {
+            return error_token(
+                "entier hors limites — un litteral Entier ne peut pas depasser 9223372036854775807");
+        }
         return make_token(TokenType::ENTIER_LIT);
     }
     Token Tokenizer::scan_identifier_or_keyword()

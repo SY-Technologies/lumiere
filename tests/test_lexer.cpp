@@ -324,4 +324,41 @@ TEST(LexerOperators, RecognisesArrowEqualityAndComparisonOperators)
     EXPECT_EQ(tokens[5].type, TokenType::FIN_FICHIER);
 }
 
+TEST(LexerNumbers, ReadsExponentsAndDigitSeparators)
+{
+    const auto tokens = lex("1e3 1.5E-3 2e+2 1_000 1_000.25 1.5e1_0 42");
+    ASSERT_EQ(tokens.size(), 8u);
+    // An exponent makes the literal a decimal even without a fractional part.
+    EXPECT_EQ(tokens[0].type, TokenType::DECIMAL_LIT);
+    EXPECT_EQ(tokens[1].type, TokenType::DECIMAL_LIT);
+    EXPECT_EQ(tokens[2].type, TokenType::DECIMAL_LIT);
+    EXPECT_EQ(tokens[3].type, TokenType::ENTIER_LIT);
+    EXPECT_EQ(tokens[3].lexeme, "1_000");
+    EXPECT_EQ(tokens[4].type, TokenType::DECIMAL_LIT);
+    EXPECT_EQ(tokens[5].type, TokenType::DECIMAL_LIT);
+    EXPECT_EQ(tokens[6].type, TokenType::ENTIER_LIT);
+    EXPECT_EQ(tokens[7].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerNumbers, RejectsTrailingLettersAndOutOfRangeIntegers)
+{
+    // "1.0e308" used to split into 1.0 and an identifier e308, which only failed
+    // later as a missing variable.
+    for (const auto *source : {"12abc", "1_", "1e", "1.5e", "3x"})
+    {
+        const auto tokens = lex(source);
+        ASSERT_FALSE(tokens.empty()) << source;
+        EXPECT_EQ(tokens[0].type, TokenType::ERREUR) << source;
+    }
+
+    const auto overflow = lex("9223372036854775808");
+    ASSERT_FALSE(overflow.empty());
+    EXPECT_EQ(overflow[0].type, TokenType::ERREUR);
+    EXPECT_NE(overflow[0].lexeme.find("hors limites"), std::string::npos);
+
+    const auto largest = lex("9223372036854775807");
+    ASSERT_FALSE(largest.empty());
+    EXPECT_EQ(largest[0].type, TokenType::ENTIER_LIT);
+}
+
 } // namespace

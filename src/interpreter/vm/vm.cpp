@@ -576,14 +576,12 @@ void execute_cast(std::vector<Value> &stack, const std::string &target)
         }
         else if (operand.is_texte())
         {
-            try {
-                std::size_t consumed = 0;
-                const auto value = std::stod(operand.as_texte(), &consumed);
-                if (consumed != operand.as_texte().size())
-                    throw std::invalid_argument("caractères restants");
-                stack.push_back(Value::decimal(value));
+            const auto value = numeric::parse_decimal(operand.as_texte());
+            if (!value)
+            {
+                throw VmRuntimeError("VM: conversion vers Decimal impossible pour une valeur de type Texte");
             }
-            catch (...) { throw VmRuntimeError("VM: conversion vers Decimal impossible pour une valeur de type Texte"); }
+            stack.push_back(Value::decimal(*value));
         }
         else
         {

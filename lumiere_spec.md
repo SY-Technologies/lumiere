@@ -67,13 +67,26 @@ Notes:
 Supported literal forms:
 
 - integers: `0`, `42`, `1_000`
-- decimals: `3.14`, `2.0`, `1_000.25`
+- decimals: `3.14`, `2.0`, `1_000.25`, `1e3`, `1.5E-3`, `2e+2`
 - text: `"bonjour"`
 - symbols: `'A'`
 - booleans: `vrai`, `faux`
 - null-like value: `rien`
 - lists: `[1, 2, 3]`
 - dictionaries: `{"nom": "Ada", "age": 36}`
+
+An underscore separates digits and must sit between two of them: `1_000` and
+`1.5e1_0` are literals, `_1`, `1_` and `1._5` are not. A letter or underscore
+touching the end of a number is a lexical error rather than the start of a new
+token, so a mistyped exponent is reported where it is written.
+
+An integer literal must fit in `Entier`, and one that does not is a lexical
+error. `-9223372036854775808` is not a literal but a negation applied to one, so
+the smallest `Entier` is written `-9223372036854775807 - 1`.
+
+A decimal conversion from text rejects anything that is not finite: `"nan"`,
+`"inf"` and their variants fail rather than producing a value that no arithmetic
+in the language can produce.
 
 Escape sequences are supported in text and symbol literals.
 

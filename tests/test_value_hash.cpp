@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -93,6 +94,17 @@ TEST(ValueHash, ListsAreKeyedByIdentityAndFixedListsByContent)
     EXPECT_TRUE(fixed_list({Value::entier(1)}) == fixed_list({Value::entier(1)}));
     EXPECT_EQ(value_hash(fixed_list({Value::entier(1)})), value_hash(fixed_list({Value::entier(1)})));
     EXPECT_FALSE(fixed_list({Value::entier(1)}) == fixed_list({Value::entier(2)}));
+}
+
+TEST(Dictionary, RefusesANonNumberAsKey)
+{
+    // Not reachable from source any more, since text conversion rejects "nan",
+    // but the runtime must still refuse a key that is not equal to itself.
+    const Value absent = Value::decimal(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(absent == absent);
+    EXPECT_TRUE(dictionary_key_rejection(absent).has_value());
+    EXPECT_FALSE(dictionary_key_rejection(Value::decimal(0.0)).has_value());
+    EXPECT_FALSE(dictionary_key_rejection(Value::texte("clé")).has_value());
 }
 
 TEST(Dictionary, FindsEveryKeyAcrossIndexGrowthAndRemoval)

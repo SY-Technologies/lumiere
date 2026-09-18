@@ -50,10 +50,11 @@ void TreeWalker::visit(LiteralExpr &expr)
     switch (expr.token.type)
     {
     case TokenType::ENTIER_LIT:
-        m_result = Value::entier(std::stoll(expr.token.lexeme));
+        // The lexer already refused a literal that does not fit.
+        m_result = Value::entier(numeric::parse_integer_literal(expr.token.lexeme).value_or(0));
         return;
     case TokenType::DECIMAL_LIT:
-        m_result = Value::decimal(std::stod(expr.token.lexeme));
+        m_result = Value::decimal(std::stod(numeric::without_digit_separators(expr.token.lexeme)));
         return;
     case TokenType::TEXTE_LIT:
         m_result = Value::texte(expr.token.lexeme.substr(1, expr.token.lexeme.size() - 2));
@@ -573,19 +574,12 @@ void TreeWalker::visit(CastExpr &expr)
         }
         if (operand.is_texte())
         {
-            try
+            if (const auto value = numeric::parse_decimal(operand.as_texte()))
             {
-                std::size_t consumed = 0;
-                const auto value = std::stod(operand.as_texte(), &consumed);
-                if (consumed != operand.as_texte().size())
-                    throw std::invalid_argument("caractères restants");
-                m_result = Value::decimal(value);
+                m_result = Value::decimal(*value);
                 return;
             }
-            catch (...)
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Décimal impossible pour une valeur de type Texte");
-            }
+            throw_runtime_error(expr.target_type.source, "conversion vers Décimal impossible pour une valeur de type Texte");
         }
     }
 
@@ -1301,26 +1295,17 @@ Value TreeWalker::call_builtin(const std::string &name,
                 "lire_décimal",
                 "fin de l'entrée");
         }
-        try
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
         {
-            std::size_t parsed = 0;
-            const double value = std::stod(line, &parsed);
-            while (parsed < line.size() && std::isspace(static_cast<unsigned char>(line[parsed])))
-            {
-                ++parsed;
-            }
-            if (parsed != line.size())
-            {
-                throw std::invalid_argument("caractères restants");
-            }
-            return stdlib_success(Value::decimal(value));
+            line.pop_back();
         }
-        catch (...)
+        if (const auto value = numeric::parse_decimal(line))
         {
-            return input_failure(
-                "lire_décimal",
-                "décimal invalide: " + line);
+            return stdlib_success(Value::decimal(*value));
         }
+        return input_failure(
+            "lire_décimal",
+            "décimal invalide: " + line);
     }
 
     if (name == "lire_logique")

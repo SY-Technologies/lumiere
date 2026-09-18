@@ -3666,29 +3666,62 @@ fonction principal() {
     std::filesystem::remove_all(root);
 }
 
-TEST(CliIntegration, BothBackendsRejectNonNumberDictionaryKeys)
+TEST(CliIntegration, BothBackendsRejectNonFiniteNumericText)
 {
-    const auto root = std::filesystem::temp_directory_path() / "lumiere_dictionary_nan_key";
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_non_finite_text";
     const auto file = root / "main.lum";
-    // A non-number is not equal to itself, so an entry stored under one could never
-    // be found again. Text parsing reaches that value, so the key is refused instead.
+    // Every arithmetic path that would reach a non-number or an infinity traps, so
+    // text conversion must not be the one door that lets them in.
+    for (const auto *source : {"nan", "NaN", "inf", "-inf", "infinity"})
+    {
+        write_source(file,
+                     "fonction principal() {\n"
+                     "    soit lu = agir selon \"" + std::string(source) + "\".en_decimal() {\n"
+                     "        Succès(valeur) -> valeur\n"
+                     "        Échec(_) -> -1.0\n"
+                     "    }\n"
+                     "    afficher(lu)\n"
+                     "}\n");
+        for (const auto *backend : {"--vm", "--tw"})
+        {
+            SCOPED_TRACE(std::string(backend) + " " + source);
+            const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+            EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+            EXPECT_EQ(result.stdout_text, "-1\n");
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+TEST(CliIntegration, BothBackendsReadScientificNotation)
+{
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_scientific_notation";
+    const auto file = root / "main.lum";
     write_source(file, R"lum(
 fonction principal() {
-    soit absent = agir selon "nan".en_decimal() {
-        Succès(valeur) -> valeur
-        Échec(_) -> 0.0
-    }
-    soit d = {}
-    d[absent] = "perdu"
+    afficher(1.0e3)
+    afficher(1e3)
+    afficher(1.5E-3)
+    afficher(2e+2)
 }
 )lum");
     for (const auto *backend : {"--vm", "--tw"})
     {
         SCOPED_TRACE(backend);
         const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
+        EXPECT_EQ(result.exit_code, 0) << result.stderr_text;
+        EXPECT_EQ(result.stdout_text, "1000\n1000\n0.0015\n200\n");
+    }
+
+    // A letter touching a number used to split into two tokens, which turned a
+    // missing exponent into a runtime "variable introuvable".
+    write_source(file, "fonction principal() { afficher(12abc) }\n");
+    for (const auto *backend : {"--vm", "--tw"})
+    {
+        SCOPED_TRACE(backend);
+        const auto result = run_cli(std::string(backend) + " " + shell_quote(file.string()), root);
         EXPECT_NE(result.exit_code, 0);
-        EXPECT_NE(result.stderr_text.find("ne peut pas servir de cle"), std::string::npos)
-            << result.stderr_text;
+        EXPECT_NE(result.stderr_text.find("nombre invalide"), std::string::npos) << result.stderr_text;
     }
     std::filesystem::remove_all(root);
 }
