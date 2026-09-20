@@ -1034,6 +1034,27 @@ Both engines were wrong identically, so conformance could not see it: agreement
 is not correctness. Five expectations moved, each read against its own source
 line rather than regenerated and accepted.
 
+### A module that is not there — 2026-09-20
+
+The fuzzer produced `importer n`, and the two engines answered differently: the
+tree walker with a full traceback and a source line, the VM with a bare
+`erreur: VM: module introuvable: n`.
+
+Neither should have been reached. When an import resolved to no file and named
+no builtin, analysis entered an *empty* set of exports for it and carried on, so
+the program passed `lumiere check` and the missing module was left for whichever
+engine got there first. LUM-S0012 existed for exactly this and was unreachable.
+
+Leaving the module out of the environment is all it takes: the name then fails
+to resolve and the diagnostic fires, once, before either engine starts. The
+message lost the word "sémantique", which meant nothing to anyone reading it.
+
+Worth knowing for later: the analyzer looks for a module beside the file that
+imports it, and so does the runtime, but the runtime also searches
+`m_import_paths`, which nothing currently fills. The moment something does, the
+analyzer will reject an import the runtime could have satisfied. One resolver
+shared by both is the real answer.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

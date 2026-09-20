@@ -435,7 +435,7 @@ private:
         if (module == m_imports.end())
         {
             diagnose(import.module_name, "LUM-S0012",
-                     "module sémantique introuvable: '" + import.module_name.lexeme + "'");
+                     "module introuvable: '" + import.module_name.lexeme + "'");
             return;
         }
         for (const std::string &name : module->second.error_types)

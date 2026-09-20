@@ -1,0 +1,9 @@
+// Un module qui n'existe pas. L'analyse entrait un jeu d'exports vide pour
+// lui, donc elle acceptait l'import et laissait chaque moteur le découvrir à
+// sa façon : le tree-walker avec une trace complète, la VM avec une seule
+// ligne. C'est une erreur d'analyse, et il n'y en a qu'une.
+importer module_qui_nexiste_pas
+
+fonction principal() {
+    afficher("jamais atteint")
+}

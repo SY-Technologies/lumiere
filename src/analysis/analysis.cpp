@@ -131,10 +131,17 @@ SemanticImportEnvironment build_import_environment(
             module_path(source_path, import->module_name.lexeme);
         if (path.empty())
         {
-            environment.emplace(
-                import->module_name.lexeme,
-                native_module_exports(import->module_name.lexeme)
-                    .value_or(SemanticModuleExports{}));
+            // A builtin module has no file. Anything else that resolves to no
+            // file is a module that does not exist, and leaving it out of the
+            // environment is what makes the analyzer say so (LUM-S0012). It
+            // used to be entered as an empty set of exports, so the analyzer
+            // accepted the import and each engine discovered the missing module
+            // on its own -- the tree walker with a traceback, the VM with a
+            // bare line.
+            if (auto native = native_module_exports(import->module_name.lexeme))
+            {
+                environment.emplace(import->module_name.lexeme, std::move(*native));
+            }
             continue;
         }
 
