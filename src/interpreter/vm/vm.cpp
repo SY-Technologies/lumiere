@@ -1234,52 +1234,96 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
     throw VmRuntimeError("VM: " + messages::affectation_indice_impossible(object.type_name()));
 }
 
-void require_member_arity(const std::string &signature,
+// These take a view rather than a string because every caller hands them a
+// literal or a name the module already owns. Binding a literal to a
+// `const std::string &` builds a string, and `valeurs.ajouter(index)` did that
+// twice per call on a path whose whole job is to push one value.
+std::string member_signature(const std::string_view family, const std::string_view member)
+{
+    return std::string(family).append(1, '.').append(member);
+}
+
+void require_member_arity(const std::string_view signature,
                           const std::vector<Value> &args,
                           const std::size_t expected)
 {
     if (args.size() != expected)
     {
-        throw VmRuntimeError("VM: " + signature + " attend " + std::to_string(expected) + " argument(s)");
+        throw VmRuntimeError("VM: " + std::string(signature) + " attend " +
+                             std::to_string(expected) + " argument(s)");
     }
 }
 
-std::int64_t member_integer(const Value &value, const std::string &signature)
+void require_member_arity(const std::string_view family,
+                          const std::string_view member,
+                          const std::vector<Value> &args,
+                          const std::size_t expected)
+{
+    if (args.size() != expected)
+    {
+        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend " +
+                             std::to_string(expected) + " argument(s)");
+    }
+}
+
+std::int64_t member_integer(const Value &value, const std::string_view signature)
 {
     if (!value.is_entier())
     {
-        throw VmRuntimeError("VM: " + signature + " attend un Entier");
+        throw VmRuntimeError("VM: " + std::string(signature) + " attend un Entier");
     }
     return value.as_entier();
 }
 
-std::string member_text(const Value &value, const std::string &signature)
+std::int64_t member_integer(const Value &value,
+                            const std::string_view family,
+                            const std::string_view member)
+{
+    if (!value.is_entier())
+    {
+        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend un Entier");
+    }
+    return value.as_entier();
+}
+
+std::string member_text(const Value &value, const std::string_view signature)
 {
     if (!value.is_texte())
     {
-        throw VmRuntimeError("VM: " + signature + " attend un Texte");
+        throw VmRuntimeError("VM: " + std::string(signature) + " attend un Texte");
+    }
+    return value.as_texte();
+}
+
+std::string member_text(const Value &value,
+                        const std::string_view family,
+                        const std::string_view member)
+{
+    if (!value.is_texte())
+    {
+        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend un Texte");
     }
     return value.as_texte();
 }
 
 Value execute_sequence_member(const std::vector<Value> &elements,
-                              const std::string &family,
-                              const std::string &member,
+                              const std::string_view family,
+                              const std::string_view member,
                               const std::vector<Value> &args)
 {
     if (member == "taille")
     {
-        require_member_arity(family + ".taille", args, 0);
+        require_member_arity(family, "taille", args, 0);
         return Value::entier(static_cast<std::int64_t>(elements.size()));
     }
     if (member == "vide")
     {
-        require_member_arity(family + ".vide", args, 0);
+        require_member_arity(family, "vide", args, 0);
         return Value::logique(elements.empty());
     }
     if (member == "contient")
     {
-        require_member_arity(family + ".contient", args, 1);
+        require_member_arity(family, "contient", args, 1);
         for (const Value &element : elements)
         {
             if (values_equal(element, args[0]))
@@ -1291,8 +1335,8 @@ Value execute_sequence_member(const std::vector<Value> &elements,
     }
     if (member == "joindre")
     {
-        require_member_arity(family + ".joindre", args, 1);
-        const std::string separator = member_text(args[0], family + ".joindre");
+        require_member_arity(family, "joindre", args, 1);
+        const std::string separator = member_text(args[0], family, "joindre");
         std::string result;
         for (std::size_t i = 0; i < elements.size(); ++i)
         {

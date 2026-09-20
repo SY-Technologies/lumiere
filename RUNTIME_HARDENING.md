@@ -1101,9 +1101,18 @@ measured with and without the allocation counter to be sure the counter was not
 the cause. Against CPython the median ratio went from 1.34x to 1.14x, and method
 calls from 3.5x to 2.5x.
 
+A fourth followed from the same profile. **A built-in member call built its own
+name.** `valeurs.ajouter(index)` went through helpers taking `const std::string
+&`, and every literal handed to them — `"Liste"`, then `family + ".ajouter"` —
+built a string, twice per call, on a path whose whole job is to push one value.
+Taking a view instead, and composing the signature only on the error path that
+prints it, took typed lists down another 18%, to 1.56x CPython.
+
 What is left is visible in the same profile: a field access still walks the
 class chain comparing strings to find out whether the field is private, and a
-field still lives in a hash table keyed by its name.
+field still lives in a hash table keyed by its name. Both are the same shape of
+problem as the three above — a name resolved at run time that a compiler already
+knew — and both want a slot index rather than a faster lookup.
 
 ## Next engineering priorities
 
