@@ -20,6 +20,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     cases = {"integer_loop": "499999500000\n", "text_iteration": "1487580000\n",
              "function_calls": "14999950000\n", "text_calls": "vrai\n131072\n",
+             "method_calls": "1999999000000\n",
              "typed_list": "200000\n199999\n",
              "dictionary_lookup": "50000\n1249975000\n"}
     for binary in args.binaries:

@@ -906,6 +906,74 @@ run time. The assignment side is now checked, because an assignment target is
 always a plain identifier that must name a declared variable; reads need real
 name resolution, where rejecting a valid program is worse than the hole.
 
+### Fuzzing the verifier — 2026-09-20
+
+The verifier's whole purpose is to let the interpreter read operands without
+checking them. That makes it load-bearing in a way nothing tested: the nine
+hand-built cases show it rejects the mistakes we thought of, not that it rejects
+every mistake.
+
+`VmVerifier.AcceptedBytecodeSurvivesExecution` attacks it from the other side.
+It corrupts a compiled module's instruction stream — a few bytes, mostly small
+nudges rather than wholly random values, because a nudge is what turns a valid
+operand into a neighbouring one — verifies the result, and runs whatever was
+accepted. Rejection is the ordinary outcome and proves nothing on its own; an
+acceptance that then crashes is the finding.
+
+Two details make it a test rather than a noise generator. Each candidate runs in
+a forked child, so a crash arrives as a signal the parent can name instead of
+taking the suite down with it. And the child is given a deadline, because a
+verified module may loop forever — a legitimate program may too, and termination
+was never part of the guarantee — so a child that does not finish is skipped
+rather than failed. The test also asserts that something reached the interpreter
+at all, so a run where the verifier rejected every mutation cannot pass while
+proving nothing.
+
+The suite runs 400 mutations; `LUMIERE_FUZZ_SEED` and `LUMIERE_FUZZ_ATTEMPTS`
+open it up. 7,500 mutations across three seeds under AddressSanitizer and
+UndefinedBehaviorSanitizer, about 1,060 of them accepted and executed, found no
+hole. The sanitizer build is where this has teeth: in a release build an
+unchecked out-of-bounds read may not fault at all, so a clean release run says
+much less than it appears to.
+
+### Named arguments, bound by position — 2026-09-20
+
+The VM bound a call's arguments by position and dropped their names, so
+`f(b: 1, a: 10)` computed `1 - 10`. It was silent: no crash, no diagnostic, just
+the wrong number.
+
+It hid because the compiler covers the common case. When it knows the callee it
+reorders the arguments itself and emits them positionally, so every direct call
+was right. The names only survive into the bytecode when the callee is not known
+until run time — a function held in a variable, or any method call — and there
+the interpreter read them into a `RuntimeArgument` and never looked at them
+again. Nor could the analyzer catch it: the program is valid, and a valid
+program that computes the wrong answer is exactly what static checking cannot
+see.
+
+Two things had to change. `FunctionBytecode` now carries its source-level
+parameter names, which meant threading them through the LIR — and `merge_module`
+copies a function field by field, because blocks own their terminators through a
+`unique_ptr`, so the new field arrived empty in the linked module until it was
+listed there too. That trap is now written down where the next field will be
+added. The binding itself is the tree walker's rule, stated once: a named
+argument goes to the parameter it names, a positional one to the next parameter
+still unbound, and the presence flag that tells the prologue whether to evaluate
+a default follows the binding rather than the argument count.
+
+The first version cost 4.6% on method calls, because it allocated a mapping on
+every call to hold what is, for a positional call, the identity. Positional
+binding now materialises nothing; only a call that really names an argument
+allocates. Measured back to parity against the same baseline binary.
+
+There was no method-call benchmark to measure this with — the existing
+`function_calls` case goes through the compiler's direct path and never reaches
+argument binding at all. `benchmarks/method_calls.lum` is that gap closed.
+
+`tests/conformance/arguments_nommes` is the regression test, and the point is
+where it lives: a single-engine test would have agreed with whichever engine
+wrote it. Only running both and diffing them says which one is wrong.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
@@ -921,8 +989,8 @@ name resolution, where rejecting a valid program is worse than the hole.
    the allocation-carried constraints already handle, which is the same work as
    richer mutable-generic relations in priority 1.
 3. **One conformance corpus.** Built; see "Cross-engine conformance" above.
-   What remains is fuzzing malformed bytecode against the verifier, and closing
-   the three recorded divergences.
+   Malformed bytecode is fuzzed against the verifier now. What remains is
+   closing the recorded divergences, of which name resolution is the larger.
 4. **Value representation.** Profiling said the 48-byte non-trivial `Value` was
    about 40% of execution. It is now 24 bytes and holds a `Ref` rather than a
    `shared_ptr`, which was the part that had to wait for the runtime to own its

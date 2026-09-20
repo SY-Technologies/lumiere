@@ -68,7 +68,7 @@ other benchmark workloads.
 
 ## T4 — Build one cross-engine conformance and fuzzing corpus
 
-Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences open
+Status: in progress — 2026-09-20; corpus and fuzzing in place, two divergences open
 
 - [x] Run language and standard-library fixtures under both engines.
       `scripts/conformance` runs every case through the real CLI under `--tw`
@@ -97,9 +97,28 @@ Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences
       test. Against the old collector it fails every run, where the LumiNet test
       that first exposed this only failed about one in six.
 
-- [ ] Fuzz malformed bytecode against the verifier. The verifier's guarantee —
-      that anything it accepts cannot make the interpreter read out of bounds —
-      is the one property here with no test behind it.
+- [x] Fuzz malformed bytecode against the verifier. The verifier's guarantee is
+      that anything it accepts cannot make the interpreter read out of bounds;
+      every unchecked operand read in the interpreter rests on it, and nothing
+      held it to account. `VmVerifier.AcceptedBytecodeSurvivesExecution`
+      corrupts a compiled module's instruction stream at random, verifies it,
+      and runs whatever the verifier accepted in a forked child, so a crash
+      arrives as a signal instead of taking the suite with it. A rejection is
+      the ordinary outcome; an acceptance that then dies is the finding.
+
+      Two things it deliberately does not claim: a mutated module may compute
+      nonsense, which is no concern of the verifier's, and it may loop forever,
+      because a legitimate program may too — termination was never part of the
+      guarantee, so a child that does not finish is skipped rather than failed.
+      The test also asserts that some mutation reached the interpreter, so a run
+      where the verifier rejected everything cannot pass while proving nothing.
+
+      The suite runs 400 mutations; `LUMIERE_FUZZ_SEED` and
+      `LUMIERE_FUZZ_ATTEMPTS` open it up for a longer campaign. 7,500 mutations
+      across three seeds under AddressSanitizer and UndefinedBehaviorSanitizer —
+      about 1,060 of them accepted and executed — found no hole. That is where
+      the test has teeth: in a release build an unchecked out-of-bounds read may
+      not fault at all.
 - [x] Decide whether `principal` is required. It is: a program has a place to
       start, a module does not. The analyzer reports LUM-S0051 when a file is
       about to be run and has no `principal`, so both engines are told the same
@@ -146,8 +165,8 @@ differently by the two engines, including every binary arithmetic and comparison
 operator. Three of the five were found by the fuzzer rather than by hand.
 
 Acceptance: `scripts/conformance` and `scripts/fuzz` each run from one command
-and store minimal reproductions. Met, except that malformed bytecode is not yet
-fuzzed and the divergences above are recorded rather than closed.
+and store minimal reproductions. Met; the divergences above are recorded rather
+than closed.
 
 ## T5 — Profile representative workloads
 

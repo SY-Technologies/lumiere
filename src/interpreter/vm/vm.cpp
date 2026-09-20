@@ -1780,36 +1780,127 @@ CallFrame make_call_frame(const ModuleBytecode &module,
     return frame;
 }
 
-std::vector<Value> normalize_closure_arguments(const FunctionBytecode &function,
-                                               const std::vector<RuntimeArgument> &args)
+// A parameter is named in diagnostics; bytecode that arrived without the name
+// table still has to say something, so fall back to its position.
+std::string parameter_label(const FunctionBytecode &function, const std::size_t index)
 {
-    if (args.size() > function.source_arity)
-    {
-        throw VmRuntimeError("VM: trop d'arguments pour '" + function.name + "'");
-    }
+    return index < function.parameter_names.size() ? function.parameter_names[index]
+                                                   : std::to_string(index + 1);
+}
 
-    std::vector<Value> normalized;
-    normalized.reserve(function.arity);
-    for (std::size_t i = 0; i < function.source_arity; ++i)
+// No argument fills this parameter. Any value at or past the argument count
+// says the same thing, which lets one bounds test serve both binding rules.
+constexpr std::size_t no_argument = static_cast<std::size_t>(-1);
+
+/**
+ * @brief Resolves a call that names at least one of its arguments.
+ *
+ * Returns, for each parameter, the index of the argument that fills it, or
+ * `no_argument`. The rule is the tree walker's: a named argument goes to the
+ * parameter it names, a positional one to the next parameter still unbound.
+ */
+std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
+                                              const std::vector<RuntimeArgument> &args)
+{
+    const std::size_t count = function.source_arity;
+    std::vector<std::size_t> sources(count, no_argument);
+    std::size_t next_positional = 0;
+
+    for (std::size_t i = 0; i < args.size(); ++i)
     {
-        if (i < args.size())
+        std::size_t target = count;
+        if (!args[i].name.empty())
         {
-            normalized.push_back(args[i].value);
+            for (std::size_t parameter = 0; parameter < count; ++parameter)
+            {
+                if (parameter_label(function, parameter) == args[i].name)
+                {
+                    target = parameter;
+                    break;
+                }
+            }
+            if (target == count)
+            {
+                throw VmRuntimeError("aucun paramètre nommé '" + args[i].name + "'");
+            }
         }
         else
         {
-            if (i >= function.optional_params.size() || !function.optional_params[i])
+            while (next_positional < count && sources[next_positional] != no_argument)
             {
-                throw VmRuntimeError("VM: argument manquant pour '" + function.name + "'");
+                ++next_positional;
             }
-            normalized.push_back(Value::rien());
+            if (next_positional == count)
+            {
+                throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction");
+            }
+            target = next_positional++;
         }
+
+        if (sources[target] != no_argument)
+        {
+            throw VmRuntimeError("le paramètre '" + parameter_label(function, target) +
+                                 "' est fourni plusieurs fois");
+        }
+        sources[target] = i;
     }
-    for (std::size_t i = 0; i < function.source_arity; ++i)
+    return sources;
+}
+
+/**
+ * @brief Lays a call's arguments out the way the callee's frame expects them.
+ *
+ * The VM used to bind purely by position, so `f(b: 1, a: 10)` computed `1 - 10`
+ * whenever the callee was not known at compile time -- a call through a
+ * variable, or any method call. The names travel in the bytecode; nothing read
+ * them. The analyzer accepts such a program, so the wrong answer was silent.
+ *
+ * The result is the layout the compiler's prologue expects: the `source_arity`
+ * values, then one Logique per optional parameter saying whether the caller
+ * supplied it.
+ */
+std::vector<Value> normalize_closure_arguments(const FunctionBytecode &function,
+                                               const std::vector<RuntimeArgument> &args)
+{
+    const std::size_t count = function.source_arity;
+    const bool named = std::any_of(args.begin(), args.end(),
+                                   [](const RuntimeArgument &arg) { return !arg.name.empty(); });
+    if (!named && args.size() > count)
+    {
+        throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction");
+    }
+
+    // Positional binding is the identity -- argument i fills parameter i -- and
+    // the compiler strips the names from every call whose callee it knows, so
+    // the mapping is materialised only when a call really names an argument.
+    // Method calls run through here on every iteration of a hot loop; an
+    // allocation none of them needs is one they would all pay for.
+    const std::vector<std::size_t> sources =
+        named ? bind_named_arguments(function, args) : std::vector<std::size_t>{};
+    const auto supplied = [&](const std::size_t parameter) -> const Value * {
+        const std::size_t argument = named ? sources[parameter] : parameter;
+        return argument < args.size() ? &args[argument].value : nullptr;
+    };
+
+    std::vector<Value> normalized;
+    normalized.reserve(function.arity);
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const Value *value = supplied(i);
+        const bool optional = i < function.optional_params.size() && function.optional_params[i];
+        if (value == nullptr && !optional)
+        {
+            throw VmRuntimeError("argument manquant pour le paramètre '" + parameter_label(function, i) + "'");
+        }
+        normalized.push_back(value != nullptr ? *value : Value::rien());
+    }
+    // The prologue evaluates a default only where the caller supplied nothing,
+    // so the flag follows the binding rather than the argument count.
+    for (std::size_t i = 0; i < count; ++i)
     {
         if (i < function.optional_params.size() && function.optional_params[i])
         {
-            normalized.push_back(Value::logique(i < args.size()));
+            normalized.push_back(Value::logique(supplied(i) != nullptr));
         }
     }
     return normalized;

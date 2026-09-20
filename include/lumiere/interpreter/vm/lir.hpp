@@ -301,7 +301,12 @@ struct LirFunction
     std::vector<LirNamedValue> locals;
     std::vector<LirCapture> captures;
     std::size_t source_arity = 0;
+    // Parallel to each other and to the source-level parameter list: entry i
+    // is the name the caller may use for parameter i and whether it has a
+    // default. Names are kept because a call whose callee is only known at run
+    // time has to bind `f(b: 1, a: 2)` by name, like the tree walker does.
     std::vector<bool> optional_params;
+    std::vector<std::string> parameter_names;
     std::vector<std::size_t> temps;
     std::size_t entry_block = 0;
     std::vector<LirBlock> blocks;

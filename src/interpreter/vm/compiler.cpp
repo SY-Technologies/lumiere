@@ -403,6 +403,10 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
     for (const LirFunction &source_function : source.functions)
     {
         LirFunction &function = target.append_function(prefix + source_function.name);
+        // Blocks own their terminators through a unique_ptr, so a function
+        // cannot simply be copied: every plain field is listed here by hand,
+        // and a new one added to LirFunction has to be added here too or it
+        // silently arrives empty in the linked module.
         function.params = source_function.params;
         function.return_type = source_function.return_type;
         function.source_path = source_function.source_path;
@@ -410,6 +414,7 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
         function.locals = source_function.locals;
         function.source_arity = source_function.source_arity;
         function.optional_params = source_function.optional_params;
+        function.parameter_names = source_function.parameter_names;
         function.temps = source_function.temps;
         function.entry_block = source_function.entry_block;
         for (const LirCapture &capture : source_function.captures)

@@ -1448,6 +1448,7 @@ private:
         {
             function.params.push_back({i + 1, method.params[i].name});
             function.optional_params.push_back(static_cast<bool>(method.params[i].default_value));
+            function.parameter_names.push_back(method.params[i].name);
         }
         std::size_t flag = method.params.size() + 1;
         for (const Parameter &parameter : method.params)
@@ -1734,6 +1735,7 @@ private:
         {
             nested.params.push_back({i, params[i].name});
             nested.optional_params.push_back(static_cast<bool>(params[i].default_value));
+            nested.parameter_names.push_back(params[i].name);
         }
         std::size_t flag_index = params.size();
         for (const Parameter &param : params)
@@ -2088,6 +2090,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
         {
             lir_function.params.push_back({param_index + parameter_offset, function->params[param_index].name});
             lir_function.optional_params.push_back(static_cast<bool>(function->params[param_index].default_value));
+            lir_function.parameter_names.push_back(function->params[param_index].name);
         }
         std::size_t flag_index = function->params.size() + parameter_offset;
         for (const Parameter &param : function->params)

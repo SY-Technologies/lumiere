@@ -145,6 +145,9 @@ struct FunctionBytecode
     std::size_t arity = 0; // count of parameter
     std::size_t source_arity = 0;
     std::vector<bool> optional_params;
+    // The source-level parameter names, parallel to optional_params. A call
+    // site that names its arguments resolves them against this.
+    std::vector<std::string> parameter_names;
     std::size_t local_slot_count = 0;
     std::size_t capture_count = 0;
     // True for the synthetic function the compiler wraps a module's top-level

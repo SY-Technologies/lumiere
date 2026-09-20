@@ -1,0 +1,49 @@
+// Un argument nommé va au paramètre qu'il nomme, quel que soit son rang.
+//
+// Quand l'appelé est connu à la compilation, le compilateur VM remet les
+// arguments dans l'ordre lui-même et les noms disparaissent du bytecode.
+// Quand il ne l'est pas — une fonction rangée dans une variable, une méthode
+// appelée sur un objet — les noms voyagent jusqu'à l'exécution, et la VM les
+// ignorait : f(b: 1, a: 10) calculait 1 - 10. L'analyse accepte ce programme,
+// donc rien ne rattrapait l'erreur ; seule la comparaison des deux moteurs
+// pouvait la voir.
+
+fonction difference(a: Entier, b: Entier) -> Entier {
+    retourne a - b
+}
+
+fonction combine(a: Entier, b: Entier = 20, c: Entier = 300) -> Entier {
+    retourne a + b * 2 + c * 3
+}
+
+classe Boite {
+    fonction melange(x: Entier, y: Entier = 7) -> Texte {
+        retourne "x=" + x + " y=" + y
+    }
+}
+
+fonction principal() {
+    // Appelé connu : le compilateur réordonne.
+    afficher(difference(b: 1, a: 10))
+
+    // Appelé inconnu : les noms sont résolus à l'exécution.
+    soit f = difference
+    afficher(f(b: 1, a: 10))
+    afficher(f(a: 10, b: 1))
+
+    // Un paramètre par défaut sauté par son nom reste par défaut, et le
+    // drapeau de présence doit suivre la liaison, pas le nombre d'arguments.
+    soit g = combine
+    afficher(g(1))
+    afficher(g(1, c: 5))
+    afficher(g(c: 5, a: 1))
+    afficher(g(b: 2, c: 5, a: 1))
+
+    // Même chose sur une méthode, appelée directement puis à travers une
+    // valeur de fonction.
+    soit boite = Boite()
+    afficher(boite.melange(1))
+    afficher(boite.melange(y: 9, x: 1))
+    soit m = boite.melange
+    afficher(m(y: 9, x: 1))
+}

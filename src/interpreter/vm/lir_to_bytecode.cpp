@@ -643,6 +643,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
         bytecode_function.arity = lir_function.params.size();
         bytecode_function.source_arity = lir_function.source_arity;
         bytecode_function.optional_params = lir_function.optional_params;
+        bytecode_function.parameter_names = lir_function.parameter_names;
         bytecode_function.local_slot_count = lir_function.params.size() + lir_function.locals.size();
         bytecode_function.capture_count = lir_function.captures.size();
         emit_fn(module, lir_function, bytecode_function);
