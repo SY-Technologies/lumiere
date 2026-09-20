@@ -2552,7 +2552,7 @@ TEST(CliIntegration, BothBackendsHonorResultReturningPrincipal)
             std::string::npos)
             << backend << ": " << failure.stderr_text;
         EXPECT_NE(
-            failure.stderr_text.find("line 2, column 19"),
+            failure.stderr_text.find("line 2, column 18"),
             std::string::npos)
             << backend << ": " << failure.stderr_text;
     }
@@ -2695,7 +2695,7 @@ TEST(CliIntegration, BothBackendsPreserveOriginsAcrossPropagationChains)
         EXPECT_NE(result.exit_code, 0) << backend;
         EXPECT_NE(
             result.stderr_text.find(
-                "line 2, column 19"),
+                "line 2, column 18"),
             std::string::npos)
             << backend << ": " << result.stderr_text;
         EXPECT_EQ(
@@ -2773,7 +2773,7 @@ TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
                 root);
         EXPECT_NE(forwarded.exit_code, 0);
         EXPECT_NE(
-            forwarded.stderr_text.find("line 2, column 19"),
+            forwarded.stderr_text.find("line 2, column 18"),
             std::string::npos)
             << backend << ": " << forwarded.stderr_text;
     }
@@ -2799,7 +2799,7 @@ TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
                 root);
         EXPECT_NE(translated.exit_code, 0);
         EXPECT_NE(
-            translated.stderr_text.find("line 8, column 34"),
+            translated.stderr_text.find("line 8, column 33"),
             std::string::npos)
             << backend << ": " << translated.stderr_text;
     }
@@ -2855,7 +2855,7 @@ TEST(CliIntegration, BothBackendsRenderStackTraceForUnhandledPropagatedResults)
         EXPECT_LT(milieu_frame, principal_frame) << backend;
 
         EXPECT_NE(
-            result.stderr_text.find("line 3, column 21"),
+            result.stderr_text.find("line 3, column 20"),
             std::string::npos)
             << backend << ": " << result.stderr_text;
         EXPECT_NE(

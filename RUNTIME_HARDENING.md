@@ -1007,6 +1007,33 @@ Making analysis carry submissions forward is the real answer and is recorded as
 its own work; a half-version that re-analyzes the accumulated text would report
 earlier lines' diagnostics again and number the new line wrong.
 
+### One position per token — 2026-09-20
+
+A `Token` carried `line`/`column` and `start_line`/`start_column`. The tokenizer
+set the first pair from the scanner *after* it had consumed the lexeme, so they
+were the position just past the token; the second pair was the position it
+began at. The lexer and the parser used the second. Everything else — the
+analyzer's `source_range`, the tree walker's `raise_runtime_error`, the VM's
+source locations, and every synthetic token that carries a position along — used
+the first.
+
+So every caret sat past the thing it was about. LUM-S0057 on `valeur_absente`
+pointed at the `)` after it, and `t.membre_absent()` reported column 29, the
+closing paren, thirteen characters past the member that does not exist. The
+byte range in `lumiere check --format=json` was right the whole time, because it
+was built from the offsets, so an editor underlined the correct span while the
+terminal underlined the wrong character.
+
+A token now has one position and it is where the token starts. Fixing the
+tokenizer fixed every consumer at once, which is the reason to prefer it to a
+sweep of the twenty-odd places that pass a position around, and the duplicate
+pair could then be deleted rather than left as a trap. `start_offset` and
+`end_offset` still give the span.
+
+Both engines were wrong identically, so conformance could not see it: agreement
+is not correctness. Five expectations moved, each read against its own source
+line rather than regenerated and accepted.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

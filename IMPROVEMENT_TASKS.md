@@ -173,14 +173,22 @@ Status: in progress — 2026-09-20; corpus and fuzzing in place, two divergences
       rule, not a patch. Name resolution removed the largest family of these by
       moving the diagnostic into the analyzer, where there is only one of it.
 
-- [ ] Point the caret at the token, not past it. `source_range` in the analyzer
-      builds a range from `token.start_offset` and `token.line`/`token.column`,
-      but a Token's `line`/`column` are where it *ends* — `start_line` and
-      `start_column` are where it begins. So the byte range an editor reads is
-      right while the caret a person reads sits one character past the symbol:
-      LUM-S0057 on `valeur_absente` points at the `)` after it. Both engines
-      agree, so no conformance case catches it, and the fix moves the column in
-      every pinned analyzer diagnostic — which is why it is its own change.
+- [x] Point the caret at the token, not past it. A Token carried two positions:
+      `line`/`column`, which the tokenizer set *after* the lexeme, and
+      `start_line`/`start_column`, which is where it begins. Only the lexer and
+      the parser read the second pair; everything else drew its caret from the
+      first, so an error about `valeur` pointed at the space after it and
+      `t.membre_absent()` pointed at the closing paren, thirteen characters
+      past the member it was about.
+
+      A token now has one position and it is the start. That is one change in
+      the tokenizer rather than a sweep of every caller, and the duplicate pair
+      is gone. The byte span `start_offset..end_offset` still says how far the
+      token reaches, which is what an editor reads.
+
+      Both engines were wrong in the same way, so no conformance case caught it
+      — five expectations moved, each checked against the source by hand rather
+      than regenerated on faith.
 
 What it found on the first run, all since fixed: the VM showed its synthetic
 `__module_init__` frame in tracebacks the tree walker had no frame for; the VM

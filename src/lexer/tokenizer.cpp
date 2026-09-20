@@ -60,24 +60,20 @@ namespace lumiere
         std::string lexeme(m_scanner.lexeme());
         return Token(type,
                      std::move(lexeme),
-                     m_scanner.line(),
-                     m_scanner.column(),
-                     m_scanner.start_offset(),
-                     m_scanner.current_offset(),
                      m_scanner.start_line(),
-                     m_scanner.start_column());
+                     m_scanner.start_column(),
+                     m_scanner.start_offset(),
+                     m_scanner.current_offset());
     }
 
     Token Tokenizer::error_token(const std::string &msg) const
     {
         return Token(TokenType::ERREUR,
                      msg,
-                     m_scanner.line(),
-                     m_scanner.column(),
-                     m_scanner.start_offset(),
-                     m_scanner.current_offset(),
                      m_scanner.start_line(),
-                     m_scanner.start_column());
+                     m_scanner.start_column(),
+                     m_scanner.start_offset(),
+                     m_scanner.current_offset());
     }
 
     bool Tokenizer::at_documentation_comment()
@@ -123,9 +119,7 @@ namespace lumiere
                      start_line,
                      start_column,
                      start_offset,
-                     m_scanner.current_offset(),
-                     start_line,
-                     start_column);
+                     m_scanner.current_offset());
     }
     void Tokenizer::skip_whitespace_and_comments()
     {

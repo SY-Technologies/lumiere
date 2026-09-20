@@ -147,7 +147,7 @@ namespace lumiere
                     DiagnosticSeverity::ERROR_LEVEL,
                     error.message,
                     "",
-                    {start, end, error.token.start_line, error.token.start_column},
+                    {start, end, error.token.line, error.token.column},
                 });
                 if (m_current == statement_start && !is_at_end())
                 {
