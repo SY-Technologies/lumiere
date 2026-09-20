@@ -241,13 +241,33 @@ Status: in progress — 2026-09-20; counters in place, measured against CPython 
       counterpart each (`benchmarks/python/`), so the target can be read off
       more than one of them.
 - [ ] Replace the value representation. No longer blocked: `Value` holds a
-      `Ref`, not a `shared_ptr`, and is down to 24 bytes.
+      `Ref`, not a `shared_ptr`, and is down to 24 bytes. Lower priority than it
+      looked: the four things the profile actually named were names resolved at
+      run time, not the value's size.
+
+- [ ] **Give a field a slot instead of a name.** What is left of the method-call
+      gap is two lookups per field access: a walk of the class chain comparing
+      strings to decide whether the field is private, and a hash table keyed by
+      the field's name to find it. Both are answers the compiler already knows.
+      A field belongs at a fixed offset in the object, chosen when the class is
+      compiled, with the private check settled then too — the same shape of fix
+      as classifying a type once, applied to the last place that still resolves
+      a name while the program runs.
 
 Measured against CPython on all seven workloads rather than on the integer loop
 alone, the VM was 1.34x slower at the median: ahead on text, level on the
 integer loop, behind on calls, dictionaries and typed lists, and 3.5x behind on
 method calls. The target had been read off the one workload that had been
 optimized.
+
+Four rounds since, each named by the profile and each measured on its own:
+classify a type once instead of at every check; read an object without taking a
+reference to it; identify a runtime body by a tag instead of `dynamic_cast`; and
+stop building a member's name on every built-in call. Method calls 1.09s to
+0.78s, function calls -13%, typed lists -18%, the integer loop ~1.5% slower from
+dispatch-loop layout. Against CPython per workload: text 0.26x and 0.49x,
+integer loop ~1.0x, function calls ~1.2x, typed lists 1.56x, dictionaries 1.7x,
+method calls 2.5x.
 
 Acceptance: benchmark reports include reproducible baselines and explain each
 optimization using measured time and memory changes. Note that no interpreter
