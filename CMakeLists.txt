@@ -230,6 +230,7 @@ if(BUILD_TESTING)
         tests/test_cli_integration.cpp
         tests/test_vm_lir.cpp
         tests/test_vm_verifier.cpp
+        tests/test_vm_verifier_fuzz.cpp
         tests/test_no_legacy_exceptions.cpp
         tests/test_windows_header_compatibility.cpp
     )
