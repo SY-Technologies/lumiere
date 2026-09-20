@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -9,6 +10,7 @@
 
 #include "lumiere/analysis/analysis.hpp"
 #include "lumiere/analysis/inspection.hpp"
+#include "lumiere/diagnostics/runtime_stats.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
@@ -34,6 +36,7 @@ struct CliOptions
     bool execute = false;
     bool print_help = false;
     bool print_version = false;
+    bool print_stats = false;
 };
 
 struct TestCliOptions
@@ -46,7 +49,7 @@ struct TestCliOptions
 
 void print_usage()
 {
-    std::cerr << "usage: lumiere [--vm | --tw] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "usage: lumiere [--vm | --tw] [--stats] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere ir <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere bytecode <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere check [--format=json] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
@@ -292,6 +295,41 @@ int inspect_program(const std::string &command, const std::string &file_argument
     return 0;
 }
 
+/**
+ * @brief Reports what the run cost, other than time.
+ *
+ * On stderr, so a program's own output stays exactly what it printed and the
+ * benchmark harness -- which rejects any run that writes to stderr -- has to be
+ * asked for this explicitly.
+ */
+void print_run_statistics()
+{
+    const auto mebibytes = [](const std::uint64_t bytes) {
+        return static_cast<double>(bytes) / (1024.0 * 1024.0);
+    };
+    std::cerr << "statistiques :";
+    if (lumiere::stats::counting_allocations())
+    {
+        std::cerr << ' ' << lumiere::stats::allocations() << " allocations, "
+                  << std::fixed << std::setprecision(1)
+                  << mebibytes(lumiere::stats::allocated_bytes()) << " Mio demandés,";
+    }
+    else
+    {
+        std::cerr << " allocations non comptées dans cette build,";
+    }
+    if (const std::uint64_t peak = lumiere::stats::peak_resident_bytes(); peak != 0)
+    {
+        std::cerr << " pic de résidence " << std::fixed << std::setprecision(1)
+                  << mebibytes(peak) << " Mio";
+    }
+    else
+    {
+        std::cerr << " pic de résidence inconnu";
+    }
+    std::cerr << '\n';
+}
+
 bool submission_is_complete(const std::string &source)
 {
     int delimiters = 0;
@@ -446,6 +484,12 @@ CliOptions parse_run_args(int argc, char *argv[])
             continue;
         }
 
+        if (arg == "--stats")
+        {
+            options.print_stats = true;
+            continue;
+        }
+
         if (arg == "--help" || arg == "-h")
         {
             options.print_help = true;
@@ -475,7 +519,8 @@ CliOptions parse_run_args(int argc, char *argv[])
 
     if (options.print_help || options.print_version)
     {
-        if (!options.file_argument.empty() || options.execute || !options.backend.empty())
+        if (!options.file_argument.empty() || options.execute || !options.backend.empty() ||
+            options.print_stats)
         {
             print_usage();
             throw std::runtime_error("--help et --version ne prennent pas d'autre argument");
@@ -818,6 +863,11 @@ int main(int argc, char *argv[])
 
             auto backend = make_backend(options.backend);
             backend->execute(*program);
+        }
+
+        if (options.print_stats)
+        {
+            print_run_statistics();
         }
 
         return 0;

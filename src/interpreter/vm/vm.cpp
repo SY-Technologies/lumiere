@@ -61,6 +61,36 @@ std::size_t read_u24(const Chunk &chunk, std::size_t &ip)
     return (byte2 << 16) | (byte1 << 8) | byte0;
 }
 
+/**
+ * @brief The argument names of a call, read from the bytecode where they lie.
+ *
+ * A call used to copy them into a vector of std::string before touching the
+ * stack -- one allocation and one string copy per call, on the path that was
+ * measured at four allocations per call and 3.5x CPython. The operands are
+ * contiguous and the verifier has already proved they are present, so the
+ * instruction can simply remember where they start and read the one it needs.
+ */
+class ArgumentNames
+{
+public:
+    // Consumes the operands: `ip` is left after the last one.
+    ArgumentNames(const Chunk &chunk, std::size_t &ip, const std::size_t count)
+        : m_chunk(chunk), m_offset(ip)
+    {
+        ip += count * 2;
+    }
+
+    [[nodiscard]] std::size_t index(const std::size_t argument) const
+    {
+        const std::size_t at = m_offset + argument * 2;
+        return (static_cast<std::size_t>(m_chunk.code[at]) << 8) | m_chunk.code[at + 1];
+    }
+
+private:
+    const Chunk &m_chunk;
+    std::size_t m_offset;
+};
+
 std::size_t read_u16(const Chunk &chunk, std::size_t &ip)
 {
     const std::size_t byte1 = read_byte(chunk, ip);
@@ -696,8 +726,91 @@ void execute_type_check(std::vector<Value> &stack, const std::string &type_name)
     stack.push_back(Value::logique(matches_type_name(pop_value(stack), type_name)));
 }
 
+/**
+ * @brief What an annotation demands of a value, decided once per module.
+ *
+ * A type is written as text in the source and travels into the bytecode as
+ * text, so every check used to re-read that text: scan for a union bar, find
+ * the generic bracket, then compare the head against seven builtin names.
+ * `valeur: Entier` paid that twice per call -- once for the parameter and once
+ * for the return -- and it showed: string work around type assertions was
+ * about a tenth of the time on a method-call loop.
+ *
+ * The answer for a builtin scalar is one tag comparison. Anything with a
+ * bracket, a bar, or a name the runtime does not know is Composite and still
+ * goes through matches_type_name, which is where the real rules live.
+ */
+enum class TypeShape : std::uint8_t
+{
+    Entier,
+    Decimal,
+    Logique,
+    Symbole,
+    Texte,
+    Rien,
+    Universel,
+    Composite,
+};
+
+TypeShape classify_type_name(std::string_view name)
+{
+    name = trim_type_name(name);
+    if (name == "Entier") return TypeShape::Entier;
+    if (name == "Décimal" || name == "Decimal") return TypeShape::Decimal;
+    if (name == "Logique") return TypeShape::Logique;
+    if (name == "Symbole") return TypeShape::Symbole;
+    if (name == "Texte") return TypeShape::Texte;
+    if (name == "Rien") return TypeShape::Rien;
+    if (name == "Universel") return TypeShape::Universel;
+    return TypeShape::Composite;
+}
+
+std::vector<TypeShape> classify_types(const std::vector<std::string> &types)
+{
+    std::vector<TypeShape> shapes;
+    shapes.reserve(types.size());
+    for (const std::string &name : types)
+    {
+        shapes.push_back(classify_type_name(name));
+    }
+    return shapes;
+}
+
+/** @brief Whether @p value satisfies a shape. Composite is never asked. */
+bool matches_shape(const Value &value, const TypeShape shape)
+{
+    switch (shape)
+    {
+    case TypeShape::Entier:
+        return value.is_entier();
+    // An Entier is accepted where a Décimal is asked for, as it always has been.
+    case TypeShape::Decimal:
+        return value.is_decimal() || value.is_entier();
+    case TypeShape::Logique:
+        return value.is_logique();
+    case TypeShape::Symbole:
+        return value.is_symbole();
+    case TypeShape::Texte:
+        return value.is_texte();
+    case TypeShape::Rien:
+        return value.is_rien();
+    case TypeShape::Universel:
+        return true;
+    case TypeShape::Composite:
+        break;
+    }
+    return false;
+}
+
+bool matches_type(const Value &value, const TypeShape shape, const std::string &name)
+{
+    return shape == TypeShape::Composite ? matches_type_name(value, name)
+                                         : matches_shape(value, shape);
+}
+
 void execute_type_assertion(std::vector<Value> &stack,
                             const std::string &type_name,
+                            const TypeShape shape,
                             const std::string &context,
                             VmRuntimeServices &runtime)
 {
@@ -705,13 +818,18 @@ void execute_type_assertion(std::vector<Value> &stack,
     {
         throw VmRuntimeError("VM: pile vide pendant la verification de type");
     }
-    if (!matches_type_name(stack.back(), type_name))
+    if (!matches_type(stack.back(), shape, type_name))
     {
         throw VmRuntimeError("VM: " + messages::type_attendu(context,
                                                              display_runtime_type(type_name),
                                                              stack.back().type_name()));
     }
-    runtime.annotate_value(stack.back(), type_name, {});
+    // Only a collection or a Résultat carries an annotation, and no builtin
+    // scalar shape is either of those.
+    if (shape == TypeShape::Composite || shape == TypeShape::Universel)
+    {
+        runtime.annotate_value(stack.back(), type_name, {});
+    }
 }
 
 void execute_add(std::vector<Value> &stack)
@@ -1915,6 +2033,9 @@ struct VmExecutionState
     std::vector<bool> &global_defined;
     std::vector<bool> &initialized_functions;
     VmRuntimeServices runtime_services;
+    // One entry per module type, in the same order: what that type demands of
+    // a value, worked out once instead of parsed at every assertion.
+    std::vector<TypeShape> type_shapes;
 };
 
 Value run_frames(VmExecutionState &execution,
@@ -2394,17 +2515,15 @@ Value run_frames(VmExecutionState &execution,
         case Opcode::CALL:
         {
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (stack.size() < frame.stack_base + static_cast<std::size_t>(arity) + 1)
             {
                 throw VmRuntimeError("VM: pile insuffisante pour l'appel");
@@ -2416,7 +2535,7 @@ Value run_frames(VmExecutionState &execution,
             call_args.reserve(arity);
             for (std::size_t i = callee_index + 1; i < stack.size(); ++i)
             {
-                call_args.push_back({argument_names[i - callee_index - 1], std::move(stack[i])});
+                call_args.push_back({argument_name(i - callee_index - 1), std::move(stack[i])});
             }
 
             stack.resize(callee_index);
@@ -2464,17 +2583,15 @@ Value run_frames(VmExecutionState &execution,
                                                  ? read_u24(chunk, ip)
                                                  : read_byte(chunk, ip);
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (global_index >= module.globals.size())
             {
                 throw VmRuntimeError("VM: index global invalide");
@@ -2489,7 +2606,7 @@ Value run_frames(VmExecutionState &execution,
             call_args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                call_args.push_back({argument_names[i], std::move(stack[args_start + i])});
+                call_args.push_back({argument_name(i), std::move(stack[args_start + i])});
             }
             stack.resize(args_start);
 
@@ -2603,17 +2720,15 @@ Value run_frames(VmExecutionState &execution,
                                                  ? read_u24(chunk, ip)
                                                  : read_byte(chunk, ip);
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (member_index >= module.members.size())
             {
                 throw VmRuntimeError("VM: index de membre invalide");
@@ -2629,7 +2744,7 @@ Value run_frames(VmExecutionState &execution,
             args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                args.push_back({argument_names[i], std::move(stack[receiver_index + 1 + i])});
+                args.push_back({argument_name(i), std::move(stack[receiver_index + 1 + i])});
             }
             stack.resize(receiver_index);
 
@@ -2889,6 +3004,7 @@ Value run_frames(VmExecutionState &execution,
             }
             execute_type_assertion(stack,
                                    module.types[annotation.type_index],
+                                   execution.type_shapes[annotation.type_index],
                                    annotation.context,
                                    runtime_services);
             break;
@@ -3089,7 +3205,8 @@ Value VM::run(const ModuleBytecode &module)
     std::vector<bool> global_defined(module.globals.size(), false);
     std::vector<bool> initialized_functions(module.functions.size(), false);
     VmExecutionState execution{
-        module, natives, function_indices, globals, global_defined, initialized_functions, {}};
+        module, natives, function_indices, globals, global_defined, initialized_functions, {},
+        classify_types(module.types)};
     // Initializers, entrypoint, and native callback re-entry share contracts and
     // bound native methods for the entire execution, not just one frame stack.
     execution.runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {

@@ -213,17 +213,41 @@ error points at, which is smaller than it was.
 
 ## T5 — Profile representative workloads
 
-Status: baseline measured — 2026-09-17; value representation unblocked by T2
+Status: in progress — 2026-09-20; counters in place, measured against CPython on every workload
 
 - [x] Measure against a compiled baseline rather than against our own history:
       `scripts/compare-languages.py` reports 430x C and 1.39x slower than CPython.
 - [x] Attribute the cost: the 48-byte non-trivial `Value` is about 40% of
       execution on the integer loop.
 - [x] Remove the per-instruction source-location lookup (8.6%).
-- [ ] Add allocation, peak-memory, and VM-instruction counters.
-- [ ] Establish representative workloads in addition to microbenchmarks.
+- [x] Add allocation and peak-memory counters. `lumiere --stats` reports both
+      after a run, on stderr so a program's own output stays what it printed.
+      Allocations are counted by replacing the global allocation operators,
+      which costs one increment each and measured as nothing across the suite —
+      so there is no build flag and no second binary whose numbers would have to
+      be trusted to come from the same code. AddressSanitizer replaces the same
+      operators to pair every new with its delete; a counter is not worth a
+      correctness check, so under the sanitizers the counts read zero and say
+      so. VM-instruction counting is not done: the profile said allocations and
+      string work first, and an instruction counter in the dispatch loop is not
+      free.
+
+      What it said immediately: the integer loop allocates 602 times in total,
+      which is why it is level with CPython, while a call allocated four times
+      and a list append three. The gap is not interpretation, it is what each
+      operation does on the heap.
+- [ ] Establish representative workloads in addition to microbenchmarks. The
+      seven that exist are all microbenchmarks; what they now have is a CPython
+      counterpart each (`benchmarks/python/`), so the target can be read off
+      more than one of them.
 - [ ] Replace the value representation. No longer blocked: `Value` holds a
       `Ref`, not a `shared_ptr`, and is down to 24 bytes.
+
+Measured against CPython on all seven workloads rather than on the integer loop
+alone, the VM was 1.34x slower at the median: ahead on text, level on the
+integer loop, behind on calls, dictionaries and typed lists, and 3.5x behind on
+method calls. The target had been read off the one workload that had been
+optimized.
 
 Acceptance: benchmark reports include reproducible baselines and explain each
 optimization using measured time and memory changes. Note that no interpreter

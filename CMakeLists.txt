@@ -26,6 +26,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/analysis/semantic_analysis.cpp
     src/analysis/semantic_type.cpp
     src/diagnostics/diagnostic.cpp
+    src/diagnostics/runtime_stats.cpp
     src/lexer/lexer.cpp
     src/lexer/token.cpp
     src/lexer/scanner.cpp
