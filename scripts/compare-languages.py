@@ -1,102 +1,125 @@
-"""Compare Lumière against a native baseline and another interpreter.
+"""Compare Lumière against another interpreter, and against compiled code.
 
-The project's target is Go-level performance, so the gap has to be measured
-against compiled code rather than against Lumière's own history. Go is not
-installed everywhere; C compiled with -O2 stands in for its lower bound on a
-scalar loop, and CPython stands in for a mature bytecode interpreter.
+Comparing a runtime against its own history shows that a change helped; it
+cannot show how far the target is. The target is to be ahead of a mature
+bytecode interpreter, so CPython runs the same workloads, program for program --
+they are in benchmarks/python/, next to the Lumière sources, so the claim can be
+checked rather than taken on trust.
+
+C compiled with -O2 anchors the scalar loop. It runs that one workload only: a C
+dictionary or Unicode string is a different program, and timing two different
+programs says nothing.
 
     python3 scripts/compare-languages.py build_release/lumiere
+    python3 scripts/compare-languages.py build_release/lumiere --workload integer_loop
 """
 
 import argparse
 import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from workloads import SCALAR_WORKLOAD, WORKLOADS
+
 LOOP_C = """#include <stdio.h>
 int main(void) {
     long long total = 0;
-    for (long long i = 0; i < 1000000; i++) total += i;
+    long long index = 0;
+    while (index < 1000000) { total = total + index; index = index + 1; }
     printf("%lld\\n", total);
     return 0;
 }
 """
 
-LOOP_PY = """total = 0
-i = 0
-while i < 1000000:
-    total += i
-    i += 1
-print(total)
-"""
 
-EXPECTED = "499999500000\n"
-
-
-def measure(command, runs, timeout):
+def measure(command, expected, runs, timeout):
+    """Median, min and max of `runs` timed runs, in milliseconds."""
     samples = []
-    for run in range(runs + 1):
+    for run in range(runs + 1):  # the first is an untimed warm-up
         start = time.perf_counter()
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(command, capture_output=True, text=True,
+                                encoding="utf-8", timeout=timeout)
         elapsed = time.perf_counter() - start
-        if result.returncode or result.stdout != EXPECTED:
-            raise RuntimeError(f"{command[0]}: exit={result.returncode}, stdout={result.stdout!r}")
+        if result.returncode or result.stdout != expected:
+            raise RuntimeError(f"{command[0]}: exit={result.returncode}, "
+                               f"stdout={result.stdout!r}")
         if run:
             samples.append(elapsed * 1000)
     return statistics.median(samples), min(samples), max(samples)
 
 
+def compiled_baseline(area, runs, timeout):
+    """The scalar loop in C, or None when there is no compiler here."""
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        return None
+    source, binary = area / "loop.c", area / "loop_c"
+    source.write_text(LOOP_C, encoding="utf-8")
+    if subprocess.run([compiler, "-O2", "-o", str(binary), str(source)]).returncode:
+        return None
+    return measure([str(binary)], WORKLOADS[SCALAR_WORKLOAD], runs, timeout)
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("binary", type=Path)
     parser.add_argument("--runs", type=int, default=7)
-    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument("--workload", action="append", choices=sorted(WORKLOADS))
+    parser.add_argument("--python", default="python3")
+    parser.add_argument("--skip-tree-walker", action="store_true",
+                        help="the tree walker is several times slower; skip it for a quick read")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent.parent
-    loop = root / "benchmarks" / "integer_loop.lum"
-    cases = [("Lumière VM", [str(args.binary.resolve()), "--vm", str(loop)]),
-             ("Lumière tree-walk", [str(args.binary.resolve()), "--tw", str(loop)])]
+    binary = str(args.binary.resolve())
+    names = args.workload or list(WORKLOADS)
 
-    with tempfile.TemporaryDirectory() as workspace:
-        area = Path(workspace)
-        if shutil.which("go"):
-            source = area / "loop.go"
-            source.write_text(LOOP_C.replace("#include <stdio.h>\n", "package main\n\nimport \"fmt\"\n")
-                              .replace("int main(void) {", "func main() {")
-                              .replace("long long total = 0;", "\ttotal := 0")
-                              .replace("for (long long i = 0; i < 1000000; i++) total += i;",
-                                       "\tfor i := 0; i < 1000000; i++ {\n\t\ttotal += i\n\t}")
-                              .replace("printf(\"%lld\\n\", total);", "\tfmt.Println(total)")
-                              .replace("return 0;\n}", "}"), encoding="utf-8")
-            binary = area / "loop_go"
-            if subprocess.run(["go", "build", "-o", str(binary), str(source)]).returncode == 0:
-                cases.insert(0, ("Go (go build)", [str(binary)]))
-        if shutil.which("cc") or shutil.which("gcc"):
-            source = area / "loop.c"
-            source.write_text(LOOP_C, encoding="utf-8")
-            binary = area / "loop_c"
-            compiler = shutil.which("cc") or shutil.which("gcc")
-            if subprocess.run([compiler, "-O2", "-o", str(binary), str(source)]).returncode == 0:
-                cases.insert(0, ("C (-O2)", [str(binary)]))
-        source = area / "loop.py"
-        source.write_text(LOOP_PY, encoding="utf-8")
-        cases.append(("CPython", ["python3", str(source)]))
+    print(f"{'atelier':<20}{'VM':>12}{'arbre':>12}{'CPython':>12}{'VM/CPython':>12}")
+    print("-" * 68)
+    ratios = []
+    for name in names:
+        expected = WORKLOADS[name]
+        runners = [("vm", [binary, "--vm", str(root / "benchmarks" / f"{name}.lum")]),
+                   ("tw", [binary, "--tw", str(root / "benchmarks" / f"{name}.lum")]),
+                   ("py", [args.python, str(root / "benchmarks" / "python" / f"{name}.py")])]
+        if args.skip_tree_walker:
+            runners.pop(1)
 
-        results = []
-        for label, command in cases:
+        medians = {}
+        for label, command in runners:
             try:
-                results.append((label,) + measure(command, args.runs, args.timeout))
-            except Exception as failure:  # a missing toolchain is not a benchmark failure
-                print(f"{label}: skipped ({failure})")
+                medians[label] = measure(command, expected, args.runs, args.timeout)[0]
+            except Exception as failure:  # a missing runtime is not a benchmark failure
+                print(f"{name} {label}: ignoré ({failure})")
 
-    baseline = next((median for label, median, *_ in results if label.startswith(("Go", "C "))), None)
-    for label, median, low, high in results:
-        ratio = f"{median / baseline:8.0f}x" if baseline else "       -"
-        print(f"{label:<20} median={median:9.2f} ms  min={low:8.2f}  max={high:8.2f}  {ratio}")
+        def cell(label):
+            return f"{medians[label]:>9.2f} ms" if label in medians else f"{'-':>12}"
+
+        ratio = ""
+        if "vm" in medians and "py" in medians:
+            value = medians["vm"] / medians["py"]
+            ratios.append(value)
+            ratio = f"{value:>11.2f}x"
+        print(f"{name:<20}{cell('vm')}{cell('tw')}{cell('py')}{ratio:>12}")
+
+    if ratios:
+        print("-" * 68)
+        print(f"{'médiane des rapports':<20}{'':>36}{statistics.median(ratios):>11.2f}x")
+        print("Sous 1.00x, la VM est plus rapide que CPython sur cet atelier.")
+
+    if SCALAR_WORKLOAD in names:
+        with tempfile.TemporaryDirectory() as workspace:
+            baseline = compiled_baseline(Path(workspace), args.runs, args.timeout)
+        if baseline is not None:
+            print(f"\nRéférence compilée, {SCALAR_WORKLOAD} en C -O2 : "
+                  f"{baseline[0]:.2f} ms (min {baseline[1]:.2f}, max {baseline[2]:.2f}).")
 
 
 if __name__ == "__main__":

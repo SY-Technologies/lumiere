@@ -6,7 +6,17 @@ Run from the repository root:
 python3 scripts/benchmark.py build_release/lumiere --runs 7
 python3 scripts/benchmark.py build_release/lumiere --backend tw --runs 7
 python3 scripts/benchmark.py /path/to/before/lumiere build_release/lumiere --runs 7
+
+python3 scripts/compare-languages.py build_release/lumiere --runs 7
+python3 scripts/compare-languages.py build_release/lumiere --skip-tree-walker
 ```
+
+`benchmark.py` compares two builds of Lumière; `compare-languages.py` compares
+Lumière against CPython on the same workloads, program for program, with the
+Python sources in `python/` so the comparison can be checked rather than taken
+on trust. Both read one workload table, `scripts/workloads.py`, which also holds
+the exact output each program must print: a run that did not do the work is
+rejected rather than timed.
 
 Every run validates its result. These are end-to-end process timings, not
 isolated VM dispatch timings. They include parsing and compilation. Use Release
