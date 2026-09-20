@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -236,6 +238,67 @@ namespace
  * destroyed; the tests destroy theirs on the stack and then end, so the sweep
  * has to happen here for the sanitizer's check at exit to see a settled heap.
  */
+// Two runtimes on two threads. The collector's state used to be process-global,
+// so this is the shape that corrupted it: one thread's collect() swaps the
+// candidate buffer into a local while the other's on_destroyed does its
+// swap-removal against the new buffer, leaving a freed object in the first
+// thread's copy. It crashed about one run in six of a test that happened to do
+// this; nothing here was testing it on purpose.
+TEST(CycleCollector, KeepsTwoThreadsOutOfEachOthersCollector)
+{
+    constexpr int thread_count = 4;
+    constexpr int cycles_per_thread = 500;
+
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+
+    for (int i = 0; i < thread_count; ++i)
+    {
+        threads.emplace_back([&failures] {
+            // Each thread's counts are its own, so its baseline is its own too.
+            const std::size_t before = settled_live_count();
+            for (int n = 0; n < cycles_per_thread; ++n)
+            {
+                auto first = make_ref<LumiereObject>();
+                auto second = make_ref<LumiereObject>();
+                first->fields["autre"] = Value::objet(second);
+                second->fields["autre"] = Value::objet(first);
+            }
+            collect_cycles();
+            if (RefCounted::live_count() != before)
+            {
+                ++failures;
+            }
+        });
+    }
+
+    for (std::thread &worker : threads)
+    {
+        worker.join();
+    }
+    EXPECT_EQ(failures.load(), 0);
+}
+
+// A thread reclaims what it queued as it ends, because no other thread can: the
+// buffer belongs to it. Without that, a worker's cycles would leak, and the
+// sanitizer build is what would notice.
+TEST(CycleCollector, ReclaimsAThreadsCyclesWhenTheThreadEnds)
+{
+    const std::size_t before = settled_live_count();
+    std::thread worker([] {
+        auto first = make_ref<LumiereObject>();
+        auto second = make_ref<LumiereObject>();
+        first->fields["autre"] = Value::objet(second);
+        second->fields["autre"] = Value::objet(first);
+        // Deliberately left uncollected: the thread's own teardown must do it.
+    });
+    worker.join();
+
+    // The worker's objects were never this thread's to count.
+    EXPECT_EQ(RefCounted::live_count(), before);
+}
+
 class CollectAtExit final : public ::testing::Environment
 {
 public:

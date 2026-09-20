@@ -27,8 +27,10 @@ namespace lumiere
 /**
  * @brief Holds the algorithm, and is the only thing allowed near the counts.
  *
- * Every member is static: there is one collector for the process, as there is
- * one heap.
+ * Every member is static, and every piece of state it touches is per-thread:
+ * a Lumière runtime belongs to one thread, so its collector does too. Sharing
+ * one candidate buffer between two interpreters is not merely unsynchronised,
+ * it is wrong -- one runtime's garbage is not the other's to collect.
  */
 class CycleCollector
 {
@@ -37,6 +39,15 @@ public:
     static void note_possible_root(const RefCounted *object) noexcept;
     static void on_destroyed(const RefCounted *object) noexcept;
     [[nodiscard]] static std::size_t candidate_count() noexcept;
+
+    /**
+     * @brief Tells leftover candidates they are no longer buffered.
+     *
+     * Called as a thread's collector goes away. An object that outlives the
+     * buffer must not still believe it is in one, or it would later try to
+     * remove itself from a buffer that no longer exists.
+     */
+    static void forget_candidates(const std::vector<const RefCounted *> &candidates) noexcept;
 
 private:
     static void mark_grey(const RefCounted *root);
@@ -56,8 +67,12 @@ namespace detail
 {
 // Read inline by collect_cycles_if_due so that the common answer — not yet —
 // costs two loads and a comparison rather than a call.
-extern std::size_t candidates_pending;
-extern std::size_t candidate_threshold;
+//
+// Per-thread, like the rest of the collector: a runtime belongs to a thread,
+// and two interpreters on two threads must not share a candidate buffer nor
+// the count of what is waiting in it.
+extern thread_local std::size_t candidates_pending;
+extern thread_local std::size_t candidate_threshold;
 } // namespace detail
 
 /**

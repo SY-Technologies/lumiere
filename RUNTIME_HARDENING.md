@@ -796,6 +796,23 @@ both engines, so a loop that builds cycles stays bounded rather than growing
 until the program ends: a 200,000-pair stress program peaks at 5.9 MB under the
 VM and 5.2 MB under the tree walker, against 129 MB and 135 MB before.
 
+The collector's state is **per-thread**, and that is a correctness property
+rather than a synchronisation detail: one runtime's garbage is not another's to
+collect. It used to be process-global, which meant two interpreters on two
+threads shared one candidate buffer — and shared it badly. `collect()` swaps the
+buffer into a local; the other thread's `on_destroyed` then does its swap-removal
+against the *new* buffer, so a freed object stays in the collector's copy and is
+read there. A test that drives an interpreter from a worker thread crashed about
+one run in six on it.
+
+The alternative was a lock, and it was built and measured rather than dismissed:
+one recursive mutex over the collector with an atomic for the inline due-check
+costs up to 39% on the VM (`text_iteration`) and 45% on the tree walker
+(`typed_list`), concentrated where allocation is heaviest. Per-thread state costs
+nothing measurable. The contract this settles is written where it binds — on
+`RefCounted` itself: a value belongs to the thread that created it, and two
+runtimes on two threads are independent.
+
 Two kinds of reference are invisible to tracing by construction, and both are
 handled by inverting the ownership rather than by trying to see into them:
 

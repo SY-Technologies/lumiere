@@ -17,6 +17,21 @@ namespace lumiere
  * copy of every value for a guarantee nothing needed. Releasing a shared_ptr
  * also calls out of line, which a compare-and-branch here does not.
  *
+ * ## What that means for an embedder
+ *
+ * **A value belongs to the thread that created it.** Copying a Ref adjusts a
+ * count with an ordinary increment, so two threads touching one value will lose
+ * a count and free something still in use. Nothing here detects that.
+ *
+ * **Two runtimes on two threads are fine, and independent.** The collector's
+ * state is per-thread, so one thread's garbage is never queued in another's
+ * buffer and a collection on one thread cannot see the other's objects. A
+ * thread reclaims its own cycles as it ends.
+ *
+ * Those two rules are the same rule: a runtime, and everything it makes, lives
+ * on one thread. That was assumed rather than enforced until a test that drove
+ * an interpreter from a worker thread began corrupting the shared collector.
+ *
  * A subclass must never be deleted through a raw pointer while references
  * remain; hand it to Ref and let the count decide.
  */

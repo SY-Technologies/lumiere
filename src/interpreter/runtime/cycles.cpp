@@ -1,10 +1,10 @@
 #include "lumiere/interpreter/runtime/cycles.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #ifndef NDEBUG
-#include <mutex>
 #include <unordered_set>
 #endif
 
@@ -13,29 +13,60 @@ namespace lumiere
 
 namespace detail
 {
-std::size_t candidates_pending = 0;
-std::size_t candidate_threshold = 4096;
+thread_local std::size_t candidates_pending = 0;
+thread_local std::size_t candidate_threshold = 4096;
 } // namespace detail
 
 namespace
 {
 
-std::size_t g_live = 0;
+/**
+ * @brief One thread's collector.
+ *
+ * A Lumière runtime belongs to a thread, and its collector belongs with it.
+ * This state used to be process-global, which made two interpreters on two
+ * threads share one candidate buffer, and that is not merely unsynchronised --
+ * it is wrong even with a lock, because one runtime's garbage is not the
+ * other's to collect. It also crashed: collect() swaps the buffer into a local,
+ * and the other thread's on_destroyed then does its swap-removal against the
+ * new buffer, so the freed object stays in the collector's copy and is read
+ * there. That was roughly one run in six of a test that drives an interpreter
+ * from a worker thread.
+ *
+ * Non-atomic reference counts already say a counted object may not be shared
+ * between threads. This says the same thing about the collector, and makes it
+ * true rather than merely intended.
+ */
+struct ThreadCollector
+{
+    std::vector<const RefCounted *> candidates;
+    bool collecting = false;
+    std::size_t live = 0;
 #ifndef NDEBUG
-// Debug builds keep the identity of every live object, not just the count.
-// A cycle the collector fails to reclaim is otherwise invisible: the count
-// says how many survived, this says what they are.
-//
-// The runtime itself never runs on two threads, but an embedder can drive it
-// from one thread while another is alive -- the test harness runs a server
-// program on a worker thread -- and an unsynchronised container would be
-// corrupted by that. The lock costs nothing outside debug builds, where this
-// registry does not exist at all.
-std::unordered_set<const RefCounted *> g_live_objects;
-std::mutex g_live_objects_mutex;
+    // Debug builds keep the identity of every live object, not just the count.
+    // A cycle the collector fails to reclaim is otherwise invisible: the count
+    // says how many survived, this says what they are.
+    std::unordered_set<const RefCounted *> live_objects;
 #endif
-std::vector<const RefCounted *> g_candidates;
-bool g_collecting = false;
+
+    ~ThreadCollector();
+};
+
+// The raw pointer is what the hot paths read, and it is null before the first
+// counted object on this thread and again after the thread's collector is torn
+// down. Both are states where there is simply no buffer to queue into.
+thread_local ThreadCollector *g_collector = nullptr;
+thread_local std::unique_ptr<ThreadCollector> g_collector_owner;
+
+ThreadCollector &collector()
+{
+    if (g_collector == nullptr)
+    {
+        g_collector_owner = std::make_unique<ThreadCollector>();
+        g_collector = g_collector_owner.get();
+    }
+    return *g_collector;
+}
 
 /** @brief Gathers the references an object holds. */
 class ChildCollector final : public RefVisitor
@@ -162,27 +193,30 @@ void CycleCollector::gather_white(const RefCounted *root, std::vector<const RefC
 
 RefCounted::RefCounted()
 {
-    ++g_live;
+    ThreadCollector &state = collector();
+    ++state.live;
 #ifndef NDEBUG
-    {
-        const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
-        g_live_objects.insert(this);
-    }
+    state.live_objects.insert(this);
 #endif
 }
 
 RefCounted::~RefCounted()
 {
-    --g_live;
-#ifndef NDEBUG
+    // Null only once this thread's collector has been torn down, which happens
+    // after everything it was tracking is already gone.
+    if (g_collector != nullptr)
     {
-        const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
-        g_live_objects.erase(this);
-    }
+        --g_collector->live;
+#ifndef NDEBUG
+        g_collector->live_objects.erase(this);
 #endif
+    }
 }
 
-std::size_t RefCounted::live_count() noexcept { return g_live; }
+std::size_t RefCounted::live_count() noexcept
+{
+    return g_collector != nullptr ? g_collector->live : 0;
+}
 
 void RefCounted::destroy() const noexcept
 {
@@ -196,16 +230,17 @@ void RefCounted::note_possible_root() const noexcept { CycleCollector::note_poss
 void CycleCollector::on_destroyed(const RefCounted *object) noexcept
 {
     object->m_colour = RefColour::Black;
-    if (object->m_buffered)
+    if (object->m_buffered && g_collector != nullptr)
     {
         // Leaving a dangling entry behind would be worse than the leak, so the
         // object takes itself out of the buffer first. The last entry moves into
         // the vacated slot and is told where it now lives.
+        std::vector<const RefCounted *> &candidates = g_collector->candidates;
         const std::size_t slot = object->m_buffer_slot;
-        g_candidates[slot] = g_candidates.back();
-        g_candidates[slot]->m_buffer_slot = slot;
-        g_candidates.pop_back();
-        detail::candidates_pending = g_candidates.size();
+        candidates[slot] = candidates.back();
+        candidates[slot]->m_buffer_slot = slot;
+        candidates.pop_back();
+        detail::candidates_pending = candidates.size();
         object->m_buffered = false;
     }
     delete object;
@@ -213,36 +248,67 @@ void CycleCollector::on_destroyed(const RefCounted *object) noexcept
 
 void CycleCollector::note_possible_root(const RefCounted *object) noexcept
 {
-    if (g_collecting || object->m_colour == RefColour::Purple)
+    // No collector means the thread is past its own teardown; not queueing then
+    // leaves a cycle uncollected, which is the safe direction.
+    if (g_collector == nullptr || g_collector->collecting || object->m_colour == RefColour::Purple)
     {
         return;
     }
     object->m_colour = RefColour::Purple;
     if (!object->m_buffered)
     {
+        std::vector<const RefCounted *> &candidates = g_collector->candidates;
         object->m_buffered = true;
-        object->m_buffer_slot = g_candidates.size();
-        g_candidates.push_back(object);
-        detail::candidates_pending = g_candidates.size();
+        object->m_buffer_slot = candidates.size();
+        candidates.push_back(object);
+        detail::candidates_pending = candidates.size();
     }
 }
 
-std::size_t CycleCollector::candidate_count() noexcept { return g_candidates.size(); }
+std::size_t CycleCollector::candidate_count() noexcept
+{
+    return g_collector != nullptr ? g_collector->candidates.size() : 0;
+}
+
+void CycleCollector::forget_candidates(const std::vector<const RefCounted *> &candidates) noexcept
+{
+    for (const RefCounted *object : candidates)
+    {
+        object->m_buffered = false;
+    }
+}
 
 std::size_t cycle_candidate_count() noexcept { return CycleCollector::candidate_count(); }
 
 void set_cycle_collection_threshold(const std::size_t candidates) noexcept { detail::candidate_threshold = candidates; }
 
+// A thread reclaims its own cycles as it finishes, because nobody else can: the
+// buffer they were queued in belongs to this thread and is about to go. Without
+// this, a worker thread's garbage would simply leak.
+ThreadCollector::~ThreadCollector()
+{
+    CycleCollector::collect();
+
+    // Whatever collection re-queued is not going to be looked at again, so the
+    // objects must not be left believing they are still in a buffer: one of
+    // them outliving this thread would otherwise try to remove itself from it.
+    CycleCollector::forget_candidates(candidates);
+    candidates.clear();
+    detail::candidates_pending = 0;
+    g_collector = nullptr;
+}
+
 std::size_t CycleCollector::collect()
 {
-    if (g_collecting)
+    if (g_collector == nullptr || g_collector->collecting)
     {
         return 0;
     }
-    g_collecting = true;
+    ThreadCollector &state = *g_collector;
+    state.collecting = true;
 
     std::vector<const RefCounted *> candidates;
-    candidates.swap(g_candidates);
+    candidates.swap(state.candidates);
     detail::candidates_pending = 0;
 
     // Anything that lost its last reference while buffered is plain garbage.
@@ -315,7 +381,7 @@ std::size_t CycleCollector::collect()
         delete object;
     }
 
-    g_collecting = false;
+    state.collecting = false;
     return reclaimed + freed_early.size();
 }
 
@@ -324,8 +390,11 @@ std::size_t collect_cycles() { return CycleCollector::collect(); }
 #ifndef NDEBUG
 std::vector<const RefCounted *> live_objects()
 {
-    const std::lock_guard<std::mutex> lock(g_live_objects_mutex);
-    return {g_live_objects.begin(), g_live_objects.end()};
+    if (g_collector == nullptr)
+    {
+        return {};
+    }
+    return {g_collector->live_objects.begin(), g_collector->live_objects.end()};
 }
 #endif
 

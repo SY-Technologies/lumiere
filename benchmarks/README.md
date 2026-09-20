@@ -301,6 +301,30 @@ They are now, on both engines, so leak detection is on: the complete suite of
 runs nine example and benchmark programs under both engines with every one of
 the eighteen runs clean.
 
+## Per-thread collector state versus a lock
+
+The collector's state had to stop being process-global. Two ways to do that, and
+the difference is not a matter of taste. All three binaries were built from the
+same commit in one session and run back to back, seven samples each.
+
+| Benchmark | before | per-thread | one lock |
+| --- | --- | --- | --- |
+| vm integer_loop | 77.6 ms | 76.4 ms | 79.3 ms |
+| vm text_iteration | 5.62 ms | 5.67 ms | **7.82 ms** |
+| vm function_calls | 31.9 ms | 32.6 ms | 33.4 ms |
+| vm typed_list | 53.7 ms | 53.2 ms | **63.4 ms** |
+| tw integer_loop | 394 ms | 393 ms | **473 ms** |
+| tw function_calls | 462 ms | 463 ms | 514 ms |
+| tw typed_list | 140 ms | 143 ms | **203 ms** |
+
+The lock costs up to 39% on the VM and 45% on the tree walker, concentrated in
+the allocation-heavy benchmarks — which is exactly where the release path runs
+hottest, and that path is what `collect_cycles_if_due` was built to keep at two
+loads and a compare. Per-thread state is free: on fifteen samples of the three
+benchmarks where it looked worst, it came out slightly ahead, which is what a
+thread-relative load beating a global one in a position-independent binary looks
+like.
+
 ## Cost of collecting cycles on both engines
 
 Measured by building the previous commit in the same session and running the
