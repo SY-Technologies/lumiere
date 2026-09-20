@@ -106,15 +106,33 @@ Status: in progress — 2026-09-18; corpus and fuzzing in place, two divergences
       thing before either starts. `lumiere check` on a module and `lumiere
       tester` are unaffected. Pinned by
       `tests/conformance/point_entree_obligatoire`.
-- [ ] Close the gap where the analyzer is weaker than the VM's compiler. The VM
-      compiles a whole module before running it and rejects things `lumiere
-      check` accepted, so it fails at a different moment and with different words
-      from the tree walker, which only fails on reaching them. Two instances are
-      recorded: assignment to an undeclared name
-      (`tests/conformance/divergence_globale_non_declaree`) and `parent` outside
-      a method (`tests/conformance/divergence_parent_hors_methode`). Both are
-      analyzer errors waiting to be written; the divergence is a symptom. Worth a
-      sweep of the VM compiler's own rejections for the rest of the family.
+- [x] Close the gap where the analyzer is weaker than the VM's compiler. Every
+      rule the VM's compiler enforces was run against `lumiere check`, and five
+      were missing rather than the two that had been recorded: `arrêter` and
+      `continuer` outside a loop (LUM-S0052, LUM-S0053), `parent` outside a
+      method (LUM-S0054), assignment to a name nothing declares (LUM-S0055), and
+      assignment to a `soit fixe` binding (LUM-S0056). All five are analyzer
+      rules now, so both engines are told the same thing before either starts.
+
+      The first two were not divergences but crashes: outside a loop the tree
+      walker threw a signal nothing caught, and the process aborted with
+      `terminate called after throwing an instance of 'lumiere::BreakSignal'`.
+      `scripts/fuzz` watches for exactly that shape of output and had never
+      produced one, because mutation rarely writes a bare `arrêter` at the top of
+      a function body. A systematic sweep of one engine's rules against the
+      other's found in minutes what random search had not.
+
+- [ ] **Resolve names.** The analyzer diagnoses no unknown identifier at all:
+      `afficher(nom_absent)` and `appel_absent()` are both accepted by `lumiere
+      check` and only fail at run time, differently under each engine. That is
+      the root of what remains of the family above — the assignment *target*
+      rule closed the narrow half, because a target is always a plain identifier
+      that must name a declared variable, but reads are the larger job: locals,
+      parameters, module-level declarations, imports, builtins, type names and
+      module aliases all have to be in scope before anything can be called
+      unknown. Getting it wrong rejects valid programs, which is worse than the
+      hole, so it wants its own pass with the corpus as the guard.
+
 - [ ] Settle which token a runtime error points at. The two engines pick
       different tokens for the same failure, so the caret can sit one character
       apart. A spot fix traded one divergence for another; this needs a stated

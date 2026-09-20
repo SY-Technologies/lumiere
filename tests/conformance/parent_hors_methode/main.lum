@@ -1,0 +1,9 @@
+// 'parent' n'a de sens que dans une méthode. La VM le refusait à la
+// compilation, le tree-walker s'en apercevait seulement en y arrivant.
+fonction libre() {
+    parent.chose()
+}
+
+fonction principal() {
+    libre()
+}

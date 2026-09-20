@@ -1,5 +1,0 @@
-'lumiere check' accepte ce programme. C'est le vrai défaut : une affectation à un
-nom non déclaré devrait être une erreur d'analyse, refusée avant qu'aucun moteur
-ne démarre. Les deux divergences visibles — le moment du rapport et les mots
-employés — disparaissent une fois l'analyseur corrigé.
-Voir T4 dans IMPROVEMENT_TASKS.md.

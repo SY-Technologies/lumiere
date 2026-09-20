@@ -715,7 +715,11 @@ TEST(CliIntegration, RejectsVmAssignmentToFixedLocal)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("variable fixe 'valeur'"), std::string::npos);
+    // Caught by the analyzer now, so both engines are told the same thing before
+    // either of them starts, and the message names the binding.
+    EXPECT_NE(result.stderr_text.find("LUM-S0056"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("'valeur' est fixe et ne peut pas être réaffecté"),
+              std::string::npos);
 }
 
 TEST(CliIntegration, EnforcesVmExplicitAndImplicitReturnTypes)

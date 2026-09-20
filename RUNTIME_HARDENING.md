@@ -881,12 +881,30 @@ reports it when a file is about to be run and both engines are told the same
 thing before either starts. The corpus case that recorded the divergence failed
 the moment the engines agreed, which is what that mechanism is for.
 
-What remains recorded: which token a runtime error's caret points at, and a
-family where the analyzer is weaker than the VM's compiler — the VM compiles a
-whole module up front and rejects things `lumiere check` accepted, so it reports
-them at a different moment and in different words from the tree walker. Two
-instances are on file. In both, the divergence is a symptom of an analyzer rule
-that has not been written yet.
+The family where the analyzer was weaker than the VM's compiler is closed, and
+closing it was worth more than the two recorded instances suggested. Running
+every rule the VM's compiler enforces against `lumiere check` turned up five
+missing rules, not two: `arrêter` and `continuer` outside a loop, `parent`
+outside a method, assignment to a name nothing declares, and assignment to a
+`soit fixe` binding. All five are analyzer rules now (LUM-S0052 to LUM-S0056),
+so both engines are told the same thing before either of them starts.
+
+Two of the five were not divergences at all. Outside a loop, `arrêter` and
+`continuer` reached the tree walker, which threw a signal nothing caught: the
+process aborted with `terminate called after throwing an instance of
+'lumiere::BreakSignal'` — a C++ type name, in English, from a two-line program.
+`scripts/fuzz` watches for exactly that shape and had never produced one, because
+mutation rarely writes a bare `arrêter` at the top of a function body. Taking one
+engine's rules and asking the other about each of them found in minutes what
+random search had not, which is worth remembering: a fuzzer explores, a sweep
+enumerates, and they fail differently.
+
+What remains recorded is which token a runtime error's caret points at, and one
+larger hole the sweep exposed rather than closed: the analyzer diagnoses no
+unknown identifier at all. `afficher(nom_absent)` is accepted and fails only at
+run time. The assignment side is now checked, because an assignment target is
+always a plain identifier that must name a declared variable; reads need real
+name resolution, where rejecting a valid program is worse than the hole.
 
 ## Next engineering priorities
 

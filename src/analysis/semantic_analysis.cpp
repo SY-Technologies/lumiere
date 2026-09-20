@@ -1360,6 +1360,18 @@ private:
                 "LUM-S0036",
                 "Résultat ne peut pas être une alternative du type de retour; placez l'union dans son type de succès ou d'erreur");
         }
+        // A method is a function declared directly in the class being resolved.
+        // Nothing else counts: a closure written inside a method is not one, and
+        // 'parent' does not work there at run time either.
+        const bool is_method =
+            !m_class_stack.empty() &&
+            std::any_of(m_class_stack.back()->members.begin(),
+                        m_class_stack.back()->members.end(),
+                        [&function](const StmtPtr &member) { return member.get() == &function; });
+        const std::size_t enclosing_loops = m_loop_depth;
+        const std::size_t enclosing_methods = m_method_depth;
+        m_loop_depth = 0;
+        m_method_depth = is_method ? 1 : 0;
         m_callable_stack.push_back(CallableOwner{&function, nullptr});
         push_scope();
         for (std::size_t i = 0; i < function.params.size(); ++i)
@@ -1404,6 +1416,8 @@ private:
         }
         pop_scope();
         m_callable_stack.pop_back();
+        m_loop_depth = enclosing_loops;
+        m_method_depth = enclosing_methods;
     }
 
     void resolve_function(const FunctionExpr &function)
@@ -1419,6 +1433,10 @@ private:
                 "Résultat ne peut pas être une alternative du type de retour; placez l'union dans son type de succès ou d'erreur");
         }
 
+        const std::size_t enclosing_loops = m_loop_depth;
+        const std::size_t enclosing_methods = m_method_depth;
+        m_loop_depth = 0;
+        m_method_depth = 0;
         m_callable_stack.push_back(CallableOwner{nullptr, &function});
         push_scope();
         for (std::size_t i = 0; i < function.params.size(); ++i)
@@ -1467,6 +1485,8 @@ private:
         }
         pop_scope();
         m_callable_stack.pop_back();
+        m_loop_depth = enclosing_loops;
+        m_method_depth = enclosing_methods;
     }
 
     void collect_module_callable_aliases(const StmtList &statements)
@@ -2797,6 +2817,44 @@ private:
         m_analysis.model.m_expression_types[&match] = result_type;
     }
 
+    /**
+     * @brief Checks that a name being assigned to is one that can be assigned.
+     *
+     * Narrower than resolving every name that is read: an assignment target is
+     * always a plain identifier, and it must name a declared, non-fixed
+     * variable. Reading an undeclared name is still not diagnosed anywhere,
+     * which is a larger hole and its own piece of work.
+     */
+    void diagnose_assignment_target(const IdentifierExpr &target)
+    {
+        if (const LocalBinding *binding = find_local_value(target.name.lexeme))
+        {
+            if (const auto *declaration =
+                    dynamic_cast<const VarDeclStmt *>(binding->declaration);
+                declaration != nullptr && declaration->is_fixe)
+            {
+                diagnose(target.name, "LUM-S0056",
+                         "'" + target.name.lexeme + "' est fixe et ne peut pas être réaffecté");
+            }
+            return;
+        }
+
+        if (const SemanticSymbol *symbol = m_analysis.model.find_value(target.name.lexeme))
+        {
+            if (const auto *declaration =
+                    dynamic_cast<const VarDeclStmt *>(symbol->declaration);
+                declaration != nullptr && declaration->is_fixe)
+            {
+                diagnose(target.name, "LUM-S0056",
+                         "'" + target.name.lexeme + "' est fixe et ne peut pas être réaffecté");
+            }
+            return;
+        }
+
+        diagnose(target.name, "LUM-S0055",
+                 "affectation à '" + target.name.lexeme + "', qui n'est déclaré nulle part");
+    }
+
     void resolve_expression(
         const Expr &expression,
         const bool consumes_result_binding = true)
@@ -2805,6 +2863,13 @@ private:
         {
             resolve_match(*match);
             return;
+        }
+        if (const auto *parent_use = dynamic_cast<const IdentifierExpr *>(&expression);
+            parent_use != nullptr && parent_use->name.type == TokenType::PARENT &&
+            m_method_depth == 0)
+        {
+            diagnose(parent_use->name, "LUM-S0054",
+                     "'parent' doit être placé dans une méthode");
         }
         if (const auto *identifier =
                 dynamic_cast<const IdentifierExpr *>(&expression);
@@ -2819,6 +2884,7 @@ private:
             if (const auto *identifier =
                     dynamic_cast<const IdentifierExpr *>(binary->left.get()))
             {
+                diagnose_assignment_target(*identifier);
                 if (LocalBinding *binding =
                         find_local_value_mutable(identifier->name.lexeme))
                 {
@@ -3313,6 +3379,7 @@ private:
             resolve_expression(*loop->iterable);
             const ObligationState baseline = obligation_state();
             m_loop_obligation_baselines.push_back(baseline);
+            ++m_loop_depth;
             push_scope();
             declare_local(loop->variable, SemanticSymbolKind::VARIABLE);
             if (const auto *body = dynamic_cast<const BlockStmt *>(loop->body.get()))
@@ -3324,6 +3391,7 @@ private:
                 resolve_statement(*loop->body);
             }
             pop_scope();
+            --m_loop_depth;
             m_loop_obligation_baselines.pop_back();
             const ObligationState body_state = obligation_state();
             merge_obligation_states(baseline, {baseline, body_state});
@@ -3336,7 +3404,9 @@ private:
                 condition_site(*loop->condition));
             const ObligationState baseline = obligation_state();
             m_loop_obligation_baselines.push_back(baseline);
+            ++m_loop_depth;
             resolve_statement(*loop->body);
+            --m_loop_depth;
             m_loop_obligation_baselines.pop_back();
             const ObligationState body_state = obligation_state();
             merge_obligation_states(baseline, {baseline, body_state});
@@ -3344,8 +3414,27 @@ private:
         else if (const auto *continuation =
                      dynamic_cast<const ContinueStmt *>(&statement))
         {
+            // Outside a loop these used to reach the runtime, where the tree
+            // walker threw a signal nothing caught: the process aborted with
+            // "terminate called after throwing an instance of
+            // 'lumiere::ContinueSignal'". A C++ exception name is not a
+            // diagnostic, and an abort is not a way to reject a program.
+            if (m_loop_depth == 0)
+            {
+                diagnose(continuation->keyword, "LUM-S0053",
+                         "'continuer' doit être placé dans une boucle");
+            }
             diagnose_new_loop_obligations(
                 continuation->keyword);
+        }
+        else if (const auto *interruption =
+                     dynamic_cast<const BreakStmt *>(&statement))
+        {
+            if (m_loop_depth == 0)
+            {
+                diagnose(interruption->keyword, "LUM-S0052",
+                         "'arrêter' doit être placé dans une boucle");
+            }
         }
         else if (const auto *return_statement = dynamic_cast<const ReturnStmt *>(&statement))
         {
@@ -3796,6 +3885,10 @@ private:
     std::vector<std::unordered_map<std::string, SemanticTypeRef>> m_type_scopes;
     std::vector<std::unordered_map<std::string, CallableSignature>> m_signature_scopes;
     std::vector<CallableOwner> m_callable_stack;
+    // How many loops and how many methods enclose the statement being resolved.
+    // Both reset across a function boundary; see enter_callable_body.
+    std::size_t m_loop_depth = 0;
+    std::size_t m_method_depth = 0;
     std::vector<const ClassDeclStmt *> m_class_stack;
     std::unordered_set<const ClassDeclStmt *> m_constructor_stack;
     std::unordered_map<std::string, CallableSignature>

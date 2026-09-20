@@ -1,5 +1,0 @@
-'lumiere check' accepte ce programme. C'est le défaut : 'parent' hors d'une
-méthode n'a pas de sens et devrait être refusé à l'analyse, avant qu'aucun
-moteur ne démarre. Même famille que divergence_globale_non_declaree — voir T4
-dans IMPROVEMENT_TASKS.md, « l'analyseur est plus faible que le compilateur de
-la VM ».
