@@ -4,6 +4,7 @@
 #include "lumiere/interpreter/runtime/ref.hpp"
 #include "lumiere/parser/type_expr.hpp"
 #include <cassert>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -369,6 +370,28 @@ struct Value
 
     Ref<const ResultData> as_resultat() const;
 
+    /**
+     * @brief The same objects, without taking a reference on them.
+     *
+     * `as_objet()` builds a Ref: an increment now, and later a decrement plus a
+     * cycle-candidate check the collector has to do because a surviving
+     * decrement is how an object becomes a cycle root. Reading a field or
+     * asking a class a question needs none of that -- this Value owns the
+     * object for the whole expression.
+     *
+     * The interpreter does this often enough to matter: dispatching one method
+     * call asked its receiver for the object five times and the class chain
+     * several more, and the reference traffic that produced was a quarter of
+     * the time on a method-call loop.
+     *
+     * The pointer is valid only while this Value holds the object. Anything
+     * that has to outlive the Value takes a Ref.
+     */
+    LumiereObject *as_objet_ptr() const;
+    LumiereFunction *as_fonction_ptr() const;
+    LumiereClass *as_classe_ptr() const;
+    const ResultData *as_resultat_ptr() const;
+
     /** @brief Address of the shared object, for identity comparison and hashing. */
     const void *ref_identity() const { return m_ref.get(); }
 
@@ -460,8 +483,27 @@ struct ResultData : RefCounted
 //  LumiereFunction
 //  A callable, either a user-defined function (eg obj.do_something())
 //  or a bound method carrying its receiver (eg ici.do_something())
+/**
+ * @brief Which engine made a runtime body.
+ *
+ * A body is reached through a base pointer and the engine that made it has to
+ * get back to its own type. dynamic_cast does that by walking the type
+ * hierarchy, which on the VM's dispatch path happened four times per method
+ * call and was measurable. Each engine defines exactly one body of each kind,
+ * so this tag identifies the concrete type, and the cast becomes a comparison.
+ *
+ * The accessors that use it assert the dynamic_cast agrees, in the Debug and
+ * sanitizer builds that run the whole suite.
+ */
+enum class BodyOrigin : std::uint8_t
+{
+    TreeWalker,
+    Vm,
+};
+
 struct RuntimeFunctionBody : RefCounted
 {
+    BodyOrigin origin = BodyOrigin::TreeWalker;
     ~RuntimeFunctionBody() override = default;
 };
 
@@ -508,11 +550,13 @@ struct LumiereFunction : RefCounted
 
 struct RuntimeClassBody : RefCounted
 {
+    BodyOrigin origin = BodyOrigin::TreeWalker;
     ~RuntimeClassBody() override = default;
 };
 
 struct RuntimeInterfaceBody : RefCounted
 {
+    BodyOrigin origin = BodyOrigin::TreeWalker;
     ~RuntimeInterfaceBody() override = default;
 };
 
@@ -642,6 +686,30 @@ inline Ref<const ResultData> Value::as_resultat() const
 {
     assert(is_resultat());
     return Ref<const ResultData>(static_cast<const ResultData *>(m_ref.get()));
+}
+
+inline LumiereObject *Value::as_objet_ptr() const
+{
+    assert(is_objet());
+    return static_cast<LumiereObject *>(m_ref.get());
+}
+
+inline LumiereFunction *Value::as_fonction_ptr() const
+{
+    assert(is_fonction());
+    return static_cast<LumiereFunction *>(m_ref.get());
+}
+
+inline LumiereClass *Value::as_classe_ptr() const
+{
+    assert(is_classe());
+    return static_cast<LumiereClass *>(m_ref.get());
+}
+
+inline const ResultData *Value::as_resultat_ptr() const
+{
+    assert(is_resultat());
+    return static_cast<const ResultData *>(m_ref.get());
 }
 
 /**

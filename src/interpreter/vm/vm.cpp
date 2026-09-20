@@ -1590,9 +1590,9 @@ Value VmRuntimeServices::call(Value callee, const NativeArgs &args)
     {
         throw VmRuntimeError("VM: " + messages::valeur_non_appelable(callee.type_name()));
     }
-    if (callee.as_fonction()->is_native())
+    if (callee.as_fonction_ptr()->is_native())
     {
-        return callee.as_fonction()->native_handler(*this, args);
+        return callee.as_fonction_ptr()->native_handler(*this, args);
     }
     if (!m_callback_executor)
     {
@@ -1664,6 +1664,8 @@ struct VmClosureBody final : RuntimeFunctionBody
     std::size_t function_index = 0;
     std::vector<CellRef> captures;
 
+    VmClosureBody() { origin = BodyOrigin::Vm; }
+
     void trace_references(RefVisitor &visitor) const override
     {
         for (const CellRef &cell : captures)
@@ -1682,6 +1684,8 @@ struct VmClassBody final : RuntimeClassBody
 {
     std::size_t descriptor_index = 0;
     std::unordered_map<std::size_t, std::vector<CellRef>> method_captures;
+
+    VmClassBody() { origin = BodyOrigin::Vm; }
 
     void trace_references(RefVisitor &visitor) const override
     {
@@ -1704,18 +1708,49 @@ struct VmInterfaceBody final : RuntimeInterfaceBody
 {
     std::size_t descriptor_index = 0;
 
+    VmInterfaceBody() { origin = BodyOrigin::Vm; }
+
     void trace_references(RefVisitor &) const override {}
     void clear_references() override {}
 };
 
+// A body the VM made, or nullptr. The tag says which engine made it, and each
+// engine defines exactly one body of each kind, so the tag identifies the type.
+// The assert is what keeps that claim honest: it runs in the Debug and
+// sanitizer builds, where the whole suite runs.
+const VmClassBody *vm_class_body(const RuntimeClassBody *body)
+{
+    if (body == nullptr || body->origin != BodyOrigin::Vm)
+    {
+        return nullptr;
+    }
+    assert(dynamic_cast<const VmClassBody *>(body) != nullptr);
+    return static_cast<const VmClassBody *>(body);
+}
+
+const VmClosureBody *vm_closure_body(const RuntimeFunctionBody *body)
+{
+    if (body == nullptr || body->origin != BodyOrigin::Vm)
+    {
+        return nullptr;
+    }
+    assert(dynamic_cast<const VmClosureBody *>(body) != nullptr);
+    return static_cast<const VmClosureBody *>(body);
+}
+
+// These walk a class and its ancestors to answer a question. They take a raw
+// pointer and step with `klass->parent.get()`, because taking a Ref for each
+// link would be an increment and a decrement per ancestor per lookup, and a
+// lookup happens on every member access. The chain is owned by the value that
+// asked, and cannot go away while the answer is being computed.
 const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
-                                          const Ref<LumiereClass> &klass)
+                                          const LumiereClass *klass)
 {
     if (klass == nullptr)
     {
         return nullptr;
     }
-    const auto body = dynamic_ref_cast<VmClassBody>(klass->body);
+    const VmClassBody *body = vm_class_body(klass->body.get());
     if (body == nullptr || body->descriptor_index >= module.classes.size())
     {
         return nullptr;
@@ -1724,7 +1759,7 @@ const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
 }
 
 const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
-                                         Ref<LumiereClass> klass,
+                                         const LumiereClass *klass,
                                          const std::string &name)
 {
     while (klass != nullptr)
@@ -1741,13 +1776,13 @@ const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
                 return &method;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
     return nullptr;
 }
 
 const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
-                                       Ref<LumiereClass> klass,
+                                       const LumiereClass *klass,
                                        const std::string &name)
 {
     while (klass != nullptr)
@@ -1764,28 +1799,37 @@ const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
                 return &field;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
     return nullptr;
 }
 
-std::vector<CellRef> find_vm_method_captures(Ref<LumiereClass> klass,
-                                                            const std::size_t function_index)
+// Returns the captures in place rather than a copy: most methods capture
+// nothing, and the caller copies only when it is building a frame.
+const std::vector<CellRef> *find_vm_method_captures(const LumiereClass *klass,
+                                                    const std::size_t function_index)
 {
     while (klass != nullptr)
     {
-        const auto body = dynamic_ref_cast<VmClassBody>(klass->body);
+        const VmClassBody *body = vm_class_body(klass->body.get());
         if (body != nullptr)
         {
             const auto captures = body->method_captures.find(function_index);
             if (captures != body->method_captures.end())
             {
-                return captures->second;
+                return &captures->second;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
-    return {};
+    return nullptr;
+}
+
+std::vector<CellRef> vm_method_captures(const LumiereClass *klass,
+                                        const std::size_t function_index)
+{
+    const std::vector<CellRef> *captures = find_vm_method_captures(klass, function_index);
+    return captures != nullptr ? *captures : std::vector<CellRef>{};
 }
 
 void collect_vm_fields(const ModuleBytecode &module,
@@ -1797,7 +1841,7 @@ void collect_vm_fields(const ModuleBytecode &module,
         return;
     }
     collect_vm_fields(module, klass->parent, fields);
-    const VmClassDescriptor *descriptor = class_descriptor(module, klass);
+    const VmClassDescriptor *descriptor = class_descriptor(module, klass.get());
     if (descriptor == nullptr)
     {
         return;
@@ -2353,7 +2397,7 @@ Value run_frames(VmExecutionState &execution,
             }
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
-                const VmMethodDescriptor *parent_method = find_vm_method(module, klass->parent, method.name);
+                const VmMethodDescriptor *parent_method = find_vm_method(module, klass->parent.get(), method.name);
                 if (method.is_override && parent_method == nullptr)
                 {
                     throw VmRuntimeError("VM: remplace utilise sans méthode parente correspondante: " + method.name);
@@ -2383,7 +2427,7 @@ Value run_frames(VmExecutionState &execution,
                 for (const VmInterfaceMethodDescriptor &required :
                      module.interfaces[interface_body->descriptor_index].methods)
                 {
-                    const VmMethodDescriptor *implemented = find_vm_method(module, klass, required.name);
+                    const VmMethodDescriptor *implemented = find_vm_method(module, klass.get(), required.name);
                     if (implemented == nullptr)
                     {
                         throw VmRuntimeError("VM: la classe " + descriptor.name +
@@ -2550,10 +2594,10 @@ Value run_frames(VmExecutionState &execution,
                 stack.push_back(instantiate_vm_class(module, callee.as_classe(), call_args));
                 break;
             }
-            const auto function = callee.is_fonction() ? callee.as_fonction() : nullptr;
+            const LumiereFunction *function = callee.is_fonction() ? callee.as_fonction_ptr() : nullptr;
             if (function != nullptr && !function->is_native())
             {
-                auto body = dynamic_ref_cast<VmClosureBody>(function->body);
+                const VmClosureBody *body = vm_closure_body(function->body.get());
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction non compatible avec le backend VM");
@@ -2636,7 +2680,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (global_defined[global_index] && globals[global_index].is_fonction())
             {
-                const auto function = globals[global_index].as_fonction();
+                const LumiereFunction *function = globals[global_index].as_fonction_ptr();
                 if (function->is_native())
                 {
                     RuntimeSite site;
@@ -2653,7 +2697,7 @@ Value run_frames(VmExecutionState &execution,
                         NativeArgs{nullptr, &call_args, std::move(site)}));
                     break;
                 }
-                const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
+                const VmClosureBody *body = vm_closure_body(function->body.get());
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction globale incompatible");
@@ -2750,8 +2794,8 @@ Value run_frames(VmExecutionState &execution,
 
             if (receiver.is_objet())
             {
-                const auto field = receiver.as_objet()->fields.find(module.members[member_index]);
-                if (field != receiver.as_objet()->fields.end())
+                const auto field = receiver.as_objet_ptr()->fields.find(module.members[member_index]);
+                if (field != receiver.as_objet_ptr()->fields.end())
                 {
                     if (field->second.is_classe())
                     {
@@ -2762,7 +2806,7 @@ Value run_frames(VmExecutionState &execution,
                     {
                         throw VmRuntimeError("VM: le membre '" + module.members[member_index] + "' n'est pas appelable");
                     }
-                    const auto function = field->second.as_fonction();
+                    const LumiereFunction *function = field->second.as_fonction_ptr();
                     if (function->is_native())
                     {
                         RuntimeSite site;
@@ -2770,7 +2814,7 @@ Value run_frames(VmExecutionState &execution,
                                                             NativeArgs{nullptr, &args, site}));
                         break;
                     }
-                    const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
+                    const VmClosureBody *body = vm_closure_body(function->body.get());
                     if (body == nullptr)
                     {
                         throw VmRuntimeError("VM: corps de membre incompatible");
@@ -2785,10 +2829,11 @@ Value run_frames(VmExecutionState &execution,
                                                      dispatch_location()));
                     break;
                 }
+                const LumiereObject *object = receiver.as_objet_ptr();
                 const VmMethodDescriptor *method = find_vm_method(module,
                                                                   parent_dispatch
-                                                                      ? receiver.as_objet()->klass->parent
-                                                                      : receiver.as_objet()->klass,
+                                                                      ? object->klass->parent.get()
+                                                                      : object->klass.get(),
                                                                   module.members[member_index]);
                 if (method == nullptr)
                 {
@@ -2797,7 +2842,7 @@ Value run_frames(VmExecutionState &execution,
                 const bool private_access = !frame.locals.empty() &&
                                             frame.function->name.find('.') != std::string::npos &&
                                             frame.locals[0].get().is_objet() &&
-                                            frame.locals[0].get().as_objet() == receiver.as_objet();
+                                            frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
                 if (method->is_private && !private_access)
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
@@ -2809,8 +2854,8 @@ Value run_frames(VmExecutionState &execution,
                                                  method->function_index,
                                                  method_args,
                                                  stack.size(),
-                                                 find_vm_method_captures(receiver.as_objet()->klass,
-                                                                         method->function_index),
+                                                 vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                                    method->function_index),
                                                  dispatch_location()));
                 break;
             }
@@ -2849,16 +2894,16 @@ Value run_frames(VmExecutionState &execution,
             const Value receiver = pop_value(stack);
             if (receiver.is_objet())
             {
-                const auto field = receiver.as_objet()->fields.find(module.members[member_index]);
-                if (field != receiver.as_objet()->fields.end())
+                const auto field = receiver.as_objet_ptr()->fields.find(module.members[member_index]);
+                if (field != receiver.as_objet_ptr()->fields.end())
                 {
                     const VmFieldDescriptor *descriptor = find_vm_field(module,
-                                                                        receiver.as_objet()->klass,
+                                                                        receiver.as_objet_ptr()->klass.get(),
                                                                         module.members[member_index]);
                     const bool private_access = !frame.locals.empty() &&
                                                 frame.function->name.find('.') != std::string::npos &&
                                                 frame.locals[0].get().is_objet() &&
-                                                frame.locals[0].get().as_objet() == receiver.as_objet();
+                                                frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
                     if (descriptor != nullptr && descriptor->is_private && !private_access)
                     {
                         throw VmRuntimeError("VM: accès interdit au champ privé '" + descriptor->name + "'");
@@ -2866,10 +2911,11 @@ Value run_frames(VmExecutionState &execution,
                     stack.push_back(field->second);
                     break;
                 }
+                const LumiereObject *object = receiver.as_objet_ptr();
                 const VmMethodDescriptor *method = find_vm_method(module,
                                                                   parent_dispatch
-                                                                      ? receiver.as_objet()->klass->parent
-                                                                      : receiver.as_objet()->klass,
+                                                                      ? object->klass->parent.get()
+                                                                      : object->klass.get(),
                                                                   module.members[member_index]);
                 if (method == nullptr)
                 {
@@ -2878,15 +2924,15 @@ Value run_frames(VmExecutionState &execution,
                 const bool private_access = !frame.locals.empty() &&
                                             frame.function->name.find('.') != std::string::npos &&
                                             frame.locals[0].get().is_objet() &&
-                                            frame.locals[0].get().as_objet() == receiver.as_objet();
+                                            frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
                 if (method->is_private && !private_access)
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
                 auto body = make_ref<VmClosureBody>();
                 body->function_index = method->function_index;
-                body->captures = find_vm_method_captures(receiver.as_objet()->klass,
-                                                         method->function_index);
+                body->captures = vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                    method->function_index);
                 auto function = make_ref<LumiereFunction>();
                 function->name = method->name;
                 function->body = std::move(body);
@@ -2916,7 +2962,7 @@ Value run_frames(VmExecutionState &execution,
                 throw VmRuntimeError("VM: affectation membre sur une valeur non objet");
             }
             const VmFieldDescriptor *field = find_vm_field(module,
-                                                           receiver.as_objet()->klass,
+                                                           receiver.as_objet_ptr()->klass.get(),
                                                            module.members[member_index]);
             if (field == nullptr)
             {
@@ -2925,7 +2971,7 @@ Value run_frames(VmExecutionState &execution,
             const bool private_access = !frame.locals.empty() &&
                                         frame.function->name.find('.') != std::string::npos &&
                                         frame.locals[0].get().is_objet() &&
-                                        frame.locals[0].get().as_objet() == receiver.as_objet();
+                                        frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
             if (field->is_private && !private_access)
             {
                 throw VmRuntimeError("VM: affectation interdite au champ privé '" + field->name + "'");
@@ -2938,7 +2984,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
             }
-            receiver.as_objet()->fields[field->name] = value;
+            receiver.as_objet_ptr()->fields[field->name] = value;
             stack.push_back(value);
             break;
         }

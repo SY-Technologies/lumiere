@@ -1055,6 +1055,56 @@ imports it, and so does the runtime, but the runtime also searches
 analyzer will reject an import the runtime could have satisfied. One resolver
 shared by both is the real answer.
 
+### Where the time actually went — 2026-09-20
+
+The target — ahead of a mature bytecode interpreter — was being read off one
+workload. Measured against CPython on all seven, program for program, the VM was
+1.34x slower at the median: ahead on text, level on the integer loop, and behind
+on calls, dictionaries and typed lists, worst of all on method calls at 3.5x.
+The integer loop was the one that had been optimized.
+
+`lumiere --stats` said why before any profiler did. The integer loop allocates
+602 times in a million iterations, which is exactly why it keeps up. A call
+allocated four times and a list append three. The gap is not interpretation; it
+is what each operation does on the heap and in strings.
+
+A profile then named three things, and all three were work nobody had asked for.
+
+**A type was re-read at every check.** A type is text in the source and text in
+the bytecode, so every assertion scanned for a union bar, looked for a generic
+bracket, and compared the head against seven builtin names. `valeur: Entier`
+paid that twice per call, once for the parameter and once for the return.
+Classifying each of a module's types once turns a builtin scalar into one tag
+comparison; anything with a bracket, a bar, or an unfamiliar name still goes
+through the full rules. Function calls fell 20%.
+
+**Reading an object took a reference to it.** `as_objet()` returns a `Ref`,
+which is an increment now and, later, a decrement plus a cycle-candidate check —
+the collector has to do that check because a surviving decrement is how an
+object becomes a cycle root. Dispatching one method call asked its receiver for
+the object five times and walked the class chain taking a reference per
+ancestor. That was 68 million candidate notifications for two million calls, a
+quarter of the run. Borrowing accessors (`as_objet_ptr` and friends) and raw
+pointers through the class walk took it to 12 million.
+
+**A cast asked the type system.** A runtime body is reached through a base
+pointer and `dynamic_cast` walks the hierarchy to get back; that happened eight
+million times. Each engine defines exactly one body of each kind, so a one-byte
+tag identifies the concrete type and the cast becomes a comparison — with an
+`assert` that the `dynamic_cast` agrees, live in the Debug and sanitizer builds
+where the whole suite runs.
+
+Together: method calls 1.09s to 0.78s (-28%), function calls -13%, typed lists
+-7%. The integer loop is about 1.5% slower, which is the dispatch loop's code
+layout shifting under a bigger switch rather than any work added to it — it was
+measured with and without the allocation counter to be sure the counter was not
+the cause. Against CPython the median ratio went from 1.34x to 1.14x, and method
+calls from 3.5x to 2.5x.
+
+What is left is visible in the same profile: a field access still walks the
+class chain comparing strings to find out whether the field is private, and a
+field still lives in a hash table keyed by its name.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
