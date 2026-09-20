@@ -68,7 +68,7 @@ other benchmark workloads.
 
 ## T4 — Build one cross-engine conformance and fuzzing corpus
 
-Status: in progress — 2026-09-20; corpus and fuzzing in place, two divergences open
+Status: in progress — 2026-09-20; corpus, fuzzing and bytecode fuzzing in place; no divergence recorded, one open question
 
 - [x] Run language and standard-library fixtures under both engines.
       `scripts/conformance` runs every case through the real CLI under `--tw`
@@ -197,9 +197,19 @@ the last iteration's value; and five families of runtime diagnostic were worded
 differently by the two engines, including every binary arithmetic and comparison
 operator. Three of the five were found by the fuzzer rather than by hand.
 
+Since then, and all found by the three ways of asking rather than by reading
+code: the VM bound named arguments by position, so `f(b: 1, a: 10)` computed
+`1 - 10` whenever the callee was not known at compile time; the analyzer
+diagnosed no unknown name at all; every caret in the project pointed one token
+past its subject, in both engines identically, which is why no cross-engine
+check could see it; and an import naming a module that does not exist was
+accepted by analysis with empty exports and left for whichever engine reached it
+first.
+
 Acceptance: `scripts/conformance` and `scripts/fuzz` each run from one command
-and store minimal reproductions. Met; the divergences above are recorded rather
-than closed.
+and store minimal reproductions, and the verifier is fuzzed by the test suite.
+Met. No `divergence.connue` remains; the open question is which token a runtime
+error points at, which is smaller than it was.
 
 ## T5 — Profile representative workloads
 
