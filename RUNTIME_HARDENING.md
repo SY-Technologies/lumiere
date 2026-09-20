@@ -899,12 +899,9 @@ engine's rules and asking the other about each of them found in minutes what
 random search had not, which is worth remembering: a fuzzer explores, a sweep
 enumerates, and they fail differently.
 
-What remains recorded is which token a runtime error's caret points at, and one
-larger hole the sweep exposed rather than closed: the analyzer diagnoses no
-unknown identifier at all. `afficher(nom_absent)` is accepted and fails only at
-run time. The assignment side is now checked, because an assignment target is
-always a plain identifier that must name a declared variable; reads need real
-name resolution, where rejecting a valid program is worse than the hole.
+What remains recorded is which token a runtime error's caret points at. The
+larger hole the sweep exposed — the analyzer diagnosing no unknown identifier at
+all — is closed; see "Names have to resolve" below.
 
 ### Fuzzing the verifier — 2026-09-20
 
@@ -973,6 +970,42 @@ argument binding at all. `benchmarks/method_calls.lum` is that gap closed.
 `tests/conformance/arguments_nommes` is the regression test, and the point is
 where it lives: a single-engine test would have agreed with whichever engine
 wrote it. Only running both and diffing them says which one is wrong.
+
+### Names have to resolve — 2026-09-20
+
+`afficher(nom_absent)` passed `lumiere check`. A typo was found when the line
+ran, by whichever engine was running it, and the two engines found it in
+completely different code: that is why their carets sat a character apart, and
+why the fuzzer kept rediscovering the same divergence in new disguises. A name
+that cannot resolve is not an engine's business. LUM-S0057 says so once, in the
+analyzer, before either engine starts.
+
+A read resolves against locals and parameters, then the module level: its own
+declarations, its imports, and the type, class and interface names. The risk
+here is the opposite of the hole — rejecting a program that works is worse than
+accepting one that does not — so the corpus was the guard rather than an
+argument. Every `.lum` file under `examples`, `tests` and the standard library
+went through `lumiere check`: five were flagged, and all five genuinely name
+something nothing declares. Forward references to functions, classes and
+module-level values still resolve, because the module level is collected before
+any body is walked, and so do loop variables, pattern bindings, closure
+captures, module aliases and type names. A local does not escape its block.
+
+The shell is where this got interesting, because it exposed a bug the narrower
+assignment rule had already shipped without anyone noticing. Each submission is
+analyzed on its own, while the interpreter carries every earlier one forward.
+So `soit base = 40` followed by `base = 60` had been rejected since LUM-S0055
+landed — as an assignment to an undeclared name — and the line silently never
+ran: the shell then printed 40 and looked like it had worked. There is no
+test that types two dependent lines, so nothing caught it.
+
+Both rules now stand down for an incremental submission, which is stated in
+`AnalysisOptions` rather than inferred: in a buffer that holds one line, an
+unknown name cannot be told apart from one declared earlier, and the interpreter
+— which does have the earlier lines — still catches it when the line runs.
+Making analysis carry submissions forward is the real answer and is recorded as
+its own work; a half-version that re-analyzes the accumulated text would report
+earlier lines' diagnostics again and number the new line wrong.
 
 ## Next engineering priorities
 

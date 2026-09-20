@@ -31,6 +31,13 @@ struct AnalysisOptions
     // default: `lumiere check` on a module must not demand a 'principal' the
     // module has no business declaring.
     bool require_entry_point = false;
+    // Set for one line typed at the shell. Each submission is analyzed on its
+    // own, so a name declared by an earlier one is not in this buffer and
+    // cannot be told apart from a name that was never declared. The rules that
+    // resolve names stand down here rather than reject working code; the
+    // interpreter, which does carry the earlier submissions, still catches an
+    // unknown name when the line runs.
+    bool incremental_submission = false;
 };
 
 /**

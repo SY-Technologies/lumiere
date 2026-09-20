@@ -123,6 +123,8 @@ struct SemanticAnalysisOptions
 {
     bool consume_last_expression = false;
     bool require_entry_point = false;
+    // See AnalysisOptions::incremental_submission.
+    bool incremental_submission = false;
 };
 
 /**

@@ -286,7 +286,8 @@ AnalysisResult analyze_source(std::string source,
                     imports,
                     SemanticAnalysisOptions{
                         options.consume_last_expression,
-                        options.require_entry_point});
+                        options.require_entry_point,
+                        options.incremental_submission});
             result.diagnostics.insert(
                 result.diagnostics.end(),
                 std::make_move_iterator(semantics.diagnostics.begin()),

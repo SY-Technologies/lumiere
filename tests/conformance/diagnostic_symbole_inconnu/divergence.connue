@@ -1,4 +1,0 @@
-Le message est identique ; seule la colonne du curseur diffère d'un caractère.
-Le tree-walker rattache l'erreur à la parenthèse ouvrante de l'appel, la VM à la
-parenthèse fermante, parce que chacun attache le site de l'erreur à un endroit
-différent de sa propre structure. Voir T4 dans IMPROVEMENT_TASKS.md.

@@ -320,7 +320,12 @@ TEST(CliIntegration, RejectsUnknownVmGlobalReference)
     std::filesystem::remove_all(root);
 
     EXPECT_NE(result.exit_code, 0);
-    EXPECT_NE(result.stderr_text.find("est introuvable dans la portée courante"),
+    // The analyzer now refuses the name before either engine starts, so this
+    // never reaches the VM's own lookup. That is the point: the two engines
+    // used to report it from different code, with their carets a character
+    // apart.
+    EXPECT_NE(result.stderr_text.find("LUM-S0057"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("le symbole 'inconnue' n'est déclaré nulle part"),
               std::string::npos);
 }
 

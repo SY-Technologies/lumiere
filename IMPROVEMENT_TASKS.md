@@ -141,21 +141,46 @@ Status: in progress — 2026-09-20; corpus and fuzzing in place, two divergences
       a function body. A systematic sweep of one engine's rules against the
       other's found in minutes what random search had not.
 
-- [ ] **Resolve names.** The analyzer diagnoses no unknown identifier at all:
-      `afficher(nom_absent)` and `appel_absent()` are both accepted by `lumiere
-      check` and only fail at run time, differently under each engine. That is
-      the root of what remains of the family above — the assignment *target*
-      rule closed the narrow half, because a target is always a plain identifier
-      that must name a declared variable, but reads are the larger job: locals,
-      parameters, module-level declarations, imports, builtins, type names and
-      module aliases all have to be in scope before anything can be called
-      unknown. Getting it wrong rejects valid programs, which is worse than the
-      hole, so it wants its own pass with the corpus as the guard.
+- [x] **Resolve names.** A name that is read now has to resolve to something:
+      a local or parameter, a module-level declaration, an import, or a type,
+      class or interface name. LUM-S0057 otherwise. `afficher(nom_absent)` and
+      `appel_absent()` used to be accepted by `lumiere check` and fail only at
+      run time, in different code under each engine, which is why their carets
+      sat a character apart — one diagnostic from the analyzer ends that whole
+      family at the source.
+
+      Rejecting a valid program is worse than the hole, so the corpus was the
+      guard: every `.lum` file under `examples`, `tests` and the standard
+      library was run through `lumiere check`, and the five it flagged all
+      genuinely reference names nothing declares. Forward references to
+      functions, classes and module-level values still resolve, as do loop
+      variables, pattern bindings, closure captures, module aliases and type
+      names; a local does not escape its block.
+
+      The shell is the exception, and it exposed a bug the assignment rule had
+      already shipped: each submission is analyzed on its own while the
+      interpreter carries every earlier one, so `soit base = 40` on one line and
+      `base = 60` on the next was refused as an assignment to an undeclared
+      name — the line simply never ran. Both rules now stand down for an
+      incremental submission, where an unknown name cannot be told from one
+      declared earlier, and the interpreter still catches it when the line runs.
+      Analysis that carries earlier submissions forward is its own piece of work
+      and is not done here.
 
 - [ ] Settle which token a runtime error points at. The two engines pick
       different tokens for the same failure, so the caret can sit one character
       apart. A spot fix traded one divergence for another; this needs a stated
-      rule, not a patch.
+      rule, not a patch. Name resolution removed the largest family of these by
+      moving the diagnostic into the analyzer, where there is only one of it.
+
+- [ ] Point the caret at the token, not past it. `source_range` in the analyzer
+      builds a range from `token.start_offset` and `token.line`/`token.column`,
+      but a Token's `line`/`column` are where it *ends* — `start_line` and
+      `start_column` are where it begins. So the byte range an editor reads is
+      right while the caret a person reads sits one character past the symbol:
+      LUM-S0057 on `valeur_absente` points at the `)` after it. Both engines
+      agree, so no conformance case catches it, and the fix moves the column in
+      every pinned analyzer diagnostic — which is why it is its own change.
 
 What it found on the first run, all since fixed: the VM showed its synthetic
 `__module_init__` frame in tracebacks the tree walker had no frame for; the VM

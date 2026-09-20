@@ -2822,8 +2822,7 @@ private:
      *
      * Narrower than resolving every name that is read: an assignment target is
      * always a plain identifier, and it must name a declared, non-fixed
-     * variable. Reading an undeclared name is still not diagnosed anywhere,
-     * which is a larger hole and its own piece of work.
+     * variable. Reads are checked too now, in diagnose_value_read.
      */
     void diagnose_assignment_target(const IdentifierExpr &target)
     {
@@ -2851,8 +2850,43 @@ private:
             return;
         }
 
+        if (m_options.incremental_submission)
+        {
+            // An earlier line may have declared it; this buffer cannot tell.
+            return;
+        }
         diagnose(target.name, "LUM-S0055",
                  "affectation à '" + target.name.lexeme + "', qui n'est déclaré nulle part");
+    }
+
+    /**
+     * @brief Checks that a name being read is one this buffer declares.
+     *
+     * A read resolves against locals and parameters first, then everything the
+     * module level knows: its own declarations, what it imported, the class,
+     * interface and type names, and the builtins. A name none of those hold is
+     * a name nothing can supply, and saying so here means both engines are
+     * told the same thing before either one starts -- the two used to fail at
+     * run time, with their carets one character apart.
+     *
+     * Only plain identifiers are checked. `ici` and `parent` are keywords with
+     * their own rules, and they arrive here wearing their own token types.
+     */
+    void diagnose_value_read(const IdentifierExpr &read)
+    {
+        const Token &name = read.name;
+        if (m_options.incremental_submission || name.type != TokenType::IDENT)
+        {
+            return;
+        }
+        if (find_local_value(name.lexeme) != nullptr ||
+            m_analysis.model.find_value(name.lexeme) != nullptr ||
+            m_analysis.model.find_type(name.lexeme) != nullptr)
+        {
+            return;
+        }
+        diagnose(name, "LUM-S0057",
+                 "le symbole '" + name.lexeme + "' n'est déclaré nulle part");
     }
 
     void resolve_expression(
@@ -2870,6 +2904,10 @@ private:
         {
             diagnose(parent_use->name, "LUM-S0054",
                      "'parent' doit être placé dans une méthode");
+        }
+        if (const auto *read = dynamic_cast<const IdentifierExpr *>(&expression))
+        {
+            diagnose_value_read(*read);
         }
         if (const auto *identifier =
                 dynamic_cast<const IdentifierExpr *>(&expression);

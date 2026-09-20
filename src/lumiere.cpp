@@ -98,13 +98,16 @@ std::unique_ptr<lumiere::Program> parse_program(
     std::string source,
     std::string source_path,
     const bool consume_last_expression = false,
-    const bool require_entry_point = false)
+    const bool require_entry_point = false,
+    const bool incremental_submission = false)
 {
     lumiere::AnalysisResult analysis =
         lumiere::analyze_source(
             source,
             source_path,
-            lumiere::AnalysisOptions{consume_last_expression, require_entry_point});
+            lumiere::AnalysisOptions{consume_last_expression,
+                                     require_entry_point,
+                                     incremental_submission});
     if (analysis.has_errors())
     {
         for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
@@ -383,7 +386,10 @@ int run_repl()
             continue;
         }
 
-        auto program = parse_program(source, "<repl>", true);
+        // One line at a time: the analyzer sees only this submission, while
+        // the interpreter carries every earlier one, so the rules that resolve
+        // names have to stand down here.
+        auto program = parse_program(source, "<repl>", true, false, true);
         source.clear();
         if (program == nullptr)
         {

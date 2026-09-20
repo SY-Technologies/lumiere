@@ -1,5 +1,8 @@
-// Un nom qui ne désigne rien : les deux moteurs le rapportent avec les mêmes
-// mots, alors qu'ils le découvrent dans du code entièrement différent.
+// Un nom qui ne désigne rien. Les deux moteurs le découvraient chacun dans son
+// propre code, à l'exécution, et leurs curseurs finissaient à un caractère l'un
+// de l'autre. L'analyse le refuse maintenant avant qu'aucun des deux ne
+// démarre : il n'y a plus qu'un seul message, et la colonne en fait partie.
 fonction principal() {
+    afficher(valeur_absente)
     afficher(fonction_absente())
 }
