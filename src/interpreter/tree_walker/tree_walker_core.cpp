@@ -5,7 +5,10 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/members.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
+
+#include <cassert>
 
 namespace lumiere
 {
@@ -571,57 +574,42 @@ namespace lumiere
         return state ? state->environment.get() : nullptr;
     }
 
-    Value TreeWalker::make_tree_walker_native_method(
-        Value receiver,
-        NativeMethodHandler handler) const
+    Value TreeWalker::resolve_native_member(const Value &object, const Token &member) const
     {
-        // Build the callback signature that native runtime functions expect.
-        LumiereFunction::NativeHandler adapted_handler =
-            [handler = std::move(handler)](IRuntime &runtime, const NativeArgs &native_args) -> Value
-            {
-                // This helper only works for the tree-walker runtime.
-                auto *walker = dynamic_cast<TreeWalker *>(&runtime);
-                if (walker == nullptr)
+        Value texte_member = Value::rien();
+        if (try_resolve_texte_native_member(
+                object,
+                member.lexeme,
+                [this](Value receiver, LumiereFunction::NativeHandler handler)
                 {
-                    runtime.raise_runtime_error(native_args.site, "méthode native non compatible");
-                }
-                // Turn the call-site coordinates back into a Token for existing checks.
-                const Token site_token(TokenType::IDENT,
-                                       "",
-                                       static_cast<uint32_t>(native_args.site.line),
-                                       static_cast<uint32_t>(native_args.site.column));
-                return handler(*walker, *native_args.arguments, site_token);
-            };
-
-        // Remember which object this method belongs to.
-        auto method = make_native_method(std::move(receiver), std::move(adapted_handler));
-        return Value::fonction(std::move(method));
-    }
-
-    void TreeWalker::require_positional_args(const std::vector<RuntimeArgument> &args,
-                                             std::size_t min_count,
-                                             std::size_t max_count,
-                                             const std::string &signature,
-                                             const Token &call_site) const
-    {
-        if (args.size() < min_count || args.size() > max_count)
+                    return make_native_method(std::move(receiver), std::move(handler));
+                },
+                texte_member))
         {
-            if (min_count == max_count)
-            {
-                throw_runtime_error(call_site, signature + " attend exactement " + std::to_string(min_count) + " argument(s)");
-            }
-            throw_runtime_error(call_site, signature + " attend entre " + std::to_string(min_count) +
-                                               " et " + std::to_string(max_count) + " arguments");
+            return texte_member;
         }
 
-        for (const auto &arg : args)
+        // A member is looked up where it is written and bound to its receiver;
+        // what it does is decided once, in runtime/members.cpp, for both engines.
+        if (const BuiltinMember *builtin = find_builtin_member(object, member.lexeme))
         {
-            if (!arg.name.empty())
-            {
-                throw_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
-            }
+            return Value::fonction(make_native_method(
+                object,
+                [builtin](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+                    // A bound method is only ever reached through the native
+                    // call path, which fills both; nothing else constructs one.
+                    assert(native_args.receiver != nullptr && native_args.arguments != nullptr);
+                    return call_builtin_member(runtime,
+                                               *builtin,
+                                               *native_args.receiver,
+                                               *native_args.arguments,
+                                               native_args.site);
+                }));
         }
+
+        return Value::rien();
     }
+
     Value TreeWalker::evaluate(Expr &expr)
     {
         expr.accept(*this);

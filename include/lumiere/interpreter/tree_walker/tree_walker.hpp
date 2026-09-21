@@ -160,15 +160,6 @@ namespace lumiere
         LumiTestRunSummary lumitest_summary() const;
 
     private:
-        // Tree-walker-specific helper signature used while implementing native
-        // members such as `liste.ajouter(...)`. Unlike `LumiereFunction::NativeHandler`,
-        // this already assumes the backend is a TreeWalker and exposes a Token
-        // for error reporting instead of the generic RuntimeSite bundle.
-        using NativeMethodHandler = std::function<Value(
-            TreeWalker &,
-            const std::vector<RuntimeArgument> &,
-            const Token &)>;
-
         struct TreeWalkerFunctionBody;
         struct TreeWalkerClassBody;
         struct TreeWalkerInterfaceBody;
@@ -348,42 +339,6 @@ namespace lumiere
          * @brief Creates an interface value that points back to its interface declaration node.
          */
         Ref<LumiereInterface> make_runtime_interface(InterfaceDeclStmt &decl) const;
-
-        /**
-         * @brief Turns a tree-walker helper into the method value returned by `object.member`.
-         *
-         * Example: when `resolve_native_member(...)` handles `liste.ajouter`,
-         * it uses this helper to create the callable Lumiere value that already
-         * remembers which list instance is the receiver. Later, when user code
-         * calls that method, the shared native-call path invokes `handler` with:
-         *
-         * - the current `TreeWalker`
-         * - the evaluated runtime arguments
-         * - a token rebuilt from the call site for error reporting
-         */
-        Value make_tree_walker_native_method(
-            Value receiver,
-            NativeMethodHandler handler) const;
-
-        /**
-         * @brief Validates a native method call that only accepts positional arguments.
-         */
-        void require_positional_args(const std::vector<RuntimeArgument> &args,
-                                     std::size_t min_count,
-                                     std::size_t max_count,
-                                     const std::string &signature,
-                                     const Token &call_site) const;
-
-        /**
-         * @brief Resolves methods specific to `Dictionnaire` values.
-         *
-         * This is the dictionary counterpart to the list/member helpers above:
-         * turn a member token into a bound native method when the runtime owns
-         * that operation.
-         */
-        Value resolve_dict_native_member(const Ref<DictData> &dict,
-                                        const Token &member,
-                                        Value receiver) const;
 
         /**
          * @brief Resolves a dotted module name to the configured source file that should be imported.

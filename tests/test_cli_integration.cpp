@@ -3977,6 +3977,12 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
         "soit e: Ensemble[Entier] = {1} afficher(e.différence(1))",
         "soit e: Ensemble[Entier] = {1} afficher(e.sous_ensemble_de(1))",
         "soit l: Liste[Universel] = [1] afficher(l.en_ensemble().joindre(2))",
+        // The three views a Dictionnaire hands out carry its contract. The VM
+        // gave paires() no contract at all, so a Liste[ListeFixe[Texte, 2]]
+        // accepted an Entier there and the tree walker refused it.
+        "soit d: Dictionnaire[Texte, Texte] = {\"a\": \"x\"} d.paires().ajouter(1)",
+        "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d.cles().ajouter(2)",
+        "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d.valeurs().ajouter(\"z\")",
         "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d[\"b\"] = \"x\"",
         "afficher(\"ab\".sous_texte(0, 99))",
     };

@@ -1,0 +1,35 @@
+// Chaque membre d'un Dictionnaire, avec ses cas limites : receveur vide, clé
+// absente, les deux orthographes de clés, et le contrat que les collections
+// dérivées doivent reprendre.
+fonction principal() {
+    soit vide: Dictionnaire[Texte, Entier] = {}
+    afficher(vide.taille())
+    afficher(vide.vide())
+    afficher(vide.contient("a"))
+    afficher(vide.cles().taille())
+    afficher(vide.valeurs().taille())
+    afficher(vide.paires().taille())
+
+    soit ages: Dictionnaire[Texte, Entier] = {"ada": 36, "linus": 54}
+    afficher(ages.taille())
+    afficher(ages.vide())
+    afficher(ages.contient("ada"))
+    afficher(ages.contient("zoé"))
+
+    // L'ordre d'insertion est celui des trois vues.
+    afficher(ages.cles().joindre(","))
+    afficher(ages.clés().joindre(","))
+    afficher(ages.valeurs().joindre(","))
+    afficher(ages.paires().taille())
+    afficher(ages.paires().joindre(" / "))
+
+    // retirer rend la valeur retirée.
+    afficher(ages.retirer("ada"))
+    afficher(ages.taille())
+    afficher(ages.contient("ada"))
+    afficher(ages.cles().joindre(","))
+
+    // Une paire n'a un type d'élément que si la clé et la valeur ont le même.
+    soit mots: Dictionnaire[Texte, Texte] = {"a": "x"}
+    afficher(mots.paires().joindre(""))
+}

@@ -196,8 +196,6 @@ public:
                                   const Value &value,
                                   const std::string &context) const;
 
-    [[nodiscard]] std::optional<std::pair<std::string, std::string>> dictionary_types(
-        const Ref<DictData> &dictionary) const;
 
 private:
     CallbackExecutor m_callback_executor;
@@ -568,14 +566,6 @@ void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary
     }
     annotate_value(key, constraint->key_type, {});
     annotate_value(value, constraint->value_type, {});
-}
-
-std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
-    const Ref<DictData> &dictionary) const
-{
-    if (!dictionary->constraint)
-        return std::nullopt;
-    return std::pair{dictionary->constraint->key_type, dictionary->constraint->value_type};
 }
 
 void execute_cast(std::vector<Value> &stack, const std::string &target)
@@ -1224,17 +1214,6 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
 // literal or a name the module already owns. Binding a literal to a
 // `const std::string &` builds a string, and `valeurs.ajouter(index)` did that
 // twice per call on a path whose whole job is to push one value.
-void require_member_arity(const std::string_view signature,
-                          const std::vector<Value> &args,
-                          const std::size_t expected)
-{
-    if (args.size() != expected)
-    {
-        throw VmRuntimeError("VM: " + std::string(signature) + " attend " +
-                             std::to_string(expected) + " argument(s)");
-    }
-}
-
 Value execute_member_call(const Value &receiver,
                           const std::string &member,
                           const std::vector<RuntimeArgument> &runtime_args,
@@ -1245,84 +1224,10 @@ Value execute_member_call(const Value &receiver,
     {
         return execute_texte_member(runtime, receiver, member, runtime_args, site);
     }
-
     if (std::optional<Value> result = call_builtin_member(runtime, receiver, member, runtime_args, site))
     {
         return std::move(*result);
     }
-
-    std::vector<Value> args;
-    args.reserve(runtime_args.size());
-    for (const RuntimeArgument &argument : runtime_args)
-    {
-        if (!argument.name.empty())
-        {
-            throw VmRuntimeError("VM: " + receiver.type_name() + "." + member +
-                                 " n'accepte pas d'arguments nommés");
-        }
-        args.push_back(argument.value);
-    }
-
-    if (receiver.is_dictionnaire())
-    {
-        auto dictionary = receiver.as_dictionnaire();
-        if (member == "taille")
-        {
-            require_member_arity("Dictionnaire.taille", args, 0);
-            return Value::entier(static_cast<std::int64_t>(dictionary->size()));
-        }
-        if (member == "vide")
-        {
-            require_member_arity("Dictionnaire.vide", args, 0);
-            return Value::logique(dictionary->empty());
-        }
-        if (member == "contient")
-        {
-            require_member_arity("Dictionnaire.contient", args, 1);
-            return Value::logique(dictionary->find(args[0]) != nullptr);
-        }
-        const bool wants_keys = member == "cles" || member == "clés";
-        if (wants_keys || member == "valeurs")
-        {
-            require_member_arity("Dictionnaire." + member, args, 0);
-            auto result = make_ref<ListeData>();
-            for (const auto &entry : dictionary->items())
-            {
-                result->elements.push_back(wants_keys ? entry.first : entry.second);
-            }
-            Value list_result = Value::liste(std::move(result));
-            if (const auto types = runtime.dictionary_types(dictionary); types.has_value())
-            {
-                runtime.annotate_value(list_result,
-                                       "Liste[" + (wants_keys ? types->first : types->second) + "]",
-                                       site);
-            }
-            return list_result;
-        }
-        if (member == "paires")
-        {
-            require_member_arity("Dictionnaire.paires", args, 0);
-            auto pairs = make_ref<ListeData>();
-            for (const auto &entry : dictionary->items())
-            {
-                auto pair = make_ref<ListeFixeData>();
-                pair->elements = {entry.first, entry.second};
-                pairs->elements.push_back(Value::liste_fixe(std::move(pair)));
-            }
-            return Value::liste(std::move(pairs));
-        }
-        if (member == "retirer")
-        {
-            require_member_arity("Dictionnaire.retirer", args, 1);
-            Value removed;
-            if (dictionary->erase(args[0], removed))
-            {
-                return removed;
-            }
-            throw VmRuntimeError("VM: " + messages::cle_introuvable());
-        }
-    }
-
     throw VmRuntimeError("VM: " + messages::membre_introuvable(member, receiver.type_name()));
 }
 

@@ -1368,6 +1368,36 @@ neither was a difference between the engines:
 `différence`, both directions of `sous_ensemble_de`, and the empty receiver on
 each side of every operation.
 
+### Dictionnaire: a contract the VM was not giving out
+
+`cles`, `valeurs` and `paires` each hand out a new `Liste`, and the rule is that
+the list carries what can be derived from the dictionary's contract. Both engines
+did that for `cles` and `valeurs`. Neither had a test for `paires`, and the VM
+annotated it with nothing at all:
+
+```
+soit d: Dictionnaire[Texte, Texte] = {"a": "x"}
+d.paires().ajouter(1)
+```
+
+The tree walker refused that — `Liste.ajouter attend une valeur de type
+ListeFixe[Texte, 2]` — and the VM ran it to completion, putting an `Entier` in a
+list of pairs. The rule kept is the tree walker's: **a pair carries an element
+type only when the key and the value have the same one**, and its length, 2, is
+known either way, so the annotation is `ListeFixe[T, 2]` or
+`ListeFixe[Universel, 2]` and the list of them is `Liste[` that `]`.
+
+The one wording that differed was invisible: the tree walker reported an arity
+failure of `cles()` as `Dictionnaire.clés`, whichever spelling was written. A
+diagnostic quotes what was written.
+
+With this family moved, `tree_walker_sequences.cpp` is gone, and with it the
+tree walker's own member machinery — `make_tree_walker_native_method`, its
+`NativeMethodHandler` signature, and `require_positional_args` — along with the
+VM's `require_member_arity`, `member_integer`, `member_text` and
+`member_signature`. `execute_member_call` is now three lines: text, the shared
+members, and the member that does not exist.
+
 ### What the arity check is, and is not
 
 Analysis rejects `l.ajouter(4, 5)` as LUM-S0015 before anything runs, so the

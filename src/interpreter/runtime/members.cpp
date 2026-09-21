@@ -422,6 +422,105 @@ constexpr BuiltinMember ensemble_members[] = {
 };
 
 // ---------------------------------------------------------------------------
+// Dictionnaire
+// ---------------------------------------------------------------------------
+
+Value dictionnaire_taille(const MemberCall &call)
+{
+    return Value::entier(static_cast<std::int64_t>(call.receiver.as_dictionnaire()->size()));
+}
+
+Value dictionnaire_vide(const MemberCall &call)
+{
+    return Value::logique(call.receiver.as_dictionnaire()->empty());
+}
+
+Value dictionnaire_contient(const MemberCall &call)
+{
+    return Value::logique(call.receiver.as_dictionnaire()->find(call.argument(0)) != nullptr);
+}
+
+// The keys and the values are the same walk over the same entries, differing
+// only in which half of each one is taken.
+Value dictionnaire_moitie(const MemberCall &call, const bool keys)
+{
+    const auto dictionary = call.receiver.as_dictionnaire();
+    auto half = make_ref<ListeData>();
+    for (const DictEntry &entry : dictionary->items())
+    {
+        half->elements.push_back(keys ? entry.first : entry.second);
+    }
+
+    Value result = Value::liste(std::move(half));
+    if (dictionary->constraint)
+    {
+        const DictConstraint &constraint = *dictionary->constraint;
+        call.annotate(result, "Liste[" + (keys ? constraint.key_type : constraint.value_type) + "]");
+    }
+    return result;
+}
+
+Value dictionnaire_cles(const MemberCall &call) { return dictionnaire_moitie(call, true); }
+
+Value dictionnaire_valeurs(const MemberCall &call) { return dictionnaire_moitie(call, false); }
+
+Value dictionnaire_paires(const MemberCall &call)
+{
+    const auto dictionary = call.receiver.as_dictionnaire();
+    // A pair holds a key beside a value, so it has one element type only when
+    // the two are the same type. Its length is 2 either way.
+    std::string pair_type;
+    if (dictionary->constraint)
+    {
+        const DictConstraint &constraint = *dictionary->constraint;
+        const std::string element_type =
+            constraint.key_type == constraint.value_type ? constraint.key_type : "Universel";
+        pair_type = "ListeFixe[" + element_type + ", 2]";
+    }
+
+    auto pairs = make_ref<ListeData>();
+    for (const DictEntry &entry : dictionary->items())
+    {
+        auto pair = make_ref<ListeFixeData>();
+        pair->elements = {entry.first, entry.second};
+        Value value = Value::liste_fixe(std::move(pair));
+        if (!pair_type.empty())
+        {
+            call.annotate(value, pair_type);
+        }
+        pairs->elements.push_back(std::move(value));
+    }
+
+    Value result = Value::liste(std::move(pairs));
+    if (!pair_type.empty())
+    {
+        call.annotate(result, "Liste[" + pair_type + "]");
+    }
+    return result;
+}
+
+Value dictionnaire_retirer(const MemberCall &call)
+{
+    Value removed;
+    if (!call.receiver.as_dictionnaire()->erase(call.argument(0), removed))
+    {
+        call.fail(messages::cle_introuvable());
+    }
+    return removed;
+}
+
+constexpr BuiltinMember dictionnaire_members[] = {
+    {"taille", 0, dictionnaire_taille},
+    {"vide", 0, dictionnaire_vide},
+    {"contient", 1, dictionnaire_contient},
+    {"cles", 0, dictionnaire_cles},
+    {"clés", 0, dictionnaire_cles},
+    {"valeurs", 0, dictionnaire_valeurs},
+    {"paires", 0, dictionnaire_paires},
+    {"retirer", 1, dictionnaire_retirer},
+};
+
+// ---------------------------------------------------------------------------
 // Lookup
 // ---------------------------------------------------------------------------
 
@@ -457,6 +556,11 @@ const BuiltinMember *find_builtin_member(const Value &receiver, const std::strin
     {
         const BuiltinMember *found = find_in(ensemble_members, member);
         return found != nullptr ? found : find_in(sequence_members, member);
+    }
+    // A Dictionnaire is not a sequence: it answers only its own members.
+    if (receiver.is_dictionnaire())
+    {
+        return find_in(dictionnaire_members, member);
     }
     return nullptr;
 }
