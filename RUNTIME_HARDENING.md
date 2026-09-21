@@ -1156,8 +1156,11 @@ module's member table, one pointer per member per class. A class the tree walker
 made has no such body and falls back to the walk. Privacy is asked about only
 when the member is actually private.
 
-Method calls -20%, function calls -16%. Cumulatively over the session's four
-rounds, method calls went 1.09s to 0.63s, -42%.
+The resolved field carries its type's shape too, so `ici.total = ...` no longer
+re-reads the word "Entier" on every assignment -- the same fix as for
+annotations, in the last place that still did it.
+
+Method calls -20%, function calls -16%.
 
 This is the last of the "a name resolved while the program runs that the
 compiler already knew" family that can be fixed without changing how an object

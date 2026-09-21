@@ -1704,6 +1704,19 @@ struct CallFrame
 };
 
 /**
+ * @brief A field, with what its declared type demands of a value.
+ *
+ * The shape is settled when the field is first resolved, for the same reason
+ * annotations carry one: assigning to `total: Entier` used to re-read the word
+ * "Entier" every time.
+ */
+struct ResolvedField
+{
+    const VmFieldDescriptor *descriptor = nullptr;
+    TypeShape shape = TypeShape::Composite;
+};
+
+/**
  * @brief Whether this frame is a method running on that very object.
  *
  * What "privé" means: the member is reachable from the object's own methods and
@@ -1750,7 +1763,7 @@ struct VmClassBody final : RuntimeClassBody
     // names, and that happened on every field access and every method call --
     // six million string walks for two million calls. The answer cannot change:
     // a class's parent is fixed when the class is made.
-    mutable std::vector<std::optional<const VmFieldDescriptor *>> fields_by_member;
+    mutable std::vector<std::optional<ResolvedField>> fields_by_member;
     mutable std::vector<std::optional<const VmMethodDescriptor *>> methods_by_member;
 
     VmClassBody() { origin = BodyOrigin::Vm; }
@@ -1895,49 +1908,56 @@ const std::vector<CellRef> *find_vm_method_captures(const LumiereClass *klass,
 
 // The cached forms of the two walks above. A class with no VM body -- one the
 // tree walker made, reached through a shared value -- falls back to the walk.
-template <typename Descriptor, typename Cache, typename Find>
-const Descriptor *resolve_member(const ModuleBytecode &module,
-                                 const LumiereClass *klass,
-                                 const std::size_t member_index,
-                                 Cache &&cache_of,
-                                 Find &&find)
+ResolvedField resolve_field(const ModuleBytecode &module,
+                            const LumiereClass *klass,
+                            const std::size_t member_index)
 {
+    const auto look_up = [](const ModuleBytecode &in_module,
+                            const LumiereClass *in_klass,
+                            const std::string &name) {
+        const VmFieldDescriptor *descriptor = find_vm_field(in_module, in_klass, name);
+        return ResolvedField{descriptor,
+                             descriptor != nullptr ? classify_type_name(descriptor->type)
+                                                   : TypeShape::Composite};
+    };
     const VmClassBody *body = klass != nullptr ? vm_class_body(klass->body.get()) : nullptr;
     if (body == nullptr)
     {
-        return find(module, klass, module.members[member_index]);
+        return look_up(module, klass, module.members[member_index]);
     }
-    auto &cache = cache_of(*body);
+    auto &cache = body->fields_by_member;
     if (cache.size() != module.members.size())
     {
         cache.assign(module.members.size(), std::nullopt);
     }
-    std::optional<const Descriptor *> &slot = cache[member_index];
+    std::optional<ResolvedField> &slot = cache[member_index];
     if (!slot.has_value())
     {
-        slot = find(module, klass, module.members[member_index]);
+        slot = look_up(module, klass, module.members[member_index]);
     }
     return *slot;
-}
-
-const VmFieldDescriptor *resolve_field(const ModuleBytecode &module,
-                                       const LumiereClass *klass,
-                                       const std::size_t member_index)
-{
-    return resolve_member<VmFieldDescriptor>(
-        module, klass, member_index,
-        [](const VmClassBody &body) -> auto & { return body.fields_by_member; },
-        find_vm_field);
 }
 
 const VmMethodDescriptor *resolve_method(const ModuleBytecode &module,
                                          const LumiereClass *klass,
                                          const std::size_t member_index)
 {
-    return resolve_member<VmMethodDescriptor>(
-        module, klass, member_index,
-        [](const VmClassBody &body) -> auto & { return body.methods_by_member; },
-        find_vm_method);
+    const VmClassBody *body = klass != nullptr ? vm_class_body(klass->body.get()) : nullptr;
+    if (body == nullptr)
+    {
+        return find_vm_method(module, klass, module.members[member_index]);
+    }
+    auto &cache = body->methods_by_member;
+    if (cache.size() != module.members.size())
+    {
+        cache.assign(module.members.size(), std::nullopt);
+    }
+    std::optional<const VmMethodDescriptor *> &slot = cache[member_index];
+    if (!slot.has_value())
+    {
+        slot = find_vm_method(module, klass, module.members[member_index]);
+    }
+    return *slot;
 }
 
 std::vector<CellRef> vm_method_captures(const LumiereClass *klass,
@@ -3010,7 +3030,7 @@ Value run_frames(VmExecutionState &execution,
                 {
                     const VmFieldDescriptor *descriptor = resolve_field(module,
                                                                         receiver.as_objet_ptr()->klass.get(),
-                                                                        member_index);
+                                                                        member_index).descriptor;
                     // Asking whether this frame is the object's own method
                     // searches the frame's name, so it is only asked about a
                     // member that is actually private.
@@ -3068,9 +3088,10 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: affectation membre sur une valeur non objet");
             }
-            const VmFieldDescriptor *field = resolve_field(module,
-                                                           receiver.as_objet_ptr()->klass.get(),
-                                                           member_index);
+            const ResolvedField resolved = resolve_field(module,
+                                                         receiver.as_objet_ptr()->klass.get(),
+                                                         member_index);
+            const VmFieldDescriptor *field = resolved.descriptor;
             if (field == nullptr)
             {
                 throw VmRuntimeError("VM: champ introuvable '" + module.members[member_index] + "'");
@@ -3083,7 +3104,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: impossible d'affecter le champ fixe '" + field->name + "'");
             }
-            if (!field->type.empty() && !matches_type_name(value, field->type))
+            if (!field->type.empty() && !matches_type(value, resolved.shape, field->type))
             {
                 throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
             }
