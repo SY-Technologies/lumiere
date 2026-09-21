@@ -251,7 +251,7 @@ SemanticTypeRef TypeInterner::intern(const SemanticTypeKind kind,
 
 void TypeInterner::adopt(const TypeInterner &other)
 {
-    m_types.insert(other.m_types.begin(), other.m_types.end());
+    m_types = other.m_types;
 }
 
 bool same_type(const SemanticTypeRef &left, const SemanticTypeRef &right) noexcept

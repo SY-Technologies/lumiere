@@ -1275,7 +1275,13 @@ otherwise.
 `incremental_submission` is gone rather than left switched off, and the shell
 diagnoses an unknown name with LUM-S0057 before the line runs, like a file does.
 `CliIntegration.ReplResolvesNamesDeclaredByEarlierSubmissions` types the lines
-that would have caught the original bug.
+that would have caught the original bug, including a rejected redefinition.
+
+The first implementation tried to adopt the previous interner with
+non-overwriting insertion. That left every built-in already created by the new
+analyzer in place, contrary to the pointer-identity invariant above. Adoption
+now replaces the table. `SemanticTypes.AdoptReplacesAlreadyInternedTypes` pins
+the case directly instead of relying on assignability rules to expose it.
 
 ## One implementation of the collection members
 

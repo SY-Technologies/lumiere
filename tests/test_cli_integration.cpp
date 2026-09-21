@@ -1769,12 +1769,15 @@ TEST(CliIntegration, ReplResolvesNamesDeclaredByEarlierSubmissions)
                                          "soit base = 40\n"
                                          "base = 60\n"
                                          "base\n"
+                                         "soit base = 99\n"
                                          "fonction ajouter(x: Entier) -> Entier {\n"
                                          "  retourne base + x\n"
                                          "}\n"
                                          "ajouter(2)\n"
                                          "classe Boite { valeur: Entier }\n"
                                          "Boite(valeur: 7).valeur\n"
+                                         "soit fantome = 1 / 0\n"
+                                         "fantome\n"
                                          "nom_absent\n"
                                          ":quitter\n");
     std::filesystem::remove_all(root);
@@ -1786,9 +1789,19 @@ TEST(CliIntegration, ReplResolvesNamesDeclaredByEarlierSubmissions)
     EXPECT_NE(result.stdout_text.find("62\n"), std::string::npos);
     // So does a class, and its constructor's named argument.
     EXPECT_NE(result.stdout_text.find("7\n"), std::string::npos);
+    // The carried model also makes a declaration from an earlier submission a
+    // real duplicate; the rejected declaration leaves the old binding intact.
+    EXPECT_NE(result.stderr_text.find("LUM-S0001"), std::string::npos);
+    // A submission that fails while evaluating its initializer never creates
+    // the binding, so its model must not leak that declaration into the next
+    // analysis either.
+    EXPECT_NE(result.stderr_text.find("fantome"), std::string::npos);
+    const std::size_t failed_binding_diagnostic = result.stderr_text.find("LUM-S0057");
+    ASSERT_NE(failed_binding_diagnostic, std::string::npos);
+    EXPECT_NE(result.stderr_text.find("LUM-S0057", failed_binding_diagnostic + 1),
+              std::string::npos);
     // A name nothing declared is still caught, and now by the analyzer rather
     // than by whichever engine reached it.
-    EXPECT_NE(result.stderr_text.find("LUM-S0057"), std::string::npos);
     EXPECT_NE(result.stderr_text.find("nom_absent"), std::string::npos);
 }
 

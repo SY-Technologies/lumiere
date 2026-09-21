@@ -2,6 +2,7 @@
 
 #include "lumiere/analysis/analysis.hpp"
 #include "lumiere/analysis/inspection.hpp"
+#include "lumiere/analysis/semantic_type.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 
 #include <algorithm>
@@ -26,6 +27,18 @@ bool has_diagnostic(const AnalysisResult &result, const std::string_view code)
         [&](const Diagnostic &diagnostic) {
             return diagnostic.code == code;
         });
+}
+
+TEST(SemanticTypes, AdoptReplacesAlreadyInternedTypes)
+{
+    lumiere::TypeInterner previous;
+    const lumiere::SemanticTypeRef previous_integer = previous.builtin("Entier");
+
+    lumiere::TypeInterner next;
+    EXPECT_FALSE(lumiere::same_type(previous_integer, next.builtin("Entier")));
+
+    next.adopt(previous);
+    EXPECT_TRUE(lumiere::same_type(previous_integer, next.builtin("Entier")));
 }
 
 TEST(AnalysisDiagnostics, ReportsLexicalErrorWithByteRange)
