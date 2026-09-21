@@ -1720,7 +1720,9 @@ public:
         {
             m_frames.emplace_back();
         }
-        return m_frames[m_depth++];
+        ++m_depth;
+        m_top = m_frames.data() + (m_depth - 1);
+        return *m_top;
     }
 
     void pop()
@@ -1730,18 +1732,23 @@ public:
         frame.locals.clear();
         frame.captures.clear();
         frame.function = nullptr;
+        m_top = m_depth != 0 ? m_frames.data() + (m_depth - 1) : nullptr;
     }
 
+    // The dispatch loop asks for this once per *instruction*, not once per
+    // call, so it is kept as a pointer rather than computed from the depth: a
+    // frame is 88 bytes, so indexing needs a multiply, and paying for one on
+    // every instruction was worth 4.5% of the integer loop.
     CallFrame &back()
     {
-        assert(m_depth != 0);
-        return m_frames[m_depth - 1];
+        assert(m_top != nullptr);
+        return *m_top;
     }
 
     const CallFrame &back() const
     {
-        assert(m_depth != 0);
-        return m_frames[m_depth - 1];
+        assert(m_top != nullptr);
+        return *m_top;
     }
 
     [[nodiscard]] bool empty() const { return m_depth == 0; }
@@ -1756,6 +1763,7 @@ public:
 private:
     std::vector<CallFrame> m_frames;
     std::size_t m_depth = 0;
+    CallFrame *m_top = nullptr;
 };
 
 /**
@@ -2097,13 +2105,12 @@ Value instantiate_vm_class(const ModuleBytecode &module,
     return Value::objet(std::move(object));
 }
 
-void push_call_frame(FrameStack &frames,
-                     const ModuleBytecode &module,
-                     const std::size_t function_index,
-                     const std::vector<Value> &args,
-                     const std::size_t stack_base,
-                     std::vector<CellRef> captures = {},
-                     const SourceLocation call_site = {})
+CallFrame &push_empty_call_frame(FrameStack &frames,
+                                 const ModuleBytecode &module,
+                                 const std::size_t function_index,
+                                 const std::size_t stack_base,
+                                 std::vector<CellRef> captures,
+                                 const SourceLocation call_site)
 {
     if (function_index >= module.functions.size())
     {
@@ -2111,10 +2118,6 @@ void push_call_frame(FrameStack &frames,
     }
 
     const FunctionBytecode &function = module.functions[function_index];
-    if (args.size() != function.arity)
-    {
-        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
-    }
     if (captures.size() != function.capture_count)
     {
         throw VmRuntimeError("VM: nombre de captures invalide pour '" + function.name + "'");
@@ -2128,9 +2131,66 @@ void push_call_frame(FrameStack &frames,
     frame.captures.assign(std::make_move_iterator(captures.begin()),
                           std::make_move_iterator(captures.end()));
     frame.call_site = call_site;
+    return frame;
+}
+
+void push_call_frame(FrameStack &frames,
+                     const ModuleBytecode &module,
+                     const std::size_t function_index,
+                     std::vector<Value> args,
+                     const std::size_t stack_base,
+                     std::vector<CellRef> captures = {},
+                     const SourceLocation call_site = {})
+{
+    if (function_index >= module.functions.size())
+    {
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
+    if (args.size() != function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
+    }
+
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
     for (std::size_t i = 0; i < args.size(); ++i)
     {
-        frame.locals[i].get() = args[i];
+        frame.locals[i].get() = std::move(args[i]);
+    }
+}
+
+void push_call_frame(FrameStack &frames,
+                     const ModuleBytecode &module,
+                     const std::size_t function_index,
+                     std::vector<RuntimeArgument> &args,
+                     const std::size_t stack_base,
+                     std::vector<CellRef> captures = {},
+                     const SourceLocation call_site = {})
+{
+    if (function_index >= module.functions.size())
+    {
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
+    if (args.size() != function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
+    }
+
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
+    for (std::size_t i = 0; i < args.size(); ++i)
+    {
+        frame.locals[i].get() = std::move(args[i].value);
     }
 }
 
@@ -2209,13 +2269,24 @@ std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
  * variable, or any method call. The names travel in the bytecode; nothing read
  * them. The analyzer accepts such a program, so the wrong answer was silent.
  *
- * The result is the layout the compiler's prologue expects: the `source_arity`
- * values, then one Logique per optional parameter saying whether the caller
- * supplied it.
+ * Writes the layout the compiler's prologue expects directly into a new call
+ * frame: an optional receiver, the `source_arity` values, then one Logique per
+ * optional parameter saying whether the caller supplied it.
  */
-std::vector<Value> normalize_closure_arguments(const FunctionBytecode &function,
-                                               const std::vector<RuntimeArgument> &args)
+void normalize_closure_arguments(FrameStack &frames,
+                                 const ModuleBytecode &module,
+                                 const std::size_t function_index,
+                                 std::vector<RuntimeArgument> &args,
+                                 const std::size_t stack_base,
+                                 std::vector<CellRef> captures,
+                                 const SourceLocation call_site,
+                                 const Value *receiver = nullptr)
 {
+    if (function_index >= module.functions.size())
+    {
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
     const std::size_t count = function.source_arity;
     const bool named = std::any_of(args.begin(), args.end(),
                                    [](const RuntimeArgument &arg) { return !arg.name.empty(); });
@@ -2231,33 +2302,57 @@ std::vector<Value> normalize_closure_arguments(const FunctionBytecode &function,
     // allocation none of them needs is one they would all pay for.
     const std::vector<std::size_t> sources =
         named ? bind_named_arguments(function, args) : std::vector<std::size_t>{};
-    const auto supplied = [&](const std::size_t parameter) -> const Value * {
-        const std::size_t argument = named ? sources[parameter] : parameter;
-        return argument < args.size() ? &args[argument].value : nullptr;
+    const auto source_for = [&](const std::size_t parameter) {
+        return named ? sources[parameter] : parameter;
     };
 
-    std::vector<Value> normalized;
-    normalized.reserve(function.arity);
     for (std::size_t i = 0; i < count; ++i)
     {
-        const Value *value = supplied(i);
+        const bool supplied = source_for(i) < args.size();
         const bool optional = i < function.optional_params.size() && function.optional_params[i];
-        if (value == nullptr && !optional)
+        if (!supplied && !optional)
         {
             throw VmRuntimeError("argument manquant pour le paramètre '" + parameter_label(function, i) + "'");
         }
-        normalized.push_back(value != nullptr ? *value : Value::rien());
     }
+
+    const std::size_t receiver_slots = receiver == nullptr ? 0 : 1;
+    if (receiver_slots + count +
+            static_cast<std::size_t>(std::count(function.optional_params.begin(),
+                                                function.optional_params.end(),
+                                                true)) !=
+        function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
+    }
+
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
+    if (receiver != nullptr)
+    {
+        frame.locals[0].get() = *receiver;
+    }
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const std::size_t source = source_for(i);
+        frame.locals[receiver_slots + i].get() =
+            source < args.size() ? std::move(args[source].value) : Value::rien();
+    }
+
     // The prologue evaluates a default only where the caller supplied nothing,
     // so the flag follows the binding rather than the argument count.
+    std::size_t flag = receiver_slots + count;
     for (std::size_t i = 0; i < count; ++i)
     {
         if (i < function.optional_params.size() && function.optional_params[i])
         {
-            normalized.push_back(Value::logique(supplied(i) != nullptr));
+            frame.locals[flag++].get() = Value::logique(source_for(i) < args.size());
         }
     }
-    return normalized;
 }
 
 struct VmExecutionState
@@ -2274,11 +2369,7 @@ struct VmExecutionState
     std::vector<TypeShape> type_shapes;
 };
 
-Value run_frames(VmExecutionState &execution,
-                 const std::size_t entry_function_index,
-                 std::vector<Value> entry_arguments = {},
-                 std::vector<CellRef> entry_captures = {},
-                 const SourceLocation entry_call_site = {})
+Value execute_frames(VmExecutionState &execution, FrameStack frames)
 {
     const ModuleBytecode &module = execution.module;
     const auto &natives = execution.natives;
@@ -2287,15 +2378,7 @@ Value run_frames(VmExecutionState &execution,
     auto &global_defined = execution.global_defined;
     auto &initialized_functions = execution.initialized_functions;
     std::vector<Value> stack;
-    FrameStack frames;
     auto &runtime_services = execution.runtime_services;
-    push_call_frame(frames,
-                    module,
-                    entry_function_index,
-                    entry_arguments,
-                    0,
-                    std::move(entry_captures),
-                    entry_call_site);
 
     const auto build_runtime_error = [&frames](std::string message, const std::size_t opcode_offset)
     {
@@ -2797,19 +2880,14 @@ Value run_frames(VmExecutionState &execution,
                 {
                     throw VmRuntimeError("VM: corps de fonction non compatible avec le backend VM");
                 }
-                const FunctionBytecode &target = module.functions[body->function_index];
-                std::vector<Value> values = normalize_closure_arguments(target, call_args);
-                if (function->is_method())
-                {
-                    values.insert(values.begin(), function->receiver);
-                }
-                push_call_frame(frames,
-                                module,
-                                body->function_index,
-                                values,
-                                stack.size(),
-                                body->captures,
-                                dispatch_location());
+                normalize_closure_arguments(frames,
+                                            module,
+                                            body->function_index,
+                                            call_args,
+                                            stack.size(),
+                                            body->captures,
+                                            dispatch_location(),
+                                            function->is_method() ? &function->receiver : nullptr);
                 break;
             }
             const Value *receiver = function != nullptr && function->is_method() ? &function->receiver : nullptr;
@@ -2860,16 +2938,10 @@ Value run_frames(VmExecutionState &execution,
             }
             if (const auto direct = function_indices.find(name); direct != function_indices.end())
             {
-                std::vector<Value> values;
-                values.reserve(call_args.size());
-                for (const RuntimeArgument &argument : call_args)
-                {
-                    values.push_back(argument.value);
-                }
                 push_call_frame(frames,
                                 module,
                                 direct->second,
-                                values,
+                                call_args,
                                 stack.size(),
                                 {},
                                 dispatch_location());
@@ -2899,15 +2971,13 @@ Value run_frames(VmExecutionState &execution,
                 {
                     throw VmRuntimeError("VM: corps de fonction globale incompatible");
                 }
-                std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                        call_args);
-                push_call_frame(frames,
-                                module,
-                                body->function_index,
-                                values,
-                                stack.size(),
-                                body->captures,
-                                dispatch_location());
+                normalize_closure_arguments(frames,
+                                            module,
+                                            body->function_index,
+                                            call_args,
+                                            stack.size(),
+                                            body->captures,
+                                            dispatch_location());
                 break;
             }
             const auto native = natives.find(name);
@@ -3017,15 +3087,13 @@ Value run_frames(VmExecutionState &execution,
                     {
                         throw VmRuntimeError("VM: corps de membre incompatible");
                     }
-                    std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                            args);
-                    push_call_frame(frames,
-                                    module,
-                                    body->function_index,
-                                    values,
-                                    stack.size(),
-                                    body->captures,
-                                    dispatch_location());
+                    normalize_closure_arguments(frames,
+                                                module,
+                                                body->function_index,
+                                                args,
+                                                stack.size(),
+                                                body->captures,
+                                                dispatch_location());
                     break;
                 }
                 const LumiereObject *object = receiver.as_objet_ptr();
@@ -3042,17 +3110,15 @@ Value run_frames(VmExecutionState &execution,
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
-                const FunctionBytecode &target = module.functions[method->function_index];
-                std::vector<Value> method_args = normalize_closure_arguments(target, args);
-                method_args.insert(method_args.begin(), receiver);
-                push_call_frame(frames,
-                                module,
-                                method->function_index,
-                                method_args,
-                                stack.size(),
-                                vm_method_captures(receiver.as_objet_ptr()->klass.get(),
-                                                   method->function_index),
-                                dispatch_location());
+                normalize_closure_arguments(frames,
+                                            module,
+                                            method->function_index,
+                                            args,
+                                            stack.size(),
+                                            vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                               method->function_index),
+                                            dispatch_location(),
+                                            &receiver);
                 break;
             }
 
@@ -3371,6 +3437,40 @@ Value run_frames(VmExecutionState &execution,
     return Value::rien();
 }
 
+Value run_frames(VmExecutionState &execution,
+                 const std::size_t entry_function_index,
+                 std::vector<Value> entry_arguments = {},
+                 std::vector<CellRef> entry_captures = {},
+                 const SourceLocation entry_call_site = {})
+{
+    FrameStack frames;
+    push_call_frame(frames,
+                    execution.module,
+                    entry_function_index,
+                    std::move(entry_arguments),
+                    0,
+                    std::move(entry_captures),
+                    entry_call_site);
+    return execute_frames(execution, std::move(frames));
+}
+
+Value run_closure_frames(VmExecutionState &execution,
+                         const std::size_t entry_function_index,
+                         std::vector<RuntimeArgument> arguments,
+                         std::vector<CellRef> entry_captures,
+                         const SourceLocation entry_call_site)
+{
+    FrameStack frames;
+    normalize_closure_arguments(frames,
+                                execution.module,
+                                entry_function_index,
+                                arguments,
+                                0,
+                                std::move(entry_captures),
+                                entry_call_site);
+    return execute_frames(execution, std::move(frames));
+}
+
 } // namespace
 
 void VM::execute(Program &program)
@@ -3449,10 +3549,12 @@ Value VM::run(const ModuleBytecode &module)
         const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
         if (body == nullptr || args.arguments == nullptr || body->function_index >= module.functions.size())
             throw VmRuntimeError("VM: fermeture bytecode invalide");
-        auto values = normalize_closure_arguments(module.functions[body->function_index], *args.arguments);
-        return run_frames(execution, body->function_index, std::move(values), body->captures,
-                          {static_cast<std::size_t>(args.site.line),
-                           static_cast<std::size_t>(args.site.column)});
+        return run_closure_frames(execution,
+                                  body->function_index,
+                                  *args.arguments,
+                                  body->captures,
+                                  {static_cast<std::size_t>(args.site.line),
+                                   static_cast<std::size_t>(args.site.column)});
     });
     for (std::size_t i = 0; i < module.globals.size(); ++i)
     {

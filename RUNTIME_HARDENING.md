@@ -1226,8 +1226,26 @@ one warm-up, baseline first:
 | function_calls | 0.032200 (0.031459–0.032550) | 0.029575 (0.028738–0.030421) | −8.2% |
 | method_calls | 0.537143 (0.529541–0.552883) | 0.485106 (0.483121–0.500320) | −9.7% |
 
-The ranges do not overlap. The other workloads overlap their baselines; the
-frame stack does no work unless a call pushes or pops a frame.
+The ranges do not overlap.
+
+**Correction, same day.** "The frame stack does no work unless a call pushes or
+pops a frame" was an argument from the design, not a measurement, and it was
+wrong. The dispatch loop binds `CallFrame &frame = frames.back()` once per
+*instruction*, not once per call, and `back()` computed `m_frames[m_depth - 1]`
+— a frame is 88 bytes, so that is a load of the data pointer, a load of the
+depth, and a multiply, on every instruction the VM executes. The integer loop,
+which makes one call and then runs thirteen million instructions, was 4.5%
+slower, and the noise on this machine hides 4.5% at low run counts: it took
+eleven runs and a three-way comparison against separately built binaries to
+separate it.
+
+Keeping the top frame as a pointer, updated on push and pop, makes `back()` one
+load. Against the same baseline, eleven runs: the integer loop went from 4.5%
+slower to 2.6% **faster**, and method calls from -9.7% to -20%.
+
+The lesson is the one the benchmark harness exists to enforce: a workload that
+"should not be affected" is still a workload that has to be run. `scripts/
+benchmark.py` runs all of them for exactly this reason.
 
 ## Next engineering priorities
 

@@ -471,6 +471,14 @@ inline void DictData::reserve(const std::size_t count) { m_entries.reserve(count
  * a hash allocation and keeps iteration deterministic. An open-addressed
  * position index appears only when the table reaches eight fields, so wide
  * objects do not turn the common representation back into a hash table.
+ *
+ * **One guarantee is weaker than the std::unordered_map this replaced.** That
+ * map kept references and pointers to its elements valid across an insertion;
+ * entries live in a vector here, so adding a field can move every one of them.
+ * A `Value &` or an iterator taken from this table is good only until the next
+ * insertion. No caller holds one across a mutation today -- all eight read the
+ * entry they found and are done with it -- and a caller that needs to must copy
+ * the name and look it up again.
  */
 class FieldTable
 {
