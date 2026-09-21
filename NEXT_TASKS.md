@@ -224,7 +224,23 @@ why the flags follow the binding rather than the argument count.
 
 ---
 
-## Task 3 — One implementation of the collection and text members
+## Task 3 — One implementation of the collection and text members — DONE
+
+Landed in four commits, one family each. The text members turned out to be
+unified already — both engines reached `execute_texte_operation` — so the work
+was the four collection families, and `Résultat` has no members: it is read
+through `agir selon` and `?`, not through a call.
+
+Six of the seven reachable Liste failures were worded differently by the two
+engines, and the VM was handing out `Dictionnaire.paires()` with no element
+contract at all, so it accepted an `Entier` in a list of pairs that the tree
+walker refused. Both are recorded in `RUNTIME_HARDENING.md` with the rule
+chosen.
+
+What could not be done here: the failing cases are pinned by
+`CliIntegration.BothBackendsReportTheSameRuntimeDiagnostic` rather than by the
+conformance corpus, because the engines still point the caret at different
+tokens and conformance compares stderr whole. That is task 5.
 
 ### Why
 
