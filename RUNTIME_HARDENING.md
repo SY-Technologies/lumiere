@@ -1342,6 +1342,32 @@ a `Liste[Texte]` into an unconstrained list by a round trip through a type that
 cannot even be written to. Both engines happened to do this; nothing pinned it.
 `tests/conformance/membres_liste_fixe` and the parity test now do.
 
+### Ensemble: one wording, and one mechanism for the contract
+
+The two engines already agreed on the Ensemble members, and on every message
+they produced — this family had not drifted. What it had was two of everything,
+including two copies of a `union`/`intersection`/`difference` body that branched
+on the member's own name to decide what it was.
+
+Two things were changed rather than moved, and both are stated here because
+neither was a difference between the engines:
+
+- **A set operation given something that is not a set now says it the way every
+  other builtin says it**: `Ensemble.union attend une valeur de type Ensemble`,
+  not `Ensemble.union attend un Ensemble`. The rule is that an argument of the
+  wrong type reads the same sentence everywhere; leaving this one would have put
+  two spellings of the same complaint inside one family, since `Ensemble.joindre`
+  already used the other.
+- **A derived set takes its contract the same way every other derived collection
+  does**, through `annotate_value`, rather than by assigning `constraint`
+  directly and *then* annotating. The two are not quite the same operation — the
+  annotation also reaches the elements, which is what makes an `Ensemble[Liste[Entier]]`
+  keep its inner contract — so doing both was doing one of them twice.
+
+`tests/conformance/membres_ensemble` runs every member, both spellings of
+`différence`, both directions of `sous_ensemble_de`, and the empty receiver on
+each side of every operation.
+
 ### What the arity check is, and is not
 
 Analysis rejects `l.ajouter(4, 5)` as LUM-S0015 before anything runs, so the

@@ -4,6 +4,7 @@
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <span>
 #include <string>
 
@@ -28,6 +29,11 @@ struct MemberCall
     [[noreturn]] void fail(const std::string &message) const
     {
         runtime.raise_runtime_error(site, message);
+        // The interface says that call must not return, and every member below
+        // is written on that promise: one that returned would walk straight
+        // into the operation the diagnostic was raised to prevent. A virtual
+        // call carries no [[noreturn]] of its own, so this states it.
+        std::abort();
     }
 
     [[nodiscard]] std::string signature() const
@@ -297,14 +303,122 @@ constexpr BuiltinMember liste_fixe_members[] = {
 // Ensemble
 // ---------------------------------------------------------------------------
 
+/** @brief The Ensemble a set operation is applied to. */
+Ref<EnsembleData> other_set(const MemberCall &call)
+{
+    if (!call.argument(0).is_ensemble())
+    {
+        call.fail(messages::valeur_attendue(call.signature(), "Ensemble"));
+    }
+    return call.argument(0).as_ensemble();
+}
+
+/** @brief A set derived from this receiver, carrying its contract if it has one. */
+Value derived_set(const MemberCall &call, Ref<EnsembleData> elements)
+{
+    const auto set = call.receiver.as_ensemble();
+    Value result = Value::ensemble(std::move(elements));
+    if (set->constraint)
+    {
+        call.annotate(result, "Ensemble[" + set->constraint->element_type + "]");
+    }
+    return result;
+}
+
 Value ensemble_contient(const MemberCall &call)
 {
     // Indexed, unlike the shared sequence member, which scans.
     return Value::logique(call.receiver.as_ensemble()->contains(call.argument(0)));
 }
 
+Value ensemble_ajouter(const MemberCall &call)
+{
+    const auto set = call.receiver.as_ensemble();
+    if (set->constraint)
+    {
+        call.enforce(call.argument(0), set->constraint->element_type);
+    }
+    call.require_key(call.argument(0));
+    return Value::logique(set->insert(call.argument(0)));
+}
+
+Value ensemble_retirer(const MemberCall &call)
+{
+    return Value::logique(call.receiver.as_ensemble()->erase(call.argument(0)));
+}
+
+Value ensemble_en_liste(const MemberCall &call)
+{
+    const auto set = call.receiver.as_ensemble();
+    auto list = make_ref<ListeData>();
+    list->elements = set->items();
+
+    Value result = Value::liste(std::move(list));
+    if (set->constraint)
+    {
+        call.annotate(result, "Liste[" + set->constraint->element_type + "]");
+    }
+    return result;
+}
+
+Value ensemble_union(const MemberCall &call)
+{
+    const auto other = other_set(call);
+    auto result = make_ref<EnsembleData>();
+    for (const Value &element : call.receiver.as_ensemble()->items())
+    {
+        result->insert(element);
+    }
+    for (const Value &element : other->items())
+    {
+        result->insert(element);
+    }
+    return derived_set(call, std::move(result));
+}
+
+// Intersection and difference differ only in which answer to the membership
+// test they keep, so they walk the receiver once, the same way.
+Value ensemble_retenir(const MemberCall &call, const bool keep_present)
+{
+    const auto other = other_set(call);
+    auto result = make_ref<EnsembleData>();
+    for (const Value &element : call.receiver.as_ensemble()->items())
+    {
+        if (other->contains(element) == keep_present)
+        {
+            result->insert(element);
+        }
+    }
+    return derived_set(call, std::move(result));
+}
+
+Value ensemble_intersection(const MemberCall &call) { return ensemble_retenir(call, true); }
+
+Value ensemble_difference(const MemberCall &call) { return ensemble_retenir(call, false); }
+
+Value ensemble_sous_ensemble_de(const MemberCall &call)
+{
+    const auto other = other_set(call);
+    for (const Value &element : call.receiver.as_ensemble()->items())
+    {
+        if (!other->contains(element))
+        {
+            return Value::logique(false);
+        }
+    }
+    return Value::logique(true);
+}
+
 constexpr BuiltinMember ensemble_members[] = {
     {"contient", 1, ensemble_contient},
+    {"ajouter", 1, ensemble_ajouter},
+    {"retirer", 1, ensemble_retirer},
+    {"en_liste", 0, ensemble_en_liste},
+    {"union", 1, ensemble_union},
+    {"intersection", 1, ensemble_intersection},
+    {"difference", 1, ensemble_difference},
+    {"différence", 1, ensemble_difference},
+    {"sous_ensemble_de", 1, ensemble_sous_ensemble_de},
 };
 
 // ---------------------------------------------------------------------------

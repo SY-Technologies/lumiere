@@ -7,103 +7,6 @@
 namespace lumiere
 {
 
-    Value TreeWalker::resolve_set_native_member(const Ref<EnsembleData> &set,
-                                                const Token &member,
-                                                Value receiver) const
-    {
-        if (set == nullptr)
-        {
-            return Value::rien();
-        }
-
-        const auto element_type = [set]() {
-            return set->constraint ? set->constraint->element_type : std::string("Universel");
-        };
-
-        if (member.lexeme == "ajouter")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, set](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Ensemble.ajouter", call_site);
-                walker.enforce_set_element_constraint(set, args[0].value, call_site, "Ensemble.ajouter");
-                walker.require_dictionary_key(args[0].value, call_site);
-                return Value::logique(set->insert(args[0].value)); });
-        }
-        if (member.lexeme == "retirer")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, set](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Ensemble.retirer", call_site);
-                return Value::logique(set->erase(args[0].value)); });
-        }
-        if (member.lexeme == "en_liste")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, set, element_type](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 0, 0, "Ensemble.en_liste", call_site);
-                auto list = make_ref<ListeData>();
-                list->elements = set->items();
-                Value result = Value::liste(std::move(list));
-                walker.register_value_annotation(result, Token(TokenType::IDENT, "Liste[" + element_type() + "]", call_site.line, call_site.column));
-                return result; });
-        }
-        if (member.lexeme == "union" || member.lexeme == "intersection" ||
-            member.lexeme == "difference" || member.lexeme == "différence")
-        {
-            const std::string operation = member.lexeme;
-            return make_tree_walker_native_method(std::move(receiver), [this, set, operation, element_type](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Ensemble." + operation, call_site);
-                if (!args[0].value.is_ensemble())
-                {
-                    walker.throw_runtime_error(call_site, "Ensemble." + operation + " attend un Ensemble");
-                }
-                const auto other = args[0].value.as_ensemble();
-                auto result = make_ref<EnsembleData>();
-                result->constraint = set->constraint;
-                if (operation == "union")
-                {
-                    for (const Value &element : set->items())
-                        result->insert(element);
-                    for (const Value &element : other->items())
-                        result->insert(element);
-                }
-                else
-                {
-                    const bool keep_present = operation == "intersection";
-                    for (const Value &element : set->items())
-                    {
-                        if (other->contains(element) == keep_present)
-                            result->insert(element);
-                    }
-                }
-                Value value = Value::ensemble(std::move(result));
-                walker.register_value_annotation(value, Token(TokenType::IDENT, "Ensemble[" + element_type() + "]", call_site.line, call_site.column));
-                return value; });
-        }
-        if (member.lexeme == "sous_ensemble_de")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, set](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Ensemble.sous_ensemble_de", call_site);
-                if (!args[0].value.is_ensemble())
-                {
-                    walker.throw_runtime_error(call_site, "Ensemble.sous_ensemble_de attend un Ensemble");
-                }
-                const auto other = args[0].value.as_ensemble();
-                for (const Value &element : set->items())
-                {
-                    if (!other->contains(element))
-                    {
-                        return Value::logique(false);
-                    }
-                }
-                return Value::logique(true); });
-        }
-
-        return Value::rien();
-    }
-
     Value TreeWalker::resolve_dict_native_member(const Ref<DictData> &dict,
                                                  const Token &member,
                                                  Value receiver) const
@@ -258,11 +161,6 @@ namespace lumiere
                                                *native_args.arguments,
                                                native_args.site);
                 }));
-        }
-
-        if (object.is_ensemble())
-        {
-            return resolve_set_native_member(object.as_ensemble(), member, object);
         }
 
         if (object.is_dictionnaire())

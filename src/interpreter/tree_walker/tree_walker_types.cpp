@@ -527,20 +527,6 @@ namespace lumiere
         ensure_value_matches_annotation(element, annotation, site, context);
     }
 
-    void TreeWalker::enforce_set_element_constraint(const Ref<EnsembleData> &set,
-                                                    const Value &element,
-                                                    const Token &site,
-                                                    const std::string &context) const
-    {
-        if (set == nullptr || !set->constraint)
-        {
-            return;
-        }
-
-        const Token annotation(TokenType::IDENT, set->constraint->element_type, site.line, site.column);
-        ensure_value_matches_annotation(element, annotation, site, context);
-    }
-
     void TreeWalker::enforce_dict_entry_constraint(const Ref<DictData> &dict,
                                                    const Value &key,
                                                    const Value &entry_value,

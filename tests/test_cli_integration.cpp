@@ -3971,6 +3971,12 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
         // a round trip through ListeFixe would launder it away.
         "soit s: Liste[Texte] = [\"a\"] afficher(s.en_liste_fixe(1).joindre(2))",
         "soit s: Liste[Texte] = [\"a\"] s.en_liste_fixe(1).en_liste().ajouter(3)",
+        // Every set operation takes a set, and says so the way every other
+        // builtin says what it takes.
+        "soit e: Ensemble[Entier] = {1} afficher(e.intersection(\"a\"))",
+        "soit e: Ensemble[Entier] = {1} afficher(e.différence(1))",
+        "soit e: Ensemble[Entier] = {1} afficher(e.sous_ensemble_de(1))",
+        "soit l: Liste[Universel] = [1] afficher(l.en_ensemble().joindre(2))",
         "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d[\"b\"] = \"x\"",
         "afficher(\"ab\".sous_texte(0, 99))",
     };

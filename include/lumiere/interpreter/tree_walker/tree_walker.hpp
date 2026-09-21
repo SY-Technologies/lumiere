@@ -381,19 +381,6 @@ namespace lumiere
          * turn a member token into a bound native method when the runtime owns
          * that operation.
          */
-        /** @brief Resolves a member call on an Ensemble receiver. */
-        Value resolve_set_native_member(const Ref<EnsembleData> &set,
-                                        const Token &member,
-                                        Value receiver) const;
-
-        /**
-         * @brief Checks that a set insertion respects the declared element type.
-         */
-        void enforce_set_element_constraint(const Ref<EnsembleData> &set,
-                                            const Value &element,
-                                            const Token &site,
-                                            const std::string &context) const;
-
         Value resolve_dict_native_member(const Ref<DictData> &dict,
                                         const Token &member,
                                         Value receiver) const;

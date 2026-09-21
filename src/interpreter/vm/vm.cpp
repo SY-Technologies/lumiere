@@ -191,17 +191,11 @@ public:
     void enforce_list_element(const Ref<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
-    void enforce_set_element(const Ref<EnsembleData> &set,
-                             const Value &value,
-                             const std::string &context) const;
     void enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                   const Value &key,
                                   const Value &value,
                                   const std::string &context) const;
 
-    [[nodiscard]] std::optional<std::string> list_element_type(const Ref<ListeData> &list) const;
-    [[nodiscard]] std::optional<std::string> fixed_list_element_type(const Ref<ListeFixeData> &list) const;
-    [[nodiscard]] std::optional<std::string> set_element_type(const Ref<EnsembleData> &set) const;
     [[nodiscard]] std::optional<std::pair<std::string, std::string>> dictionary_types(
         const Ref<DictData> &dictionary) const;
 
@@ -550,14 +544,6 @@ void VmRuntimeServices::enforce_list_element(const Ref<ListeData> &list,
         enforce_declared_type(value, list->constraint->element_type, context);
 }
 
-void VmRuntimeServices::enforce_set_element(const Ref<EnsembleData> &set,
-                                            const Value &value,
-                                            const std::string &context) const
-{
-    if (set->constraint)
-        enforce_declared_type(value, set->constraint->element_type, context);
-}
-
 void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                                const Value &key,
                                                const Value &value,
@@ -582,22 +568,6 @@ void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary
     }
     annotate_value(key, constraint->key_type, {});
     annotate_value(value, constraint->value_type, {});
-}
-
-std::optional<std::string> VmRuntimeServices::list_element_type(const Ref<ListeData> &list) const
-{
-    return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
-}
-
-std::optional<std::string> VmRuntimeServices::fixed_list_element_type(
-    const Ref<ListeFixeData> &list) const
-{
-    return list->constraint ? std::optional<std::string>(list->constraint->element_type) : std::nullopt;
-}
-
-std::optional<std::string> VmRuntimeServices::set_element_type(const Ref<EnsembleData> &set) const
-{
-    return set->constraint ? std::optional<std::string>(set->constraint->element_type) : std::nullopt;
 }
 
 std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
@@ -1254,11 +1224,6 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
 // literal or a name the module already owns. Binding a literal to a
 // `const std::string &` builds a string, and `valeurs.ajouter(index)` did that
 // twice per call on a path whose whole job is to push one value.
-std::string member_signature(const std::string_view family, const std::string_view member)
-{
-    return std::string(family).append(1, '.').append(member);
-}
-
 void require_member_arity(const std::string_view signature,
                           const std::vector<Value> &args,
                           const std::size_t expected)
@@ -1268,58 +1233,6 @@ void require_member_arity(const std::string_view signature,
         throw VmRuntimeError("VM: " + std::string(signature) + " attend " +
                              std::to_string(expected) + " argument(s)");
     }
-}
-
-void require_member_arity(const std::string_view family,
-                          const std::string_view member,
-                          const std::vector<Value> &args,
-                          const std::size_t expected)
-{
-    if (args.size() != expected)
-    {
-        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend " +
-                             std::to_string(expected) + " argument(s)");
-    }
-}
-
-std::int64_t member_integer(const Value &value, const std::string_view signature)
-{
-    if (!value.is_entier())
-    {
-        throw VmRuntimeError("VM: " + std::string(signature) + " attend un Entier");
-    }
-    return value.as_entier();
-}
-
-std::int64_t member_integer(const Value &value,
-                            const std::string_view family,
-                            const std::string_view member)
-{
-    if (!value.is_entier())
-    {
-        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend un Entier");
-    }
-    return value.as_entier();
-}
-
-std::string member_text(const Value &value, const std::string_view signature)
-{
-    if (!value.is_texte())
-    {
-        throw VmRuntimeError("VM: " + std::string(signature) + " attend un Texte");
-    }
-    return value.as_texte();
-}
-
-std::string member_text(const Value &value,
-                        const std::string_view family,
-                        const std::string_view member)
-{
-    if (!value.is_texte())
-    {
-        throw VmRuntimeError("VM: " + member_signature(family, member) + " attend un Texte");
-    }
-    return value.as_texte();
 }
 
 Value execute_member_call(const Value &receiver,
@@ -1348,87 +1261,6 @@ Value execute_member_call(const Value &receiver,
                                  " n'accepte pas d'arguments nommés");
         }
         args.push_back(argument.value);
-    }
-
-    if (receiver.is_ensemble())
-    {
-        auto set = receiver.as_ensemble();
-        const auto annotate_like_this_set = [&](Value result) {
-            if (const auto type = runtime.set_element_type(set); type.has_value())
-            {
-                runtime.annotate_value(result, "Ensemble[" + *type + "]", site);
-            }
-            return result;
-        };
-        const auto other_set = [&](const std::string &operation) {
-            if (args.empty() || !args[0].is_ensemble())
-            {
-                throw VmRuntimeError("VM: Ensemble." + operation + " attend un Ensemble");
-            }
-            return args[0].as_ensemble();
-        };
-
-        if (member == "ajouter")
-        {
-            require_member_arity("Ensemble.ajouter", args, 1);
-            runtime.enforce_set_element(set, args[0], "Ensemble.ajouter");
-            require_dictionary_key(args[0]);
-            return Value::logique(set->insert(args[0]));
-        }
-        if (member == "retirer")
-        {
-            require_member_arity("Ensemble.retirer", args, 1);
-            return Value::logique(set->erase(args[0]));
-        }
-        if (member == "en_liste")
-        {
-            require_member_arity("Ensemble.en_liste", args, 0);
-            auto list = make_ref<ListeData>();
-            list->elements = set->items();
-            Value result = Value::liste(std::move(list));
-            if (const auto type = runtime.set_element_type(set); type.has_value())
-            {
-                runtime.annotate_value(result, "Liste[" + *type + "]", site);
-            }
-            return result;
-        }
-        if (member == "union" || member == "intersection" || member == "difference" || member == "différence")
-        {
-            require_member_arity("Ensemble." + member, args, 1);
-            const auto other = other_set(member);
-            auto result = make_ref<EnsembleData>();
-            result->constraint = set->constraint;
-            if (member == "union")
-            {
-                for (const Value &element : set->items())
-                    result->insert(element);
-                for (const Value &element : other->items())
-                    result->insert(element);
-            }
-            else
-            {
-                const bool keep_present = member == "intersection";
-                for (const Value &element : set->items())
-                {
-                    if (other->contains(element) == keep_present)
-                        result->insert(element);
-                }
-            }
-            return annotate_like_this_set(Value::ensemble(std::move(result)));
-        }
-        if (member == "sous_ensemble_de")
-        {
-            require_member_arity("Ensemble.sous_ensemble_de", args, 1);
-            const auto other = other_set(member);
-            for (const Value &element : set->items())
-            {
-                if (!other->contains(element))
-                {
-                    return Value::logique(false);
-                }
-            }
-            return Value::logique(true);
-        }
     }
 
     if (receiver.is_dictionnaire())
