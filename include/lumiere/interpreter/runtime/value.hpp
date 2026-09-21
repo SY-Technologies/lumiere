@@ -70,10 +70,10 @@ struct EnsembleData : RefCounted
     std::optional<SetConstraint> constraint;
 
     /** @brief The elements, in insertion order. */
-    [[nodiscard]] const std::vector<Value> &items() const { return m_elements; }
-    [[nodiscard]] std::size_t size() const { return m_elements.size(); }
-    [[nodiscard]] bool empty() const { return m_elements.empty(); }
-    void reserve(const std::size_t count) { m_elements.reserve(count); }
+    [[nodiscard]] const std::vector<Value> &items() const;
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] bool empty() const;
+    void reserve(std::size_t count);
 
     [[nodiscard]] bool contains(const Value &element) const;
     /** @brief Adds @p element. Returns true when it was not already present. */
@@ -107,10 +107,10 @@ struct DictData : RefCounted
     std::optional<DictConstraint> constraint;
 
     /** @brief The entries, in insertion order. */
-    [[nodiscard]] const std::vector<DictEntry> &items() const { return m_entries; }
-    [[nodiscard]] std::size_t size() const { return m_entries.size(); }
-    [[nodiscard]] bool empty() const { return m_entries.empty(); }
-    void reserve(const std::size_t count) { m_entries.reserve(count); }
+    [[nodiscard]] const std::vector<DictEntry> &items() const;
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] bool empty() const;
+    void reserve(std::size_t count);
 
     /** @brief Entry whose key equals @p key, or nullptr. */
     [[nodiscard]] const DictEntry *find(const Value &key) const;
@@ -450,6 +450,18 @@ private:
     Payload m_payload {};
     Ref<RefCounted> m_ref;
 };
+
+// These definitions require Value to be complete. Keeping them below Value is
+// required by libc++, which instantiates vector's pointer arithmetic here.
+inline const std::vector<Value> &EnsembleData::items() const { return m_elements; }
+inline std::size_t EnsembleData::size() const { return m_elements.size(); }
+inline bool EnsembleData::empty() const { return m_elements.empty(); }
+inline void EnsembleData::reserve(const std::size_t count) { m_elements.reserve(count); }
+
+inline const std::vector<DictEntry> &DictData::items() const { return m_entries; }
+inline std::size_t DictData::size() const { return m_entries.size(); }
+inline bool DictData::empty() const { return m_entries.empty(); }
+inline void DictData::reserve(const std::size_t count) { m_entries.reserve(count); }
 
 struct TraceFrame
 {
