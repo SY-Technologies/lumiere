@@ -18,6 +18,7 @@
 #include <cassert>
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -1704,6 +1705,60 @@ struct CallFrame
 };
 
 /**
+ * @brief Active call frames plus storage retained for the next call at a depth.
+ *
+ * A push may grow m_frames and invalidate every CallFrame reference. The
+ * dispatch loop therefore pushes only as its final action before `break`; it
+ * never reads its `frame` reference after a push.
+ */
+class FrameStack
+{
+public:
+    CallFrame &push()
+    {
+        if (m_depth == m_frames.size())
+        {
+            m_frames.emplace_back();
+        }
+        return m_frames[m_depth++];
+    }
+
+    void pop()
+    {
+        assert(m_depth != 0);
+        CallFrame &frame = m_frames[--m_depth];
+        frame.locals.clear();
+        frame.captures.clear();
+        frame.function = nullptr;
+    }
+
+    CallFrame &back()
+    {
+        assert(m_depth != 0);
+        return m_frames[m_depth - 1];
+    }
+
+    const CallFrame &back() const
+    {
+        assert(m_depth != 0);
+        return m_frames[m_depth - 1];
+    }
+
+    [[nodiscard]] bool empty() const { return m_depth == 0; }
+    [[nodiscard]] std::size_t size() const { return m_depth; }
+
+    const CallFrame &operator[](const std::size_t index) const
+    {
+        assert(index < m_depth);
+        return m_frames[index];
+    }
+
+private:
+    std::vector<CallFrame> m_frames;
+    std::size_t m_depth = 0;
+};
+
+/**
  * @brief A field, with what its declared type demands of a value.
  *
  * The shape is settled when the field is first resolved, for the same reason
@@ -2042,12 +2097,13 @@ Value instantiate_vm_class(const ModuleBytecode &module,
     return Value::objet(std::move(object));
 }
 
-CallFrame make_call_frame(const ModuleBytecode &module,
-                          const std::size_t function_index,
-                          const std::vector<Value> &args,
-                          const std::size_t stack_base,
-                          std::vector<CellRef> captures = {},
-                          const SourceLocation call_site = {})
+void push_call_frame(FrameStack &frames,
+                     const ModuleBytecode &module,
+                     const std::size_t function_index,
+                     const std::vector<Value> &args,
+                     const std::size_t stack_base,
+                     std::vector<CellRef> captures = {},
+                     const SourceLocation call_site = {})
 {
     if (function_index >= module.functions.size())
     {
@@ -2064,17 +2120,18 @@ CallFrame make_call_frame(const ModuleBytecode &module,
         throw VmRuntimeError("VM: nombre de captures invalide pour '" + function.name + "'");
     }
 
-    CallFrame frame;
+    CallFrame &frame = frames.push();
     frame.function = &function;
+    frame.ip = 0;
     frame.stack_base = stack_base;
     frame.locals.resize(function.local_slot_count);
-    frame.captures = std::move(captures);
+    frame.captures.assign(std::make_move_iterator(captures.begin()),
+                          std::make_move_iterator(captures.end()));
     frame.call_site = call_site;
     for (std::size_t i = 0; i < args.size(); ++i)
     {
         frame.locals[i].get() = args[i];
     }
-    return frame;
 }
 
 // A parameter is named in diagnostics; bytecode that arrived without the name
@@ -2230,14 +2287,15 @@ Value run_frames(VmExecutionState &execution,
     auto &global_defined = execution.global_defined;
     auto &initialized_functions = execution.initialized_functions;
     std::vector<Value> stack;
-    std::vector<CallFrame> frames;
+    FrameStack frames;
     auto &runtime_services = execution.runtime_services;
-    frames.push_back(make_call_frame(module,
-                                     entry_function_index,
-                                     entry_arguments,
-                                     0,
-                                     std::move(entry_captures),
-                                     entry_call_site));
+    push_call_frame(frames,
+                    module,
+                    entry_function_index,
+                    entry_arguments,
+                    0,
+                    std::move(entry_captures),
+                    entry_call_site);
 
     const auto build_runtime_error = [&frames](std::string message, const std::size_t opcode_offset)
     {
@@ -2253,8 +2311,9 @@ Value run_frames(VmExecutionState &execution,
         }
         std::vector<StackFrame> trace;
         trace.reserve(frames.size());
-        for (const CallFrame &frame : frames)
+        for (std::size_t index = 0; index < frames.size(); ++index)
         {
+            const CallFrame &frame = frames[index];
             // Top-level code is a real frame to the VM and no frame at all to
             // the tree walker. Showing it would make the same failure read
             // differently depending on which engine ran it.
@@ -2390,12 +2449,13 @@ Value run_frames(VmExecutionState &execution,
                 break;
             }
             initialized_functions[body->function_index] = true;
-            frames.push_back(make_call_frame(module,
-                                             body->function_index,
-                                             {},
-                                             stack.size(),
-                                             {},
-                                             dispatch_location()));
+            push_call_frame(frames,
+                            module,
+                            body->function_index,
+                            {},
+                            stack.size(),
+                            {},
+                            dispatch_location());
             break;
         }
         case Opcode::GET_LOCAL:
@@ -2743,12 +2803,13 @@ Value run_frames(VmExecutionState &execution,
                 {
                     values.insert(values.begin(), function->receiver);
                 }
-                frames.push_back(make_call_frame(module,
-                                                 body->function_index,
-                                                 values,
-                                                 stack.size(),
-                                                 body->captures,
-                                                 dispatch_location()));
+                push_call_frame(frames,
+                                module,
+                                body->function_index,
+                                values,
+                                stack.size(),
+                                body->captures,
+                                dispatch_location());
                 break;
             }
             const Value *receiver = function != nullptr && function->is_method() ? &function->receiver : nullptr;
@@ -2805,12 +2866,13 @@ Value run_frames(VmExecutionState &execution,
                 {
                     values.push_back(argument.value);
                 }
-                frames.push_back(make_call_frame(module,
-                                                 direct->second,
-                                                 values,
-                                                 stack.size(),
-                                                 {},
-                                                 dispatch_location()));
+                push_call_frame(frames,
+                                module,
+                                direct->second,
+                                values,
+                                stack.size(),
+                                {},
+                                dispatch_location());
                 break;
             }
             if (global_defined[global_index] && globals[global_index].is_fonction())
@@ -2839,12 +2901,13 @@ Value run_frames(VmExecutionState &execution,
                 }
                 std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
                                                                         call_args);
-                frames.push_back(make_call_frame(module,
-                                                 body->function_index,
-                                                 values,
-                                                 stack.size(),
-                                                 body->captures,
-                                                 dispatch_location()));
+                push_call_frame(frames,
+                                module,
+                                body->function_index,
+                                values,
+                                stack.size(),
+                                body->captures,
+                                dispatch_location());
                 break;
             }
             const auto native = natives.find(name);
@@ -2956,12 +3019,13 @@ Value run_frames(VmExecutionState &execution,
                     }
                     std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
                                                                             args);
-                    frames.push_back(make_call_frame(module,
-                                                     body->function_index,
-                                                     values,
-                                                     stack.size(),
-                                                     body->captures,
-                                                     dispatch_location()));
+                    push_call_frame(frames,
+                                    module,
+                                    body->function_index,
+                                    values,
+                                    stack.size(),
+                                    body->captures,
+                                    dispatch_location());
                     break;
                 }
                 const LumiereObject *object = receiver.as_objet_ptr();
@@ -2981,13 +3045,14 @@ Value run_frames(VmExecutionState &execution,
                 const FunctionBytecode &target = module.functions[method->function_index];
                 std::vector<Value> method_args = normalize_closure_arguments(target, args);
                 method_args.insert(method_args.begin(), receiver);
-                frames.push_back(make_call_frame(module,
-                                                 method->function_index,
-                                                 method_args,
-                                                 stack.size(),
-                                                 vm_method_captures(receiver.as_objet_ptr()->klass.get(),
-                                                                    method->function_index),
-                                                 dispatch_location()));
+                push_call_frame(frames,
+                                module,
+                                method->function_index,
+                                method_args,
+                                stack.size(),
+                                vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                   method->function_index),
+                                dispatch_location());
                 break;
             }
 
@@ -3256,7 +3321,7 @@ Value run_frames(VmExecutionState &execution,
                     static_cast<std::uint32_t>(frame.call_site.line),
                     static_cast<std::uint32_t>(frame.call_site.column)});
                 stack.resize(frame.stack_base);
-                frames.pop_back();
+                frames.pop();
                 if (frames.empty())
                 {
                     return error;
@@ -3287,7 +3352,7 @@ Value run_frames(VmExecutionState &execution,
                     static_cast<std::uint32_t>(frame.call_site.column)});
             }
             stack.resize(frame.stack_base);
-            frames.pop_back();
+            frames.pop();
             if (frames.empty())
             {
                 return result;

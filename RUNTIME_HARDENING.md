@@ -1204,6 +1204,31 @@ insertion and replacement, indexed lookup after growth, removal and iteration
 order. There is no source-level object-field enumeration API to express that
 last invariant as a language conformance program.
 
+### Call frames keep their storage — 2026-09-20
+
+Returning from a VM call destroyed its frame, including the capacity of the
+locals and captures vectors. The next call at the same depth allocated them
+again. The frame stack now separates active depth from storage: pop releases
+the Values and cells but retains both vectors' capacity, and push initializes
+the frame already stored at that depth.
+
+This invariant is explicit beside the stack implementation: pushing may grow
+the backing vector and invalidate the dispatch loop's `CallFrame` reference,
+so every push remains the final action before `break`.
+
+Allocation counts are exact. On 100,000 direct function calls they fell from
+300,805 to 200,806; on two million method calls, from 6,000,976 to 4,000,977.
+That is one allocation removed per call. Fifteen measured runs per binary after
+one warm-up, baseline first:
+
+| Workload | Before median (min–max), s | After median (min–max), s | Change |
+| --- | --- | --- | --- |
+| function_calls | 0.032200 (0.031459–0.032550) | 0.029575 (0.028738–0.030421) | −8.2% |
+| method_calls | 0.537143 (0.529541–0.552883) | 0.485106 (0.483121–0.500320) | −9.7% |
+
+The ranges do not overlap. The other workloads overlap their baselines; the
+frame stack does no work unless a call pushes or pops a frame.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
