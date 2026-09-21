@@ -245,6 +245,9 @@ Status: in progress — 2026-09-20; ahead of CPython at the median, behind on th
       looked: the four things the profile actually named were names resolved at
       run time, not the value's size.
 
+These two, and three correctness items, are specified for implementation in
+`NEXT_TASKS.md`.
+
 - [ ] **Give a field a slot instead of a name.** The class-chain walk is gone —
       each class remembers what a member index resolves to — but a field still
       lives in a hash table keyed by its name, so reading one hashes a string. A
