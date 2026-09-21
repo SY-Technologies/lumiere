@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <functional>
 #include <sstream>
 
 namespace lumiere
@@ -380,113 +381,120 @@ bool Value::operator==(const Value &other) const
     return ref_identity() == other.ref_identity();
 }
 
+namespace
+{
+
+/** @brief Joins already-rendered parts, as `[a, b]` or `{a, b}`. */
+void append_joined(std::string &out,
+                   const char open,
+                   const char close,
+                   const std::size_t count,
+                   const std::function<void(std::string &, std::size_t)> &append_one)
+{
+    out += open;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (i > 0)
+        {
+            out += ", ";
+        }
+        append_one(out, i);
+    }
+    out += close;
+}
+
+} // namespace
+
+/**
+ * @brief Renders a value the way the language prints it.
+ *
+ * Builds a string directly. This used to run every conversion through a
+ * std::ostringstream, including `123` becoming "123": constructing one of those
+ * sets up a stream buffer and consults the locale, which measured around 350 ns
+ * for a seven-character key. It sits under every `afficher`, every
+ * `texte + nombre`, and every dictionary key built from a number, so that was
+ * most of the cost of building text at all.
+ */
 std::string Value::to_string() const
 {
-    std::ostringstream out;
-
     switch (type)
     {
     case Type::ENTIER:
-        out << as_entier();
-        break;
+        return std::to_string(as_entier());
     case Type::DECIMAL:
-        out << numeric::decimal_to_text(as_decimal());
-        break;
+        return numeric::decimal_to_text(as_decimal());
     case Type::LOGIQUE:
-        out << (as_logique() ? "vrai" : "faux");
-        break;
+        return as_logique() ? "vrai" : "faux";
     case Type::SYMBOLE:
-        out << utf8::encode_character(as_symbole());
-        break;
+        return utf8::encode_character(as_symbole());
     case Type::TEXTE:
-        out << as_texte();
-        break;
-    case Type::LISTE:
-        out << "[";
-        for (std::size_t i = 0; i < as_liste()->elements.size(); ++i)
-        {
-            if (i > 0)
-            {
-                out << ", ";
-            }
-            out << as_liste()->elements[i].to_string();
-        }
-        out << "]";
-        break;
-    case Type::LISTE_FIXE:
-        out << "[";
-        for (std::size_t i = 0; i < as_liste_fixe()->elements.size(); ++i)
-        {
-            if (i > 0)
-            {
-                out << ", ";
-            }
-            out << as_liste_fixe()->elements[i].to_string();
-        }
-        out << "]";
-        break;
-    case Type::DICTIONNAIRE:
-        out << "{";
-        for (std::size_t i = 0; i < as_dictionnaire()->size(); ++i)
-        {
-            if (i > 0)
-            {
-                out << ", ";
-            }
-            out << as_dictionnaire()->items()[i].first.to_string()
-                << ": "
-                << as_dictionnaire()->items()[i].second.to_string();
-        }
-        out << "}";
-        break;
-    case Type::ENSEMBLE:
-        out << "{";
-        for (std::size_t i = 0; i < as_ensemble()->items().size(); ++i)
-        {
-            if (i > 0)
-            {
-                out << ", ";
-            }
-            out << as_ensemble()->items()[i].to_string();
-        }
-        out << "}";
-        break;
-    case Type::OBJET:
-        if (as_objet() != nullptr &&
-            as_objet()->klass != nullptr)
-        {
-            out << as_objet()->klass->name;
-            const auto cause =
-                as_objet()->fields.find("cause");
-            if (cause != as_objet()->fields.end())
-            {
-                out << '(' << cause->second.to_string() << ')';
-            }
-        }
-        else
-        {
-            out << "<objet>";
-        }
-        break;
+        return as_texte();
     case Type::FONCTION:
-        out << "<fonction>";
-        break;
+        return "<fonction>";
     case Type::CLASSE:
-        out << "<classe>";
-        break;
+        return "<classe>";
     case Type::INTERFACE:
-        out << "<interface>";
-        break;
-    case Type::RESULTAT:
-        out << (as_resultat()->success ? "Succès(" : "Échec(")
-            << as_resultat()->payload.to_string() << ')';
-        break;
+        return "<interface>";
     case Type::RIEN:
-        out << "rien";
-        break;
-    }
+        return "rien";
 
-    return out.str();
+    case Type::LISTE:
+    case Type::LISTE_FIXE:
+    {
+        const std::vector<Value> &elements = type == Type::LISTE ? as_liste()->elements
+                                                                 : as_liste_fixe()->elements;
+        std::string out;
+        append_joined(out, '[', ']', elements.size(), [&](std::string &text, const std::size_t i) {
+            text += elements[i].to_string();
+        });
+        return out;
+    }
+    case Type::ENSEMBLE:
+    {
+        const std::vector<Value> &elements = as_ensemble()->items();
+        std::string out;
+        append_joined(out, '{', '}', elements.size(), [&](std::string &text, const std::size_t i) {
+            text += elements[i].to_string();
+        });
+        return out;
+    }
+    case Type::DICTIONNAIRE:
+    {
+        const std::vector<DictEntry> &entries = as_dictionnaire()->items();
+        std::string out;
+        append_joined(out, '{', '}', entries.size(), [&](std::string &text, const std::size_t i) {
+            text += entries[i].first.to_string();
+            text += ": ";
+            text += entries[i].second.to_string();
+        });
+        return out;
+    }
+    case Type::OBJET:
+    {
+        const LumiereObject *object = as_objet_ptr();
+        if (object == nullptr || object->klass == nullptr)
+        {
+            return "<objet>";
+        }
+        std::string out = object->klass->name;
+        if (const auto cause = object->fields.find("cause"); cause != object->fields.end())
+        {
+            out += '(';
+            out += cause->second.to_string();
+            out += ')';
+        }
+        return out;
+    }
+    case Type::RESULTAT:
+    {
+        const ResultData *result = as_resultat_ptr();
+        std::string out = result->success ? "Succès(" : "Échec(";
+        out += result->payload.to_string();
+        out += ')';
+        return out;
+    }
+    }
+    return "rien";
 }
 
 std::string Value::type_name() const

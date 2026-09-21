@@ -1114,6 +1114,31 @@ field still lives in a hash table keyed by its name. Both are the same shape of
 problem as the three above — a name resolved at run time that a compiler already
 knew — and both want a slot index rather than a faster lookup.
 
+### Building text ran through a stream — 2026-09-20
+
+`Value::to_string` constructed a `std::ostringstream` for every conversion,
+including turning `123` into `"123"`. Constructing one sets up a stream buffer
+and consults the locale; it measured around 350 ns to build a seven-character
+dictionary key. That function sits under every `afficher`, every
+`texte + nombre`, and every key built from a number, so it was most of what
+building text cost at all. Appending to a `std::string` instead: concatenation
+-62%, and the dictionary workload -43%, from 1.79x CPython to about level.
+
+Reading that code turned up a correctness bug beside the slow one.
+**`Texte.convertir_decimal` was a second way of writing a Décimal**, and it
+disagreed with the first: a stream's six significant digits gave `"1.23457e+08"`
+for `123456789.125`, `"0.3"` for `0.1 + 0.2`, and `"2"` for `2.0` — losing
+precision, reporting a number that was not computed, and losing the type. Those
+are the three defects fixed for `afficher` in `1856f13`, still alive in a
+function nobody had connected to it. Both engines were wrong identically, so
+conformance could not see it, and a unit test had the wrong answer pinned as the
+expectation. It uses `numeric::decimal_to_text` now, like everything else, and
+`tests/conformance/decimaux_fidelite` covers the conversion functions.
+
+Twice now the same shape: a fast path and a correctness bug in the same code,
+because both come from a routine written without asking what the language's rule
+was. Agreement between the engines does not catch it; only having one rule does.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

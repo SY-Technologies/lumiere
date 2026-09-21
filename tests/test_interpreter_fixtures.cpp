@@ -3965,7 +3965,11 @@ TEST(InterpreterStandardLibrary, CoversTexteBoundaryCasesComprehensively)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbaa\nbb\n1\n2\n1\n\n-42\n2\nfaux\n");
+    // Texte.convertir_decimal(2) is a Décimal, so it is written "2.0": that is
+    // the language's one way of writing a Décimal, and the "2" pinned here was
+    // a stream's default formatting, which also turned 123456789.125 into
+    // "1.23457e+08".
+    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbaa\nbb\n1\n2\n1\n\n-42\n2.0\nfaux\n");
 }
 
 TEST(InterpreterStandardLibrary, KeepsTexteMethodAndModuleFormsConsistent)

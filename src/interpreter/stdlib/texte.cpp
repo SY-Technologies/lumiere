@@ -465,17 +465,17 @@ void register_texte_module(Module &module)
             {
                 runtime.raise_runtime_error(native_args.site, "Texte.joindre attend une Liste");
             }
-            std::ostringstream out;
+            std::string out;
             const auto list = values.as_liste();
             for (std::size_t i = 0; i < list->elements.size(); ++i)
             {
                 if (i > 0)
                 {
-                    out << separator;
+                    out += separator;
                 }
-                out << stdlib_expect_text(runtime, list->elements[i], "Texte.joindre", native_args.site);
+                out += stdlib_expect_text(runtime, list->elements[i], "Texte.joindre", native_args.site);
             }
-            return Value::texte(out.str());
+            return Value::texte(std::move(out));
         });
 
     stdlib_bind_public_function(
@@ -495,9 +495,15 @@ void register_texte_module(Module &module)
         [](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
             stdlib_expect_positional(runtime, args, 1, "Texte.convertir_decimal", native_args.site);
-            std::ostringstream out;
-            out << stdlib_expect_decimal(runtime, args[0].value, "Texte.convertir_decimal", native_args.site);
-            return Value::texte(out.str());
+            // The language has one way of writing a Décimal, and this is not a
+            // second one. A stream's default is six significant digits, so this
+            // turned 123456789.125 into "1.23457e+08", 0.1 + 0.2 into "0.3",
+            // and 2.0 into "2" -- losing precision, reporting a number that was
+            // not computed, and losing the type -- while afficher printed all
+            // three correctly. Both engines were wrong in the same way, so
+            // nothing comparing them could see it.
+            return Value::texte(numeric::decimal_to_text(
+                stdlib_expect_decimal(runtime, args[0].value, "Texte.convertir_decimal", native_args.site)));
         });
 
     stdlib_bind_public_function(
