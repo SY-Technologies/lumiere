@@ -1703,6 +1703,22 @@ struct CallFrame
     }
 };
 
+/**
+ * @brief Whether this frame is a method running on that very object.
+ *
+ * What "privé" means: the member is reachable from the object's own methods and
+ * nowhere else. A frame qualifies when it is a method -- the compiler names a
+ * method `Classe.methode`, which is the only name with a dot in it -- and its
+ * receiver, which always occupies slot zero, is the same object.
+ */
+bool accesses_own_object(CallFrame &frame, const Value &receiver)
+{
+    return !frame.locals.empty() &&
+           frame.function->name.find('.') != std::string::npos &&
+           frame.locals[0].get().is_objet() &&
+           frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
+}
+
 struct VmClosureBody final : RuntimeFunctionBody
 {
     std::size_t function_index = 0;
@@ -1728,6 +1744,14 @@ struct VmClassBody final : RuntimeClassBody
 {
     std::size_t descriptor_index = 0;
     std::unordered_map<std::size_t, std::vector<CellRef>> method_captures;
+
+    // What a member index resolves to in this class and its ancestors, worked
+    // out the first time it is asked. Resolving walks the chain comparing
+    // names, and that happened on every field access and every method call --
+    // six million string walks for two million calls. The answer cannot change:
+    // a class's parent is fixed when the class is made.
+    mutable std::vector<std::optional<const VmFieldDescriptor *>> fields_by_member;
+    mutable std::vector<std::optional<const VmMethodDescriptor *>> methods_by_member;
 
     VmClassBody() { origin = BodyOrigin::Vm; }
 
@@ -1867,6 +1891,53 @@ const std::vector<CellRef> *find_vm_method_captures(const LumiereClass *klass,
         klass = klass->parent.get();
     }
     return nullptr;
+}
+
+// The cached forms of the two walks above. A class with no VM body -- one the
+// tree walker made, reached through a shared value -- falls back to the walk.
+template <typename Descriptor, typename Cache, typename Find>
+const Descriptor *resolve_member(const ModuleBytecode &module,
+                                 const LumiereClass *klass,
+                                 const std::size_t member_index,
+                                 Cache &&cache_of,
+                                 Find &&find)
+{
+    const VmClassBody *body = klass != nullptr ? vm_class_body(klass->body.get()) : nullptr;
+    if (body == nullptr)
+    {
+        return find(module, klass, module.members[member_index]);
+    }
+    auto &cache = cache_of(*body);
+    if (cache.size() != module.members.size())
+    {
+        cache.assign(module.members.size(), std::nullopt);
+    }
+    std::optional<const Descriptor *> &slot = cache[member_index];
+    if (!slot.has_value())
+    {
+        slot = find(module, klass, module.members[member_index]);
+    }
+    return *slot;
+}
+
+const VmFieldDescriptor *resolve_field(const ModuleBytecode &module,
+                                       const LumiereClass *klass,
+                                       const std::size_t member_index)
+{
+    return resolve_member<VmFieldDescriptor>(
+        module, klass, member_index,
+        [](const VmClassBody &body) -> auto & { return body.fields_by_member; },
+        find_vm_field);
+}
+
+const VmMethodDescriptor *resolve_method(const ModuleBytecode &module,
+                                         const LumiereClass *klass,
+                                         const std::size_t member_index)
+{
+    return resolve_member<VmMethodDescriptor>(
+        module, klass, member_index,
+        [](const VmClassBody &body) -> auto & { return body.methods_by_member; },
+        find_vm_method);
 }
 
 std::vector<CellRef> vm_method_captures(const LumiereClass *klass,
@@ -2874,20 +2945,16 @@ Value run_frames(VmExecutionState &execution,
                     break;
                 }
                 const LumiereObject *object = receiver.as_objet_ptr();
-                const VmMethodDescriptor *method = find_vm_method(module,
+                const VmMethodDescriptor *method = resolve_method(module,
                                                                   parent_dispatch
                                                                       ? object->klass->parent.get()
                                                                       : object->klass.get(),
-                                                                  module.members[member_index]);
+                                                                  member_index);
                 if (method == nullptr)
                 {
                     throw VmRuntimeError("VM: méthode introuvable '" + module.members[member_index] + "'");
                 }
-                const bool private_access = !frame.locals.empty() &&
-                                            frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0].get().is_objet() &&
-                                            frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
-                if (method->is_private && !private_access)
+                if (method->is_private && !accesses_own_object(frame, receiver))
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
@@ -2941,14 +3008,14 @@ Value run_frames(VmExecutionState &execution,
                 const auto field = receiver.as_objet_ptr()->fields.find(module.members[member_index]);
                 if (field != receiver.as_objet_ptr()->fields.end())
                 {
-                    const VmFieldDescriptor *descriptor = find_vm_field(module,
+                    const VmFieldDescriptor *descriptor = resolve_field(module,
                                                                         receiver.as_objet_ptr()->klass.get(),
-                                                                        module.members[member_index]);
-                    const bool private_access = !frame.locals.empty() &&
-                                                frame.function->name.find('.') != std::string::npos &&
-                                                frame.locals[0].get().is_objet() &&
-                                                frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
-                    if (descriptor != nullptr && descriptor->is_private && !private_access)
+                                                                        member_index);
+                    // Asking whether this frame is the object's own method
+                    // searches the frame's name, so it is only asked about a
+                    // member that is actually private.
+                    if (descriptor != nullptr && descriptor->is_private &&
+                        !accesses_own_object(frame, receiver))
                     {
                         throw VmRuntimeError("VM: accès interdit au champ privé '" + descriptor->name + "'");
                     }
@@ -2956,20 +3023,16 @@ Value run_frames(VmExecutionState &execution,
                     break;
                 }
                 const LumiereObject *object = receiver.as_objet_ptr();
-                const VmMethodDescriptor *method = find_vm_method(module,
+                const VmMethodDescriptor *method = resolve_method(module,
                                                                   parent_dispatch
                                                                       ? object->klass->parent.get()
                                                                       : object->klass.get(),
-                                                                  module.members[member_index]);
+                                                                  member_index);
                 if (method == nullptr)
                 {
                     throw VmRuntimeError("VM: membre introuvable '" + module.members[member_index] + "'");
                 }
-                const bool private_access = !frame.locals.empty() &&
-                                            frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0].get().is_objet() &&
-                                            frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
-                if (method->is_private && !private_access)
+                if (method->is_private && !accesses_own_object(frame, receiver))
                 {
                     throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
@@ -3005,18 +3068,14 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: affectation membre sur une valeur non objet");
             }
-            const VmFieldDescriptor *field = find_vm_field(module,
+            const VmFieldDescriptor *field = resolve_field(module,
                                                            receiver.as_objet_ptr()->klass.get(),
-                                                           module.members[member_index]);
+                                                           member_index);
             if (field == nullptr)
             {
                 throw VmRuntimeError("VM: champ introuvable '" + module.members[member_index] + "'");
             }
-            const bool private_access = !frame.locals.empty() &&
-                                        frame.function->name.find('.') != std::string::npos &&
-                                        frame.locals[0].get().is_objet() &&
-                                        frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
-            if (field->is_private && !private_access)
+            if (field->is_private && !accesses_own_object(frame, receiver))
             {
                 throw VmRuntimeError("VM: affectation interdite au champ privé '" + field->name + "'");
             }

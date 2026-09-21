@@ -1139,6 +1139,34 @@ Twice now the same shape: a fast path and a correctness bug in the same code,
 because both come from a routine written without asking what the language's rule
 was. Agreement between the engines does not catch it; only having one rule does.
 
+### A member resolved once per class, not once per access — 2026-09-20
+
+Every field access and every method call asked the same question again: walk
+the class and its ancestors, comparing the member's name against each field and
+each method. Six million string walks for two million calls. Twice over, in
+fact, because reading a field looked the descriptor up only to find out whether
+it was private — and then computed whether the frame was the object's own
+method by searching the frame's name for a dot, whether or not privacy was at
+stake.
+
+The answer cannot change: a class's parent is fixed when the class is made, and
+so are its descriptors. So each class body now remembers what a member index
+resolves to, filled the first time it is asked — a vector indexed by the
+module's member table, one pointer per member per class. A class the tree walker
+made has no such body and falls back to the walk. Privacy is asked about only
+when the member is actually private.
+
+Method calls -20%, function calls -16%. Cumulatively over the session's four
+rounds, method calls went 1.09s to 0.63s, -42%.
+
+This is the last of the "a name resolved while the program runs that the
+compiler already knew" family that can be fixed without changing how an object
+is laid out. What remains is the layout itself: a field still lives in a hash
+table keyed by its name, so reading one hashes a string. Giving a field a fixed
+offset in the object is the next step, and it is a bigger one -- the object
+representation is shared with the tree walker and with every native in the
+standard library.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
