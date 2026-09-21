@@ -288,7 +288,12 @@ Do not quietly adopt one engine's behaviour because it was easier to keep.
 
 ---
 
-## Task 4 — Analysis that carries the shell's earlier submissions
+## Task 4 — Analysis that carries the shell's earlier submissions — DONE
+
+Landed. The seeding goes through the type interner first, which the brief did
+not anticipate: `same_type` compares by pointer, so a fresh interner disagrees
+with the previous one about a type they both call `Entier`. See
+`RUNTIME_HARDENING.md`.
 
 ### Why
 

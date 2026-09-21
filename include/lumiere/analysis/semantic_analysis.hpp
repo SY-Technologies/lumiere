@@ -99,7 +99,8 @@ private:
     friend SemanticAnalysis analyze_semantics(const StmtList &,
                                               std::string,
                                               const SemanticImportEnvironment &,
-                                              SemanticAnalysisOptions);
+                                              SemanticAnalysisOptions,
+                                              const SemanticModel *);
 
     std::unordered_map<std::string, SemanticTypeRef> m_type_symbols;
     std::unordered_map<std::string, SemanticSymbol> m_value_symbols;
@@ -123,8 +124,6 @@ struct SemanticAnalysisOptions
 {
     bool consume_last_expression = false;
     bool require_entry_point = false;
-    // See AnalysisOptions::incremental_submission.
-    bool incremental_submission = false;
 };
 
 /**
@@ -134,10 +133,20 @@ struct SemanticAnalysisOptions
  * analysis becomes mandatory. It resolves callable signatures before bodies,
  * which permits forward type references.
  */
+/**
+ * @param previous What an earlier analysis established, or nullptr.
+ *
+ * Only the shell passes this. It analyzes one submission at a time while the
+ * interpreter carries every earlier one, so without it a name declared on an
+ * earlier line looks undeclared. The model that is handed in keeps pointers
+ * into the statements it was built from: those must outlive this call, which
+ * in the shell they do because every accepted submission is kept.
+ */
 [[nodiscard]] SemanticAnalysis analyze_semantics(const StmtList &statements,
                                                  std::string source_path = {},
                                                  const SemanticImportEnvironment &imports = {},
-                                                 SemanticAnalysisOptions options = {});
+                                                 SemanticAnalysisOptions options = {},
+                                                 const SemanticModel *previous = nullptr);
 
 /**
  * Builds the public type/value manifest consumed by importing modules.

@@ -252,7 +252,8 @@ bool AnalysisResult::has_errors() const noexcept
 
 AnalysisResult analyze_source(std::string source,
                               std::string source_path,
-                              const AnalysisOptions options)
+                              const AnalysisOptions options,
+                              const SemanticModel *previous)
 {
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.tokenise();
@@ -293,12 +294,13 @@ AnalysisResult analyze_source(std::string source,
                     imports,
                     SemanticAnalysisOptions{
                         options.consume_last_expression,
-                        options.require_entry_point,
-                        options.incremental_submission});
+                        options.require_entry_point},
+                    previous);
             result.diagnostics.insert(
                 result.diagnostics.end(),
                 std::make_move_iterator(semantics.diagnostics.begin()),
                 std::make_move_iterator(semantics.diagnostics.end()));
+            result.model = std::make_shared<SemanticModel>(std::move(semantics.model));
         }
     }
     return result;

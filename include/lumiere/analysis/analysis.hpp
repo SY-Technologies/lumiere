@@ -3,6 +3,7 @@
 #include "lumiere/diagnostics/diagnostic.hpp"
 #include "lumiere/parser/ast.hpp"
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10,10 +11,21 @@
 namespace lumiere
 {
 
+class SemanticModel;
+
 struct AnalysisResult
 {
     StmtList statements;
     std::vector<Diagnostic> diagnostics;
+
+    /**
+     * @brief What this analysis established: every name, type and signature.
+     *
+     * Kept so a later analysis of the same session can start from it — the
+     * shell is the only caller that does. It points into `statements`, so it
+     * is only good for as long as they are.
+     */
+    std::shared_ptr<SemanticModel> model;
 
     /**
      * @brief Reports whether analysis produced at least one error diagnostic.
@@ -31,13 +43,6 @@ struct AnalysisOptions
     // default: `lumiere check` on a module must not demand a 'principal' the
     // module has no business declaring.
     bool require_entry_point = false;
-    // Set for one line typed at the shell. Each submission is analyzed on its
-    // own, so a name declared by an earlier one is not in this buffer and
-    // cannot be told apart from a name that was never declared. The rules that
-    // resolve names stand down here rather than reject working code; the
-    // interpreter, which does carry the earlier submissions, still catches an
-    // unknown name when the line runs.
-    bool incremental_submission = false;
 };
 
 /**
@@ -54,6 +59,7 @@ struct AnalysisOptions
  */
 AnalysisResult analyze_source(std::string source,
                               std::string source_path = {},
-                              AnalysisOptions options = {});
+                              AnalysisOptions options = {},
+                              const SemanticModel *previous = nullptr);
 
 } // namespace lumiere

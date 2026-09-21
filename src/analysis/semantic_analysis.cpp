@@ -97,6 +97,25 @@ public:
         }
     }
 
+    /**
+     * @brief Starts from what an earlier analysis of the same session settled.
+     *
+     * Only names and signatures are carried, not diagnostics: the previous
+     * submission was accepted, so it has none to repeat. The type interner
+     * comes first, because every symbol below names a type that has to keep
+     * meaning the same thing.
+     */
+    void seed_from(const SemanticModel &previous)
+    {
+        m_analysis.model.types.adopt(previous.types);
+        m_analysis.model.m_type_symbols = previous.m_type_symbols;
+        m_analysis.model.m_value_symbols = previous.m_value_symbols;
+        m_analysis.model.m_signatures = previous.m_signatures;
+        m_analysis.model.m_expression_signatures = previous.m_expression_signatures;
+        m_analysis.model.m_constructors = previous.m_constructors;
+        m_analysis.model.m_named_signatures = previous.m_named_signatures;
+    }
+
     SemanticAnalysis analyze(const StmtList &statements)
     {
         if (m_options.consume_last_expression &&
@@ -2850,11 +2869,6 @@ private:
             return;
         }
 
-        if (m_options.incremental_submission)
-        {
-            // An earlier line may have declared it; this buffer cannot tell.
-            return;
-        }
         diagnose(target.name, "LUM-S0055",
                  "affectation à '" + target.name.lexeme + "', qui n'est déclaré nulle part");
     }
@@ -2875,7 +2889,7 @@ private:
     void diagnose_value_read(const IdentifierExpr &read)
     {
         const Token &name = read.name;
-        if (m_options.incremental_submission || name.type != TokenType::IDENT)
+        if (name.type != TokenType::IDENT)
         {
             return;
         }
@@ -4008,13 +4022,15 @@ bool SemanticAnalysis::has_errors() const noexcept
 SemanticAnalysis analyze_semantics(const StmtList &statements,
                                    std::string source_path,
                                    const SemanticImportEnvironment &imports,
-                                   const SemanticAnalysisOptions options)
+                                   const SemanticAnalysisOptions options,
+                                   const SemanticModel *previous)
 {
-    return SemanticAnalyzer(
-               std::move(source_path),
-               imports,
-               options)
-        .analyze(statements);
+    SemanticAnalyzer analyzer(std::move(source_path), imports, options);
+    if (previous != nullptr)
+    {
+        analyzer.seed_from(*previous);
+    }
+    return analyzer.analyze(statements);
 }
 
 SemanticModuleExports collect_semantic_exports(const StmtList &statements, const SemanticModel &model)

@@ -1247,6 +1247,36 @@ The lesson is the one the benchmark harness exists to enforce: a workload that
 "should not be affected" is still a workload that has to be run. `scripts/
 benchmark.py` runs all of them for exactly this reason.
 
+### The shell resolves names again — 2026-09-20
+
+Every rule that resolves a name stood down in the shell. `AnalysisOptions`
+carried a flag saying so, because each submission was analyzed on its own while
+the interpreter carried every earlier one, and a name declared on line one
+looked undeclared on line two.
+
+The flag was put there to stop a bug it was actually hiding: `soit base = 40`
+followed by `base = 60` had been refused since LUM-S0055 landed — an assignment
+to an undeclared name — so the line never ran and the shell then printed 40 as
+though nothing had happened. **No test typed two dependent lines**, which is the
+whole reason it shipped.
+
+An analysis now starts from what the previous one settled: its names, its type
+symbols and its signatures. The subtle part is the type interner. `same_type`
+compares `SemanticTypeRef` by pointer, which only means anything among types one
+interner produced, so a fresh interner would have disagreed with the last one
+about `Entier` while both printed the same word. The new analysis adopts the old
+interner's table — the same shared objects, not copies — before any symbol that
+names a type is carried across.
+
+Only a submission that *ran* contributes. One that raised part-way may never have
+made the binding its declaration promised, and the next line must not be told
+otherwise.
+
+`incremental_submission` is gone rather than left switched off, and the shell
+diagnoses an unknown name with LUM-S0057 before the line runs, like a file does.
+`CliIntegration.ReplResolvesNamesDeclaredByEarlierSubmissions` types the lines
+that would have caught the original bug.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

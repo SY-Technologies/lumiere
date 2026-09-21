@@ -1752,6 +1752,46 @@ TEST(CliIntegration, PrintsLinkedIrAndBytecode)
     EXPECT_NE(library_bytecode.stdout_text.find("function 0 doubler"), std::string::npos);
 }
 
+/**
+ * @brief The shell's analysis carries what earlier lines declared.
+ *
+ * Nothing typed two dependent lines until this test, which is how LUM-S0055
+ * shipped refusing `base = 60` after `soit base = 40`: the assignment was
+ * rejected as being to an undeclared name, the line never ran, and the shell
+ * then printed the old value as though nothing had happened.
+ */
+TEST(CliIntegration, ReplResolvesNamesDeclaredByEarlierSubmissions)
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_repl_names_test";
+    std::filesystem::create_directories(root);
+
+    const CommandResult result = run_cli("", root,
+                                         "soit base = 40\n"
+                                         "base = 60\n"
+                                         "base\n"
+                                         "fonction ajouter(x: Entier) -> Entier {\n"
+                                         "  retourne base + x\n"
+                                         "}\n"
+                                         "ajouter(2)\n"
+                                         "classe Boite { valeur: Entier }\n"
+                                         "Boite(valeur: 7).valeur\n"
+                                         "nom_absent\n"
+                                         ":quitter\n");
+    std::filesystem::remove_all(root);
+
+    EXPECT_EQ(result.exit_code, 0);
+    // The assignment ran, so the read that follows sees the new value.
+    EXPECT_NE(result.stdout_text.find("60\n"), std::string::npos);
+    // A function declared on one line closes over a name from an earlier one.
+    EXPECT_NE(result.stdout_text.find("62\n"), std::string::npos);
+    // So does a class, and its constructor's named argument.
+    EXPECT_NE(result.stdout_text.find("7\n"), std::string::npos);
+    // A name nothing declared is still caught, and now by the analyzer rather
+    // than by whichever engine reached it.
+    EXPECT_NE(result.stderr_text.find("LUM-S0057"), std::string::npos);
+    EXPECT_NE(result.stderr_text.find("nom_absent"), std::string::npos);
+}
+
 TEST(CliIntegration, ReplPreservesDefinitionsAndPrintsExpressionResults)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_repl_test";

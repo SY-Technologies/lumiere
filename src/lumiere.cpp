@@ -97,20 +97,30 @@ std::string read_file_text(const std::filesystem::path &path)
     return buffer.str();
 }
 
+/**
+ * @param previous What an earlier analysis of this session settled, or nullptr.
+ * @param out_model Receives what this analysis settles, for the next one.
+ *
+ * Both are for the shell, which analyzes one line at a time.
+ */
 std::unique_ptr<lumiere::Program> parse_program(
     std::string source,
     std::string source_path,
     const bool consume_last_expression = false,
     const bool require_entry_point = false,
-    const bool incremental_submission = false)
+    const lumiere::SemanticModel *previous = nullptr,
+    std::shared_ptr<lumiere::SemanticModel> *out_model = nullptr)
 {
     lumiere::AnalysisResult analysis =
         lumiere::analyze_source(
             source,
             source_path,
-            lumiere::AnalysisOptions{consume_last_expression,
-                                     require_entry_point,
-                                     incremental_submission});
+            lumiere::AnalysisOptions{consume_last_expression, require_entry_point},
+            previous);
+    if (out_model != nullptr)
+    {
+        *out_model = analysis.model;
+    }
     if (analysis.has_errors())
     {
         for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
@@ -390,7 +400,10 @@ int run_repl()
               << "Tapez :aide pour l'aide, :quitter pour sortir.\n";
 
     lumiere::TreeWalker interpreter;
+    // Every accepted submission is kept because the interpreter's values point
+    // into their statements -- and so does the model below.
     std::vector<std::unique_ptr<lumiere::Program>> submissions;
+    std::shared_ptr<lumiere::SemanticModel> session_model;
     std::string source;
     std::string line;
     while (true)
@@ -424,10 +437,12 @@ int run_repl()
             continue;
         }
 
-        // One line at a time: the analyzer sees only this submission, while
-        // the interpreter carries every earlier one, so the rules that resolve
-        // names have to stand down here.
-        auto program = parse_program(source, "<repl>", true, false, true);
+        // One line at a time, but not one line in isolation: each submission is
+        // analyzed starting from what the last accepted one established, so a
+        // name declared earlier is a name that resolves.
+        std::shared_ptr<lumiere::SemanticModel> submission_model;
+        auto program = parse_program(source, "<repl>", true, false,
+                                     session_model.get(), &submission_model);
         source.clear();
         if (program == nullptr)
         {
@@ -439,6 +454,10 @@ int run_repl()
             {
                 std::cout << result->to_string() << '\n';
             }
+            // Only a submission that ran contributes what it declared. One that
+            // raised part-way may never have made the binding its declaration
+            // promised, and the next line must not be told otherwise.
+            session_model = std::move(submission_model);
             submissions.push_back(std::move(program));
         }
         catch (const lumiere::RuntimeError &error)
