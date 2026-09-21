@@ -4,6 +4,7 @@
 #include "lumiere/interpreter/runtime/ref.hpp"
 #include "lumiere/parser/type_expr.hpp"
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -463,6 +464,90 @@ inline std::size_t DictData::size() const { return m_entries.size(); }
 inline bool DictData::empty() const { return m_entries.empty(); }
 inline void DictData::reserve(const std::size_t count) { m_entries.reserve(count); }
 
+/**
+ * @brief Small insertion-ordered table used for object fields.
+ *
+ * Language objects normally have only a few fields. A contiguous scan avoids
+ * a hash allocation and keeps iteration deterministic. An open-addressed
+ * position index appears only when the table reaches eight fields, so wide
+ * objects do not turn the common representation back into a hash table.
+ */
+class FieldTable
+{
+public:
+    using value_type = std::pair<std::string, Value>;
+    using container_type = std::vector<value_type>;
+    using iterator = container_type::iterator;
+    using const_iterator = container_type::const_iterator;
+
+    Value &operator[](const std::string &name);
+
+    iterator find(const std::string &name)
+    {
+        if (m_index.empty())
+        {
+            for (auto entry = begin(); entry != end(); ++entry)
+            {
+                if (entry->first == name)
+                {
+                    return entry;
+                }
+            }
+            return end();
+        }
+
+        return find_indexed(name);
+    }
+
+    const_iterator find(const std::string &name) const
+    {
+        if (m_index.empty())
+        {
+            for (auto entry = begin(); entry != end(); ++entry)
+            {
+                if (entry->first == name)
+                {
+                    return entry;
+                }
+            }
+            return end();
+        }
+
+        return find_indexed(name);
+    }
+
+    iterator begin() noexcept { return m_entries.begin(); }
+    const_iterator begin() const noexcept { return m_entries.begin(); }
+    iterator end() noexcept { return m_entries.end(); }
+    const_iterator end() const noexcept { return m_entries.end(); }
+
+    Value &at(const std::string &name);
+    const Value &at(const std::string &name) const;
+
+    [[nodiscard]] std::size_t size() const noexcept { return m_entries.size(); }
+    [[nodiscard]] bool empty() const noexcept { return m_entries.empty(); }
+    void clear() noexcept;
+
+    [[nodiscard]] std::size_t count(const std::string &name) const;
+    [[nodiscard]] bool contains(const std::string &name) const;
+
+    std::pair<iterator, bool> emplace(std::string name, Value value);
+    std::pair<iterator, bool> insert(value_type entry);
+    std::pair<iterator, bool> insert_or_assign(std::string name, Value value);
+    std::size_t erase(const std::string &name);
+
+private:
+    container_type m_entries;
+    /** Positions into m_entries, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
+
+    [[nodiscard]] static std::size_t hash_name(const std::string &name);
+    [[nodiscard]] std::size_t probe(const std::string &name, std::size_t hash) const;
+    iterator find_indexed(const std::string &name);
+    const_iterator find_indexed(const std::string &name) const;
+    void rebuild_index();
+};
+
 struct TraceFrame
 {
     std::string function_name;
@@ -614,7 +699,7 @@ struct LumiereObject : RefCounted
 {
     Ref<LumiereClass>           klass;
     Ref<NativeState>            native_state;
-    std::unordered_map<std::string, Value> fields;
+    FieldTable                  fields;
 
     void trace_references(RefVisitor &visitor) const override;
     void clear_references() override;

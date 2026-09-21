@@ -6,6 +6,8 @@
 #include <cmath>
 #include "lumiere/diagnostics/runtime_messages.hpp"
 #include <cstdint>
+#include <iterator>
+#include <stdexcept>
 #include <type_traits>
 
 #include <functional>
@@ -127,6 +129,150 @@ constexpr auto dict_key = [](const DictEntry &entry) -> const Value & { return e
 constexpr auto set_key = [](const Value &element) -> const Value & { return element; };
 
 } // namespace
+
+std::size_t FieldTable::hash_name(const std::string &name)
+{
+    const std::size_t hash = std::hash<std::string>{}(name);
+    // The index is a power of two, so fold the implementation-defined high
+    // bits down instead of assuming std::hash distributes its low bits.
+    return hash ^ (hash >> (sizeof(hash) * 4));
+}
+
+std::size_t FieldTable::probe(const std::string &name, const std::size_t hash) const
+{
+    const std::size_t mask = m_index.size() - 1;
+    std::size_t slot = hash & mask;
+    while (m_index[slot] != 0 && m_entries[m_index[slot] - 1].first != name)
+    {
+        slot = (slot + 1) & mask;
+    }
+    return slot;
+}
+
+FieldTable::iterator FieldTable::find_indexed(const std::string &name)
+{
+    const std::size_t slot = probe(name, hash_name(name));
+    return m_index[slot] == 0 ? end() : begin() + static_cast<std::ptrdiff_t>(m_index[slot] - 1);
+}
+
+FieldTable::const_iterator FieldTable::find_indexed(const std::string &name) const
+{
+    const std::size_t slot = probe(name, hash_name(name));
+    return m_index[slot] == 0 ? end() : begin() + static_cast<std::ptrdiff_t>(m_index[slot] - 1);
+}
+
+void FieldTable::rebuild_index()
+{
+    if (m_entries.size() < kIndexThreshold)
+    {
+        m_index.clear();
+        return;
+    }
+
+    std::size_t capacity = 16;
+    while (capacity * 3 < (m_entries.size() + 1) * 4)
+    {
+        capacity *= 2;
+    }
+
+    m_index.assign(capacity, 0);
+    for (std::size_t position = 0; position < m_entries.size(); ++position)
+    {
+        const std::string &name = m_entries[position].first;
+        m_index[probe(name, hash_name(name))] = position + 1;
+    }
+}
+
+Value &FieldTable::operator[](const std::string &name)
+{
+    return emplace(name, Value{}).first->second;
+}
+
+Value &FieldTable::at(const std::string &name)
+{
+    const auto entry = find(name);
+    if (entry == end())
+    {
+        throw std::out_of_range("champ absent: " + name);
+    }
+    return entry->second;
+}
+
+const Value &FieldTable::at(const std::string &name) const
+{
+    const auto entry = find(name);
+    if (entry == end())
+    {
+        throw std::out_of_range("champ absent: " + name);
+    }
+    return entry->second;
+}
+
+void FieldTable::clear() noexcept
+{
+    m_entries.clear();
+    m_index.clear();
+}
+
+std::size_t FieldTable::count(const std::string &name) const
+{
+    return contains(name) ? 1 : 0;
+}
+
+bool FieldTable::contains(const std::string &name) const
+{
+    return find(name) != end();
+}
+
+std::pair<FieldTable::iterator, bool> FieldTable::emplace(std::string name, Value value)
+{
+    if (const auto entry = find(name); entry != end())
+    {
+        return {entry, false};
+    }
+
+    m_entries.emplace_back(std::move(name), std::move(value));
+    if (m_entries.size() >= kIndexThreshold)
+    {
+        if (m_index.empty() || index_is_crowded(m_entries.size(), m_index.size()))
+        {
+            rebuild_index();
+        }
+        else
+        {
+            const std::string &stored = m_entries.back().first;
+            m_index[probe(stored, hash_name(stored))] = m_entries.size();
+        }
+    }
+    return {std::prev(end()), true};
+}
+
+std::pair<FieldTable::iterator, bool> FieldTable::insert(value_type entry)
+{
+    return emplace(std::move(entry.first), std::move(entry.second));
+}
+
+std::pair<FieldTable::iterator, bool> FieldTable::insert_or_assign(std::string name, Value value)
+{
+    if (const auto entry = find(name); entry != end())
+    {
+        entry->second = std::move(value);
+        return {entry, false};
+    }
+    return emplace(std::move(name), std::move(value));
+}
+
+std::size_t FieldTable::erase(const std::string &name)
+{
+    const auto entry = find(name);
+    if (entry == end())
+    {
+        return 0;
+    }
+    m_entries.erase(entry);
+    rebuild_index();
+    return 1;
+}
 
 std::size_t value_hash(const Value &value)
 {

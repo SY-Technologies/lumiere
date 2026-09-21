@@ -19,6 +19,7 @@ WORKLOADS = {
     "text_calls": "vrai\n131072\n",
     "typed_list": "200000\n199999\n",
     "dictionary_lookup": "50000\n1249975000\n",
+    "wide_object": "15500000\n",
 }
 
 # The only workload with a compiled reference. A C version of the others would

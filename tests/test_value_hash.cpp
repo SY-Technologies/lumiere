@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -148,6 +149,76 @@ TEST(Dictionary, FindsEveryKeyAcrossIndexGrowthAndRemoval)
 
     Value ignored;
     EXPECT_FALSE(dictionary.erase(Value::texte("absente"), ignored));
+}
+
+TEST(FieldTable, PreservesInsertionOrderAndMapSemantics)
+{
+    FieldTable fields;
+
+    fields["deuxième"] = Value::entier(2);
+    fields["premier"] = Value::entier(1);
+    fields["deuxième"] = Value::entier(20);
+
+    const auto [existing, inserted_existing] = fields.emplace("premier", Value::entier(10));
+    EXPECT_FALSE(inserted_existing);
+    EXPECT_EQ(existing->second, Value::entier(1));
+
+    const auto [third, inserted_third] = fields.insert({"troisième", Value::entier(3)});
+    EXPECT_TRUE(inserted_third);
+    EXPECT_EQ(third->second, Value::entier(3));
+
+    ASSERT_EQ(fields.size(), 3);
+    auto field = fields.begin();
+    EXPECT_EQ((field++)->first, "deuxième");
+    EXPECT_EQ((field++)->first, "premier");
+    EXPECT_EQ((field++)->first, "troisième");
+    EXPECT_EQ(field, fields.end());
+
+    EXPECT_EQ(fields.at("deuxième"), Value::entier(20));
+    EXPECT_TRUE(fields.contains("premier"));
+    EXPECT_EQ(fields.count("absent"), 0);
+    EXPECT_THROW(fields.at("absent"), std::out_of_range);
+
+    EXPECT_EQ(fields.erase("premier"), 1);
+    EXPECT_EQ(fields.erase("premier"), 0);
+    EXPECT_FALSE(fields.contains("premier"));
+}
+
+TEST(FieldTable, IndexesWideTablesWithoutChangingOrder)
+{
+    FieldTable fields;
+    constexpr std::size_t kCount = 32;
+    for (std::size_t i = 0; i < kCount; ++i)
+    {
+        const auto [entry, inserted] = fields.insert_or_assign(
+            "champ" + std::to_string(i), Value::entier(static_cast<std::int64_t>(i)));
+        EXPECT_TRUE(inserted);
+        EXPECT_EQ(entry->second, Value::entier(static_cast<std::int64_t>(i)));
+    }
+
+    for (std::size_t i = 0; i < kCount; ++i)
+    {
+        const std::string name = "champ" + std::to_string(i);
+        ASSERT_NE(fields.find(name), fields.end());
+        EXPECT_EQ(fields.at(name), Value::entier(static_cast<std::int64_t>(i)));
+    }
+
+    EXPECT_EQ(fields.erase("champ15"), 1);
+    EXPECT_FALSE(fields.contains("champ15"));
+    EXPECT_EQ(fields.at("champ31"), Value::entier(31));
+
+    std::size_t position = 0;
+    for (const auto &[name, value] : fields)
+    {
+        if (position == 15)
+        {
+            ++position;
+        }
+        EXPECT_EQ(name, "champ" + std::to_string(position));
+        EXPECT_EQ(value, Value::entier(static_cast<std::int64_t>(position)));
+        ++position;
+    }
+    EXPECT_EQ(position, kCount);
 }
 
 } // namespace lumiere

@@ -1,0 +1,53 @@
+// A small field table should be faster than hashing, but a wide object is the
+// case where a linear scan can lose. Read both ends so the workload covers the
+// cheapest and most expensive lookup in the insertion-ordered representation.
+classe Large {
+    champ00: Entier
+    champ01: Entier
+    champ02: Entier
+    champ03: Entier
+    champ04: Entier
+    champ05: Entier
+    champ06: Entier
+    champ07: Entier
+    champ08: Entier
+    champ09: Entier
+    champ10: Entier
+    champ11: Entier
+    champ12: Entier
+    champ13: Entier
+    champ14: Entier
+    champ15: Entier
+    champ16: Entier
+    champ17: Entier
+    champ18: Entier
+    champ19: Entier
+    champ20: Entier
+    champ21: Entier
+    champ22: Entier
+    champ23: Entier
+    champ24: Entier
+    champ25: Entier
+    champ26: Entier
+    champ27: Entier
+    champ28: Entier
+    champ29: Entier
+    champ30: Entier
+    champ31: Entier
+}
+
+fonction principal() {
+    soit objet = Large(
+        0, 1, 2, 3, 4, 5, 6, 7,
+        8, 9, 10, 11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 30, 31
+    )
+    soit total = 0
+    soit index = 0
+    tant que index < 500000 {
+        total = total + objet.champ00 + objet.champ31
+        index = index + 1
+    }
+    afficher(total)
+}

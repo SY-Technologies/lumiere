@@ -1170,6 +1170,40 @@ offset in the object is the next step, and it is a bigger one -- the object
 representation is shared with the tree walker and with every native in the
 standard library.
 
+### Object fields keep their order — 2026-09-20
+
+An object with one field paid for an `unordered_map`: a bucket allocation,
+string hashing and a node lookup. It also had no iteration order, even though
+the collector, LumiTest and nominal-value lookup all walk the table. Fields now
+live once in an insertion-ordered vector. Tables below eight entries scan it;
+larger tables add an open-addressed position index while the vector remains the
+source of truth.
+
+The wide case changed the implementation rather than being dismissed. A
+scan-only version made 500,000 reads of the first and last fields of a 32-field
+object take 121.6 ms against 63.2 ms before. The index brought it back to the
+noise band. Its power-of-two capacity folds the high bits of `std::hash` down:
+the raw low bits collided for the benchmark's last field, and assuming an
+implementation-defined hash distributes those bits made the index slower for
+reasons unrelated to its load.
+
+Two reversed-order comparisons, 15 and 25 runs per binary after a warm-up:
+
+| Workload | Before median (min–max), s | After median (min–max), s |
+| --- | --- | --- |
+| method_calls, 15 runs | 0.555027 (0.549692–0.582038) | 0.541568 (0.532833–0.568067) |
+| wide_object, 15 runs | 0.063067 (0.062690–0.063839) | 0.063331 (0.062012–0.086030) |
+| method_calls, reversed, 25 runs | 0.556874 (0.548380–0.589966) | 0.537997 (0.530055–0.583477) |
+| wide_object, reversed, 25 runs | 0.063150 (0.062446–0.065119) | 0.064774 (0.062477–0.067698) |
+
+Method-call medians fell 2.4% and 3.4%; the ranges still overlap, so this is a
+small repeatable direction rather than a claimed isolated speedup. The wide
+case moves in opposite directions across the two comparisons and is neutral.
+The rest of the suite overlaps its baseline ranges. Unit tests pin map-compatible
+insertion and replacement, indexed lookup after growth, removal and iteration
+order. There is no source-level object-field enumeration API to express that
+last invariant as a language conformance program.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
