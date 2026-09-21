@@ -1,168 +1,11 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/diagnostics/runtime_messages.hpp"
+#include "lumiere/interpreter/runtime/members.hpp"
+
+#include <cassert>
 
 namespace lumiere
 {
-
-    Value TreeWalker::resolve_sequence_common_native_member(const std::vector<Value> &elements,
-                                                            const std::string &family_name,
-                                                            const Token &member,
-                                                            Value receiver) const
-    {
-        if (member.lexeme == "taille")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, &elements, family_name](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 0, 0, family_name + ".taille", call_site);
-                return Value::entier(static_cast<int64_t>(elements.size())); });
-        }
-        if (member.lexeme == "vide")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, &elements, family_name](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 0, 0, family_name + ".vide", call_site);
-                return Value::logique(elements.empty()); });
-        }
-        if (member.lexeme == "contient")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, &elements, family_name](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, family_name + ".contient", call_site);
-                for (const auto &element : elements)
-                {
-                    if (walker.is_equal(element, args[0].value))
-                    {
-                        return Value::logique(true);
-                    }
-                }
-                return Value::logique(false); });
-        }
-        if (member.lexeme == "joindre")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, &elements, family_name](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, family_name + ".joindre", call_site);
-                const std::string separator = walker.assert_texte(args[0].value, call_site);
-                std::string result;
-                for (std::size_t i = 0; i < elements.size(); ++i)
-                {
-                    if (i > 0)
-                    {
-                        result += separator;
-                    }
-                    result += walker.to_texte(elements[i]);
-                }
-                return Value::texte(std::move(result)); });
-        }
-
-        return Value::rien();
-    }
-
-    Value TreeWalker::resolve_list_native_member(const Ref<ListeData> &list,
-                                                 const Token &member,
-                                                 Value receiver) const
-    {
-        if (list == nullptr)
-        {
-            return Value::rien();
-        }
-
-        if (Value common = resolve_sequence_common_native_member(list->elements, "Liste", member, receiver); !common.is_rien())
-        {
-            return common;
-        }
-
-        if (member.lexeme == "ajouter")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Liste.ajouter", call_site);
-                walker.enforce_list_element_constraint(list, args[0].value, call_site, "Liste.ajouter");
-                list->elements.push_back(args[0].value);
-                return Value::entier(static_cast<int64_t>(list->elements.size())); });
-        }
-        if (member.lexeme == "inserer")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 2, 2, "Liste.inserer", call_site);
-                const int64_t position = walker.assert_entier(args[0].value, call_site);
-                if (position < 0 || static_cast<std::size_t>(position) > list->elements.size())
-                {
-                    walker.throw_runtime_error(call_site, "indice d'insertion hors limites");
-                }
-                walker.enforce_list_element_constraint(list, args[1].value, call_site, "Liste.inserer");
-                list->elements.insert(list->elements.begin() + position, args[1].value);
-                return Value::entier(position); });
-        }
-        if (member.lexeme == "retirer_a")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Liste.retirer_a", call_site);
-                const int64_t position = walker.assert_entier(args[0].value, call_site);
-                if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
-                {
-                    walker.throw_runtime_error(
-                        call_site, messages::indice_hors_limites(position, list->elements.size(), "Liste"));
-                }
-                Value removed = list->elements[static_cast<std::size_t>(position)];
-                list->elements.erase(list->elements.begin() + position);
-                return removed; });
-        }
-        if (member.lexeme == "en_ensemble")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 0, 0, "Liste.en_ensemble", call_site);
-                auto set = make_ref<EnsembleData>();
-                set->reserve(list->elements.size());
-                for (const Value &element : list->elements)
-                {
-                    walker.require_dictionary_key(element, call_site);
-                    set->insert(element);
-                }
-                Value result = Value::ensemble(std::move(set));
-                const std::string element_type = list->constraint ? list->constraint->element_type : std::string("Universel");
-                walker.register_value_annotation(result, Token(TokenType::IDENT, "Ensemble[" + element_type + "]", call_site.line, call_site.column));
-                return result; });
-        }
-        if (member.lexeme == "en_liste_fixe")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Liste.en_liste_fixe", call_site);
-                const int64_t length = walker.assert_entier(args[0].value, call_site);
-                if (length < 0)
-                {
-                    walker.throw_runtime_error(call_site, "la taille d'une ListeFixe ne peut pas être négative");
-                }
-                if (static_cast<std::size_t>(length) != list->elements.size())
-                {
-                    walker.throw_runtime_error(call_site, "Liste.en_liste_fixe requiert une liste de taille exacte " + std::to_string(length));
-                }
-
-                auto fixed = make_ref<ListeFixeData>();
-                fixed->elements = list->elements;
-                Value result = Value::liste_fixe(std::move(fixed));
-
-                std::string element_type = "Universel";
-                if (list->constraint)
-                {
-                    element_type = list->constraint->element_type;
-                }
-
-                walker.register_value_annotation(
-                    result,
-                    Token(TokenType::IDENT,
-                          "ListeFixe[" + element_type + ", " + std::to_string(length) + "]",
-                          call_site.line,
-                          call_site.column));
-                return result; });
-        }
-
-        return Value::rien();
-    }
 
     Value TreeWalker::resolve_fixed_list_native_member(const Ref<ListeFixeData> &list,
                                                        const Token &member,
@@ -171,11 +14,6 @@ namespace lumiere
         if (list == nullptr)
         {
             return Value::rien();
-        }
-
-        if (Value common = resolve_sequence_common_native_member(list->elements, "ListeFixe", member, receiver); !common.is_rien())
-        {
-            return common;
         }
 
         if (member.lexeme == "en_liste")
@@ -210,20 +48,6 @@ namespace lumiere
         const auto element_type = [set]() {
             return set->constraint ? set->constraint->element_type : std::string("Universel");
         };
-
-        if (member.lexeme == "contient")
-        {
-            // Indexed, unlike the shared sequence member, which scans.
-            return make_tree_walker_native_method(std::move(receiver), [this, set](TreeWalker &, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 1, 1, "Ensemble.contient", call_site);
-                return Value::logique(set->contains(args[0].value)); });
-        }
-
-        if (Value common = resolve_sequence_common_native_member(set->items(), "Ensemble", member, receiver); !common.is_rien())
-        {
-            return common;
-        }
 
         if (member.lexeme == "ajouter")
         {
@@ -449,9 +273,20 @@ namespace lumiere
             return texte_member;
         }
 
-        if (object.is_liste())
+        if (const BuiltinMember *builtin = find_builtin_member(object, member.lexeme))
         {
-            return resolve_list_native_member(object.as_liste(), member, object);
+            return Value::fonction(make_native_method(
+                object,
+                [builtin](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+                    // A bound method is only ever reached through the native
+                    // call path, which fills both; nothing else constructs one.
+                    assert(native_args.receiver != nullptr && native_args.arguments != nullptr);
+                    return call_builtin_member(runtime,
+                                               *builtin,
+                                               *native_args.receiver,
+                                               *native_args.arguments,
+                                               native_args.site);
+                }));
         }
 
         if (object.is_liste_fixe())

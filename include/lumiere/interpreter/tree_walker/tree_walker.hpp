@@ -71,6 +71,11 @@ namespace lumiere
         bool is_equal(const Value &left, const Value &right) const override;
 
         /**
+         * @brief Returns whether a value satisfies the language type `type_name`.
+         */
+        bool matches_declared_type(const Value &value, std::string_view type_name) const override;
+
+        /**
          * @brief Rejects a value that cannot stay equal to itself while stored as a key.
          */
         void require_dictionary_key(const Value &key, const Token &site) const;
@@ -368,27 +373,6 @@ namespace lumiere
                                      std::size_t max_count,
                                      const std::string &signature,
                                      const Token &call_site) const;
-
-        /**
-         * @brief Resolves sequence methods shared by mutable and fixed-size sequence families.
-         *
-         * Keeping these here avoids duplicating method definitions such as
-         * `taille`, `vide`, `contient`, and `joindre` across list-like values.
-         */
-        Value resolve_sequence_common_native_member(const std::vector<Value> &elements,
-                                                   const std::string &family_name,
-                                                   const Token &member,
-                                                   Value receiver) const;
-
-        /**
-         * @brief Resolves methods specific to mutable `Liste` values.
-         *
-         * This adds mutation-oriented operations on top of the sequence-common
-         * methods, for example insertion and removal.
-         */
-        Value resolve_list_native_member(const Ref<ListeData> &list,
-                                        const Token &member,
-                                        Value receiver) const;
 
         /**
          * @brief Resolves methods specific to `ListeFixe` values.

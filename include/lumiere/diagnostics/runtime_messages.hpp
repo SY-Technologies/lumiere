@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -99,6 +100,30 @@ inline std::string operande_attendue(const std::string_view operation,
 {
     return std::string(operation) + " attend " + std::string(expected) + "; type reçu : " +
            std::string(received_type);
+}
+
+/**
+ * @brief A builtin called with the wrong number of arguments.
+ *
+ * Every builtin takes a fixed number of positional arguments, so the count and
+ * the refusal of names below are the same two sentences everywhere: in the
+ * stdlib modules, and in the members a collection carries.
+ */
+inline std::string arite_exacte(const std::string_view signature, const std::size_t expected)
+{
+    return std::string(signature) + " attend exactement " + std::to_string(expected) + " argument(s)";
+}
+
+/** @brief A builtin given an argument by name. */
+inline std::string arguments_nommes_refuses(const std::string_view signature)
+{
+    return std::string(signature) + " n'accepte pas d'arguments nommés";
+}
+
+/** @brief A builtin argument of a type it does not take. */
+inline std::string valeur_attendue(const std::string_view signature, const std::string_view type)
+{
+    return std::string(signature) + " attend une valeur de type " + std::string(type);
 }
 
 /** @brief A declared element, key or value type was not respected. */

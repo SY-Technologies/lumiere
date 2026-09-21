@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 namespace lumiere
@@ -16,13 +17,13 @@ void stdlib_expect_positional(IRuntime &runtime,
 {
     if (args.size() != expected)
     {
-        runtime.raise_runtime_error(call_site, signature + " attend exactement " + std::to_string(expected) + " argument(s)");
+        runtime.raise_runtime_error(call_site, messages::arite_exacte(signature, expected));
     }
     for (const auto &arg : args)
     {
         if (!arg.name.empty())
         {
-            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
+            runtime.raise_runtime_error(call_site, messages::arguments_nommes_refuses(signature));
         }
     }
 }
@@ -38,7 +39,7 @@ void stdlib_expect_positional_range(IRuntime &runtime,
     {
         if (min_count == max_count)
         {
-            runtime.raise_runtime_error(call_site, signature + " attend exactement " + std::to_string(min_count) + " argument(s)");
+            runtime.raise_runtime_error(call_site, messages::arite_exacte(signature, min_count));
         }
         runtime.raise_runtime_error(call_site,
                                     signature + " attend entre " + std::to_string(min_count) +
@@ -48,7 +49,7 @@ void stdlib_expect_positional_range(IRuntime &runtime,
     {
         if (!arg.name.empty())
         {
-            runtime.raise_runtime_error(call_site, signature + " n'accepte pas d'arguments nommés");
+            runtime.raise_runtime_error(call_site, messages::arguments_nommes_refuses(signature));
         }
     }
 }
@@ -58,10 +59,9 @@ std::string stdlib_expect_text(IRuntime &runtime,
                                const std::string &context,
                                const RuntimeSite &call_site)
 {
-    (void)context;
     if (!value.is_texte())
     {
-        runtime.raise_runtime_error(call_site, context + " attend une valeur de type Texte");
+        runtime.raise_runtime_error(call_site, messages::valeur_attendue(context, "Texte"));
     }
     return value.as_texte();
 }
@@ -71,10 +71,9 @@ int64_t stdlib_expect_integer(IRuntime &runtime,
                               const std::string &context,
                               const RuntimeSite &call_site)
 {
-    (void)context;
     if (!value.is_entier())
     {
-        runtime.raise_runtime_error(call_site, context + " attend une valeur de type Entier");
+        runtime.raise_runtime_error(call_site, messages::valeur_attendue(context, "Entier"));
     }
     return value.as_entier();
 }

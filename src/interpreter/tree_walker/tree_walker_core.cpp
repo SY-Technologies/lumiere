@@ -314,6 +314,11 @@ namespace lumiere
         return to_texte(value);
     }
 
+    bool TreeWalker::matches_declared_type(const Value &value, const std::string_view type_name) const
+    {
+        return matches_type_name(value, Token(TokenType::IDENT, std::string(type_name), 0, 0));
+    }
+
     void TreeWalker::annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &site) const
     {
         register_value_annotation(value,

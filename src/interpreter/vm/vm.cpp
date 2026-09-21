@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/vm/vm.hpp"
+#include "lumiere/interpreter/runtime/members.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/interpreter/vm/verifier.hpp"
@@ -180,8 +181,13 @@ public:
         return value.to_string();
     }
 
+    bool matches_declared_type(const Value &value, std::string_view type_name) const override;
+
     void annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &) const override;
 
+    void enforce_declared_type(const Value &value,
+                               const std::string &type_name,
+                               const std::string &context) const;
     void enforce_list_element(const Ref<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
@@ -517,30 +523,39 @@ void VmRuntimeServices::annotate_value(const Value &value,
     }
 }
 
+bool VmRuntimeServices::matches_declared_type(const Value &value, const std::string_view type_name) const
+{
+    return matches_type_name(value, type_name);
+}
+
+// The two element checks say the same thing about different containers, so they
+// say it once: refuse a value the contract does not admit, and record the
+// contract on one it does.
+void VmRuntimeServices::enforce_declared_type(const Value &value,
+                                              const std::string &type_name,
+                                              const std::string &context) const
+{
+    if (!matches_type_name(value, type_name))
+    {
+        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(type_name), value.type_name()));
+    }
+    annotate_value(value, type_name, {});
+}
+
 void VmRuntimeServices::enforce_list_element(const Ref<ListeData> &list,
                                            const Value &value,
                                            const std::string &context) const
 {
-    if (const auto &constraint = list->constraint;
-        constraint && !matches_type_name(value, constraint->element_type))
-    {
-        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(constraint->element_type), value.type_name()));
-    }
     if (list->constraint)
-        annotate_value(value, list->constraint->element_type, {});
+        enforce_declared_type(value, list->constraint->element_type, context);
 }
 
 void VmRuntimeServices::enforce_set_element(const Ref<EnsembleData> &set,
                                             const Value &value,
                                             const std::string &context) const
 {
-    if (const auto &constraint = set->constraint;
-        constraint && !matches_type_name(value, constraint->element_type))
-    {
-        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(constraint->element_type), value.type_name()));
-    }
     if (set->constraint)
-        annotate_value(value, set->constraint->element_type, {});
+        enforce_declared_type(value, set->constraint->element_type, context);
 }
 
 void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary,
@@ -1307,51 +1322,6 @@ std::string member_text(const Value &value,
     return value.as_texte();
 }
 
-Value execute_sequence_member(const std::vector<Value> &elements,
-                              const std::string_view family,
-                              const std::string_view member,
-                              const std::vector<Value> &args)
-{
-    if (member == "taille")
-    {
-        require_member_arity(family, "taille", args, 0);
-        return Value::entier(static_cast<std::int64_t>(elements.size()));
-    }
-    if (member == "vide")
-    {
-        require_member_arity(family, "vide", args, 0);
-        return Value::logique(elements.empty());
-    }
-    if (member == "contient")
-    {
-        require_member_arity(family, "contient", args, 1);
-        for (const Value &element : elements)
-        {
-            if (values_equal(element, args[0]))
-            {
-                return Value::logique(true);
-            }
-        }
-        return Value::logique(false);
-    }
-    if (member == "joindre")
-    {
-        require_member_arity(family, "joindre", args, 1);
-        const std::string separator = member_text(args[0], family, "joindre");
-        std::string result;
-        for (std::size_t i = 0; i < elements.size(); ++i)
-        {
-            if (i > 0)
-            {
-                result += separator;
-            }
-            result += elements[i].to_string();
-        }
-        return Value::texte(std::move(result));
-    }
-    return Value::rien();
-}
-
 Value execute_member_call(const Value &receiver,
                           const std::string &member,
                           const std::vector<RuntimeArgument> &runtime_args,
@@ -1361,6 +1331,11 @@ Value execute_member_call(const Value &receiver,
     if (receiver.is_texte())
     {
         return execute_texte_member(runtime, receiver, member, runtime_args, site);
+    }
+
+    if (std::optional<Value> result = call_builtin_member(runtime, receiver, member, runtime_args, site))
+    {
+        return std::move(*result);
     }
 
     std::vector<Value> args;
@@ -1375,91 +1350,9 @@ Value execute_member_call(const Value &receiver,
         args.push_back(argument.value);
     }
 
-    if (receiver.is_liste())
-    {
-        auto list = receiver.as_liste();
-        const Value common = execute_sequence_member(list->elements, "Liste", member, args);
-        if (!common.is_rien())
-        {
-            return common;
-        }
-        if (member == "ajouter")
-        {
-            require_member_arity("Liste.ajouter", args, 1);
-            runtime.enforce_list_element(list, args[0], "Liste.ajouter");
-            list->elements.push_back(args[0]);
-            return Value::entier(static_cast<std::int64_t>(list->elements.size()));
-        }
-        if (member == "inserer")
-        {
-            require_member_arity("Liste.inserer", args, 2);
-            const std::int64_t position = member_integer(args[0], "Liste.inserer");
-            if (position < 0 || static_cast<std::size_t>(position) > list->elements.size())
-            {
-                throw VmRuntimeError("VM: indice d'insertion hors limites");
-            }
-            runtime.enforce_list_element(list, args[1], "Liste.inserer");
-            list->elements.insert(list->elements.begin() + position, args[1]);
-            return Value::entier(position);
-        }
-        if (member == "retirer_a")
-        {
-            require_member_arity("Liste.retirer_a", args, 1);
-            const std::int64_t position = member_integer(args[0], "Liste.retirer_a");
-            if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
-            {
-                throw VmRuntimeError("VM: indice hors limites");
-            }
-            Value removed = list->elements[static_cast<std::size_t>(position)];
-            list->elements.erase(list->elements.begin() + position);
-            return removed;
-        }
-        if (member == "en_ensemble")
-        {
-            require_member_arity("Liste.en_ensemble", args, 0);
-            auto set = make_ref<EnsembleData>();
-            set->reserve(list->elements.size());
-            for (const Value &element : list->elements)
-            {
-                require_dictionary_key(element);
-                set->insert(element);
-            }
-            Value result = Value::ensemble(std::move(set));
-            if (const auto type = runtime.list_element_type(list); type.has_value())
-            {
-                runtime.annotate_value(result, "Ensemble[" + *type + "]", site);
-            }
-            return result;
-        }
-        if (member == "en_liste_fixe")
-        {
-            require_member_arity("Liste.en_liste_fixe", args, 1);
-            const std::int64_t length = member_integer(args[0], "Liste.en_liste_fixe");
-            if (length < 0 || static_cast<std::size_t>(length) != list->elements.size())
-            {
-                throw VmRuntimeError("VM: Liste.en_liste_fixe requiert une liste de taille exacte");
-            }
-            auto fixed = make_ref<ListeFixeData>();
-            fixed->elements = list->elements;
-            Value result = Value::liste_fixe(std::move(fixed));
-            if (const auto type = runtime.list_element_type(list); type.has_value())
-            {
-                runtime.annotate_value(result,
-                                       "ListeFixe[" + *type + "," + std::to_string(length) + "]",
-                                       site);
-            }
-            return result;
-        }
-    }
-
     if (receiver.is_liste_fixe())
     {
         auto list = receiver.as_liste_fixe();
-        const Value common = execute_sequence_member(list->elements, "ListeFixe", member, args);
-        if (!common.is_rien())
-        {
-            return common;
-        }
         if (member == "en_liste")
         {
             require_member_arity("ListeFixe.en_liste", args, 0);
@@ -1492,17 +1385,6 @@ Value execute_member_call(const Value &receiver,
             return args[0].as_ensemble();
         };
 
-        if (member == "contient")
-        {
-            // Indexed, unlike the shared sequence member, which scans.
-            require_member_arity("Ensemble.contient", args, 1);
-            return Value::logique(set->contains(args[0]));
-        }
-        const Value common = execute_sequence_member(set->items(), "Ensemble", member, args);
-        if (!common.is_rien())
-        {
-            return common;
-        }
         if (member == "ajouter")
         {
             require_member_arity("Ensemble.ajouter", args, 1);

@@ -3954,6 +3954,18 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
         "soit e = {1} e.union(3)",
         "soit e: Ensemble[Entier] = {1} e.ajouter(\"x\")",
         "soit l: Liste[Entier] = [1] l.ajouter(\"x\")",
+        // The Liste members were implemented twice, and the two wordings had
+        // drifted on every one of these: the VM's "indice hors limites" said
+        // neither the index nor the size, its en_liste_fixe said neither the
+        // length it wanted nor that a negative one is a different mistake, and
+        // its argument checks named a type where the tree walker named a value.
+        "soit l: Liste[Entier] = [1] afficher(l.retirer_a(5))",
+        "soit l: Liste[Entier] = [1] afficher(l.retirer_a(-1))",
+        "soit l: Liste[Entier] = [1] afficher(l.inserer(5, 2))",
+        "soit l: Liste[Entier] = [1] afficher(l.en_liste_fixe(3))",
+        "soit l: Liste[Entier] = [1] afficher(l.en_liste_fixe(-1))",
+        "soit l: Liste[Universel] = [1] afficher(l.joindre(2))",
+        "soit l: Liste[Universel] = [1] afficher(l.inserer(\"a\", 2))",
         "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d[\"b\"] = \"x\"",
         "afficher(\"ab\".sous_texte(0, 99))",
     };

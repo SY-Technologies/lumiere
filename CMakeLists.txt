@@ -51,6 +51,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/tree_walker/tree_walker_sequences.cpp
     src/interpreter/tree_walker/tree_walker_stmt.cpp
     src/interpreter/tree_walker/tree_walker_types.cpp
+    src/interpreter/runtime/members.cpp
     src/interpreter/runtime/value.cpp
     src/interpreter/runtime/cycles.cpp
     src/interpreter/vm/lir.cpp

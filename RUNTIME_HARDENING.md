@@ -1277,6 +1277,79 @@ diagnoses an unknown name with LUM-S0057 before the line runs, like a file does.
 `CliIntegration.ReplResolvesNamesDeclaredByEarlierSubmissions` types the lines
 that would have caught the original bug.
 
+## One implementation of the collection members
+
+`Liste.ajouter` existed twice: once in `tree_walker_sequences.cpp` and once in
+`execute_member_call` in `vm.cpp`. So did every other member of every
+collection. Nothing forced the two to agree, and conformance could not see the
+difference either, because it compares the engines only on cases someone wrote
+— and nobody had written one that made a member fail.
+
+They are now written once, in `src/interpreter/runtime/members.cpp`, reached
+through `IRuntime`. Each engine keeps only the part that is really its own: the
+tree walker binds the member to its receiver where it is written, the VM looks
+it up when the call runs. `find_builtin_member` answers the first question and
+`call_builtin_member` the second, so neither engine decides what a member does.
+
+`IRuntime` gained one method for this, `matches_declared_type`, because a
+collection's declared element type has to be checked against the engine's own
+class and interface tables before a value is let in. Everything else a member
+needs — `call`, `raise_runtime_error`, `is_equal`, `to_text`, `annotate_value` —
+was already there.
+
+### Liste: five wordings that had drifted
+
+Built from the parent commit and from this one, the same seven programs:
+
+| programme | tree walker | VM (avant) |
+| --- | --- | --- |
+| `l.retirer_a(5)` | `indice hors limites : 5 pour Liste de taille 1` | `indice hors limites` |
+| `l.retirer_a(-1)` | `indice hors limites : -1 pour Liste de taille 1` | `indice hors limites` |
+| `l.en_liste_fixe(3)` | `... de taille exacte 3` | `... de taille exacte` |
+| `l.en_liste_fixe(-1)` | `la taille d'une ListeFixe ne peut pas être négative` | `... de taille exacte` |
+| `l.joindre(2)` | `une valeur de type Texte est attendue` | `Liste.joindre attend un Texte` |
+| `l.inserer("a", 2)` | `l'indice d'une séquence doit être un Entier` | `Liste.inserer attend un Entier` |
+| `l.inserer(5, 2)` | `indice d'insertion hors limites` | same |
+
+Six of the seven differed. The rule chosen in each case:
+
+- **An index that is out of range says which index and how large the receiver
+  is.** The message that names neither cannot be acted on. `messages::indice_hors_limites`
+  already worded it; the VM was not using it.
+- **A length that cannot be a length is a different mistake from a length that
+  does not match.** `en_liste_fixe(-1)` is not "your list is not 3 long".
+- **An argument of the wrong type names the member and the type wanted**, as the
+  rest of the stdlib already does through `stdlib_expect_text`. The tree walker's
+  wording named neither, and reused the *index* message for `inserer`'s index,
+  which is not what that message is for.
+
+The three wordings every builtin shares — wrong count, a named argument, an
+argument of the wrong type — now live in `runtime_messages.hpp` and are used by
+both `stdlib_helpers.cpp` and the members, so there is one sentence per rule
+rather than one per caller.
+
+### What the arity check is, and is not
+
+Analysis rejects `l.ajouter(4, 5)` as LUM-S0015 before anything runs, so the
+runtime arity check is unreachable from ordinary source. It is kept because the
+runtime is also reached from the REPL and from native callers, and because a
+member that assumed its arity without checking would be a fast path with an
+unasserted assumption. It is stated once for all members, in the table, rather
+than repeated as the first line of each.
+
+### What is pinned, and what is not yet
+
+`tests/conformance/membres_liste` runs every Liste member through both engines,
+including the empty receiver and both ends of the index range.
+
+The failing cases could not go there, because **the two engines still point the
+caret at different tokens**: the tree walker at the call's parenthesis, the VM at
+the member's name. Conformance compares stderr whole, so a case that fails would
+fail on the caret rather than on the message. That difference is Task 5's — the
+rule for which token a runtime error points at — and the member errors are pinned
+meanwhile by `CliIntegration.BothBackendsReportTheSameRuntimeDiagnostic`, which
+compares the message line. When Task 5 lands, those cases belong in the corpus.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
