@@ -213,7 +213,7 @@ error points at, which is smaller than it was.
 
 ## T5 — Profile representative workloads
 
-Status: in progress — 2026-09-20; counters in place, measured against CPython on every workload
+Status: in progress — 2026-09-20; ahead of CPython at the median, behind on three workloads
 
 - [x] Measure against a compiled baseline rather than against our own history:
       `scripts/compare-languages.py` reports 430x C and 1.39x slower than CPython.
@@ -245,14 +245,20 @@ Status: in progress — 2026-09-20; counters in place, measured against CPython 
       looked: the four things the profile actually named were names resolved at
       run time, not the value's size.
 
-- [ ] **Give a field a slot instead of a name.** What is left of the method-call
-      gap is two lookups per field access: a walk of the class chain comparing
-      strings to decide whether the field is private, and a hash table keyed by
-      the field's name to find it. Both are answers the compiler already knows.
-      A field belongs at a fixed offset in the object, chosen when the class is
-      compiled, with the private check settled then too — the same shape of fix
-      as classifying a type once, applied to the last place that still resolves
-      a name while the program runs.
+- [ ] **Give a field a slot instead of a name.** The class-chain walk is gone —
+      each class remembers what a member index resolves to — but a field still
+      lives in a hash table keyed by its name, so reading one hashes a string. A
+      field belongs at a fixed offset chosen when the class is compiled.
+
+- [ ] **Let a frame's locals be a window onto the stack.** A call allocates
+      three times: the argument vector, the normalized values, and the frame's
+      locals — while the values are already sitting contiguously on the VM
+      stack. Recycling frames rather than freeing them is the smaller half of
+      this and could be done on its own.
+
+      Both of these touch the object and frame representations, which the tree
+      walker and every standard-library native share. They are a step up in size
+      from the six rounds above, and they are where the next real gains are.
 
 Measured against CPython on all seven workloads rather than on the integer loop
 alone, the VM was 1.34x slower at the median: ahead on text, level on the
@@ -260,14 +266,18 @@ integer loop, behind on calls, dictionaries and typed lists, and 3.5x behind on
 method calls. The target had been read off the one workload that had been
 optimized.
 
-Four rounds since, each named by the profile and each measured on its own:
+Six rounds since, each named by a profile and each measured on its own:
 classify a type once instead of at every check; read an object without taking a
-reference to it; identify a runtime body by a tag instead of `dynamic_cast`; and
-stop building a member's name on every built-in call. Method calls 1.09s to
-0.78s, function calls -13%, typed lists -18%, the integer loop ~1.5% slower from
-dispatch-loop layout. Against CPython per workload: text 0.26x and 0.49x,
-integer loop ~1.0x, function calls ~1.2x, typed lists 1.56x, dictionaries 1.7x,
-method calls 2.5x.
+reference to it; identify a runtime body by a tag instead of `dynamic_cast`;
+stop building a member's name on every built-in call; build text without a
+stream; and resolve a member once per class instead of once per access.
+
+Against the binary from the start of that day: method calls 1.115s to 0.595s
+(-47%), dictionary lookup -52%, typed lists -24%, text calls -19%, function
+calls -16%, the integer loop unchanged. **Against CPython: text calls 0.24x,
+text iteration 0.47x, integer loop 0.91x, dictionary lookup 0.93x, function
+calls 1.15x, typed lists 1.56x, method calls 1.87x — median 0.93x.** The target
+is met at the median; three workloads are still behind.
 
 Acceptance: benchmark reports include reproducible baselines and explain each
 optimization using measured time and memory changes. Note that no interpreter
