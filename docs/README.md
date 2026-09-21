@@ -30,6 +30,7 @@ These notes are intentionally small. Each file focuses on one area so that the d
 - [Tree-Walker Backlog](./tree-walker-backlog.md)
 - [VM Design](./vm-design.md)
 - [VM Interpreter](./vm-interpreter.md)
+- [Runtime Diagnostic Locations](./runtime-diagnostic-locations.md)
 - [VM Roadmap](./vm-roadmap.md)
 - [C++ Patterns Used Here](./cpp-patterns-used.md)
 
