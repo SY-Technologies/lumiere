@@ -3,6 +3,7 @@
 #include "lumiere/diagnostics/runtime_messages.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <span>
@@ -134,6 +135,9 @@ const std::vector<Value> &elements_of(const Value &receiver)
     {
         return receiver.as_liste_fixe()->elements;
     }
+    // These members are reachable only from the three tables that list them,
+    // so a receiver of any other family means a table wired to the wrong one.
+    assert(receiver.is_ensemble());
     return receiver.as_ensemble()->items();
 }
 
@@ -571,6 +575,11 @@ Value call_builtin_member(IRuntime &runtime,
                           const std::vector<RuntimeArgument> &args,
                           const RuntimeSite &site)
 {
+    // The member and the receiver must be the pair the lookup made. The tree
+    // walker binds one to a receiver and calls it later, so a bound method that
+    // outlived its receiver's type would otherwise read another family's data.
+    assert(find_builtin_member(receiver, member.name) == &member);
+
     const MemberCall call {runtime, receiver, member.name, args, site};
     call.expect(member.arity);
     return member.body(call);

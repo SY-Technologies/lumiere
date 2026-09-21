@@ -1398,6 +1398,41 @@ VM's `require_member_arity`, `member_integer`, `member_text` and
 `member_signature`. `execute_member_call` is now three lines: text, the shared
 members, and the member that does not exist.
 
+### What the four commits measured
+
+The VM used to copy a member call's arguments into a second vector before
+dispatching, and the tree walker used to build a closure per member access. One
+implementation needs neither: the arguments are passed through as they arrived,
+and the binding captures a pointer into a static table.
+
+Built from `c3e1a77` and from the end of this series, both RelWithDebInfo,
+medians of nine runs with one untimed warm-up:
+
+| workload | moteur | avant | après |
+| --- | --- | --- | --- |
+| typed_list | vm | 0.0380s (0.0378–0.0385) | 0.0320s (0.0311–0.0358) |
+| typed_list | tw | 0.1426s (0.1364–0.1694) | 0.1273s (0.1255–0.1307) |
+| dictionary_lookup | vm | 0.0282s (0.0277–0.0291) | 0.0285s (0.0276–0.0292) |
+| dictionary_lookup | tw | 0.0707s (0.0693–0.0758) | 0.0701s (0.0688–0.0729) |
+
+Allocation counts, which are exact in one run:
+
+| workload | moteur | avant | après |
+| --- | --- | --- | --- |
+| typed_list | vm | 400 722 | 200 722 |
+| typed_list | tw | 1 200 486 | 800 484 |
+| dictionary_lookup | vm | 150 870 | 150 870 |
+| dictionary_lookup | tw | 350 540 | 350 537 |
+
+One allocation per `ajouter` in the VM and two in the tree walker, for 200 000
+iterations. `dictionary_lookup` indexes rather than calling members, which is
+why it moves neither way and is the control here. `integer_loop`,
+`function_calls`, `method_calls`, `text_calls`, `text_iteration` and
+`wide_object` are unchanged within their bands.
+
+The speed was not the point and was not sought; it is what a duplicate costs
+when one of the two copies is on a hot path and nobody is looking at it.
+
 ### What the arity check is, and is not
 
 Analysis rejects `l.ajouter(4, 5)` as LUM-S0015 before anything runs, so the
