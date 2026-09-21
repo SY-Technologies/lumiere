@@ -1328,6 +1328,20 @@ argument of the wrong type — now live in `runtime_messages.hpp` and are used b
 both `stdlib_helpers.cpp` and the members, so there is one sentence per rule
 rather than one per caller.
 
+### ListeFixe: the same drift, and a contract that could be laundered
+
+`ListeFixe` had one member of its own, `en_liste`, and answered the shared
+sequence members through each engine's own copy of them — so it inherited the
+same `joindre` divergence the Liste family had (`une valeur de type Texte est
+attendue` against `ListeFixe.joindre attend un Texte`).
+
+`en_liste` itself already agreed, and the rule it states is worth naming because
+it is easy to lose: **the Liste it hands back carries the ListeFixe's element
+type.** Without that, `mots.en_liste_fixe(3).en_liste().ajouter(3)` would launder
+a `Liste[Texte]` into an unconstrained list by a round trip through a type that
+cannot even be written to. Both engines happened to do this; nothing pinned it.
+`tests/conformance/membres_liste_fixe` and the parity test now do.
+
 ### What the arity check is, and is not
 
 Analysis rejects `l.ajouter(4, 5)` as LUM-S0015 before anything runs, so the

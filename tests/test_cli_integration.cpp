@@ -3966,6 +3966,11 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
         "soit l: Liste[Entier] = [1] afficher(l.en_liste_fixe(-1))",
         "soit l: Liste[Universel] = [1] afficher(l.joindre(2))",
         "soit l: Liste[Universel] = [1] afficher(l.inserer(\"a\", 2))",
+        // A ListeFixe answers the shared sequence members, so it drifted with
+        // them; and the Liste en_liste hands back has to keep the contract, or
+        // a round trip through ListeFixe would launder it away.
+        "soit s: Liste[Texte] = [\"a\"] afficher(s.en_liste_fixe(1).joindre(2))",
+        "soit s: Liste[Texte] = [\"a\"] s.en_liste_fixe(1).en_liste().ajouter(3)",
         "soit d: Dictionnaire[Texte, Entier] = {\"a\": 1} d[\"b\"] = \"x\"",
         "afficher(\"ab\".sous_texte(0, 99))",
     };

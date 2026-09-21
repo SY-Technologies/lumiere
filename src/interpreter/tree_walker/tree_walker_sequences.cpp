@@ -7,35 +7,6 @@
 namespace lumiere
 {
 
-    Value TreeWalker::resolve_fixed_list_native_member(const Ref<ListeFixeData> &list,
-                                                       const Token &member,
-                                                       Value receiver) const
-    {
-        if (list == nullptr)
-        {
-            return Value::rien();
-        }
-
-        if (member.lexeme == "en_liste")
-        {
-            return make_tree_walker_native_method(std::move(receiver), [this, list](TreeWalker &walker, const std::vector<RuntimeArgument> &args, const Token &call_site)
-                                                  {
-                require_positional_args(args, 0, 0, "ListeFixe.en_liste", call_site);
-                auto dynamic = make_ref<ListeData>();
-                dynamic->elements = list->elements;
-                Value result = Value::liste(std::move(dynamic));
-                if (list->constraint)
-                {
-                    walker.register_value_annotation(
-                        result,
-                        Token(TokenType::IDENT, "Liste[" + list->constraint->element_type + "]", call_site.line, call_site.column));
-                }
-                return result; });
-        }
-
-        return Value::rien();
-    }
-
     Value TreeWalker::resolve_set_native_member(const Ref<EnsembleData> &set,
                                                 const Token &member,
                                                 Value receiver) const
@@ -287,11 +258,6 @@ namespace lumiere
                                                *native_args.arguments,
                                                native_args.site);
                 }));
-        }
-
-        if (object.is_liste_fixe())
-        {
-            return resolve_fixed_list_native_member(object.as_liste_fixe(), member, object);
         }
 
         if (object.is_ensemble())

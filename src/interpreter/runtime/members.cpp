@@ -272,6 +272,28 @@ constexpr BuiltinMember liste_members[] = {
 };
 
 // ---------------------------------------------------------------------------
+// ListeFixe
+// ---------------------------------------------------------------------------
+
+Value liste_fixe_en_liste(const MemberCall &call)
+{
+    const auto fixed = call.receiver.as_liste_fixe();
+    auto dynamic = make_ref<ListeData>();
+    dynamic->elements = fixed->elements;
+
+    Value result = Value::liste(std::move(dynamic));
+    if (fixed->constraint)
+    {
+        call.annotate(result, "Liste[" + fixed->constraint->element_type + "]");
+    }
+    return result;
+}
+
+constexpr BuiltinMember liste_fixe_members[] = {
+    {"en_liste", 0, liste_fixe_en_liste},
+};
+
+// ---------------------------------------------------------------------------
 // Ensemble
 // ---------------------------------------------------------------------------
 
@@ -314,7 +336,8 @@ const BuiltinMember *find_builtin_member(const Value &receiver, const std::strin
     }
     if (receiver.is_liste_fixe())
     {
-        return find_in(sequence_members, member);
+        const BuiltinMember *found = find_in(liste_fixe_members, member);
+        return found != nullptr ? found : find_in(sequence_members, member);
     }
     if (receiver.is_ensemble())
     {

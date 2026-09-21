@@ -1350,23 +1350,6 @@ Value execute_member_call(const Value &receiver,
         args.push_back(argument.value);
     }
 
-    if (receiver.is_liste_fixe())
-    {
-        auto list = receiver.as_liste_fixe();
-        if (member == "en_liste")
-        {
-            require_member_arity("ListeFixe.en_liste", args, 0);
-            auto dynamic = make_ref<ListeData>();
-            dynamic->elements = list->elements;
-            Value result = Value::liste(std::move(dynamic));
-            if (const auto type = runtime.fixed_list_element_type(list); type.has_value())
-            {
-                runtime.annotate_value(result, "Liste[" + *type + "]", site);
-            }
-            return result;
-        }
-    }
-
     if (receiver.is_ensemble())
     {
         auto set = receiver.as_ensemble();

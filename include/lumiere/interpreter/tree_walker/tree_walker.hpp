@@ -375,16 +375,6 @@ namespace lumiere
                                      const Token &call_site) const;
 
         /**
-         * @brief Resolves methods specific to `ListeFixe` values.
-         *
-         * These methods preserve fixed-length semantics while still exposing
-         * the read-only/common sequence surface where appropriate.
-         */
-        Value resolve_fixed_list_native_member(const Ref<ListeFixeData> &list,
-                                              const Token &member,
-                                              Value receiver) const;
-
-        /**
          * @brief Resolves methods specific to `Dictionnaire` values.
          *
          * This is the dictionary counterpart to the list/member helpers above:
