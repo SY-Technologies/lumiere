@@ -98,6 +98,21 @@ private:
     std::size_t m_offset;
 };
 
+// Where one argument of a call was written, for a diagnostic that has to say
+// which argument it means.
+//
+// No path: the frame that raises is the one that wrote the argument -- a native
+// member pushes no frame of its own, and every argument-binding failure is
+// thrown before the callee's frame exists -- so the path is the one the
+// diagnostic already falls back to. Carrying a copy of it per argument cost an
+// allocation per argument per call, which doubled the count in method_calls and
+// in typed_list.
+RuntimeSite argument_site(const ArgumentNames &names, const std::size_t argument)
+{
+    const SourceLocation location = names.location(argument);
+    return {{}, static_cast<int>(location.line), static_cast<int>(location.column)};
+}
+
 std::size_t read_u16(const Chunk &chunk, std::size_t &ip)
 {
     const std::size_t byte1 = read_byte(chunk, ip);
@@ -2478,12 +2493,9 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             for (std::size_t i = callee_index + 1; i < stack.size(); ++i)
             {
                 const std::size_t argument = i - callee_index - 1;
-                const SourceLocation location = argument_names.location(argument);
                 call_args.push_back({argument_name(argument),
                                      std::move(stack[i]),
-                                     RuntimeSite{frame.function->source_path,
-                                                 static_cast<int>(location.line),
-                                                 static_cast<int>(location.column)}});
+                                     argument_site(argument_names, argument)});
             }
 
             stack.resize(callee_index);
@@ -2550,12 +2562,9 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             call_args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                const SourceLocation location = argument_names.location(i);
                 call_args.push_back({argument_name(i),
                                      std::move(stack[args_start + i]),
-                                     RuntimeSite{frame.function->source_path,
-                                                 static_cast<int>(location.line),
-                                                 static_cast<int>(location.column)}});
+                                     argument_site(argument_names, i)});
             }
             stack.resize(args_start);
 
@@ -2687,12 +2696,9 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                const SourceLocation location = argument_names.location(i);
                 args.push_back({argument_name(i),
                                 std::move(stack[receiver_index + 1 + i]),
-                                RuntimeSite{frame.function->source_path,
-                                            static_cast<int>(location.line),
-                                            static_cast<int>(location.column)}});
+                                argument_site(argument_names, i)});
             }
             stack.resize(receiver_index);
 

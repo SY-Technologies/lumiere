@@ -1058,8 +1058,12 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
 
     try
     {
-        std::vector<std::optional<Value>> bound_arguments(params.size());
-        std::vector<std::optional<RuntimeSite>> bound_argument_sites(params.size());
+        // One slot per parameter, holding the argument that filled it. It has
+        // to be one vector and not two -- a second one for the positions cost
+        // an allocation on every call, which is what this path spends its time
+        // on -- and a pointer rather than a copy of the value, which the
+        // parameter loop copies once at the end anyway.
+        std::vector<const RuntimeArgument *> bound_arguments(params.size(), nullptr);
         std::size_t next_positional_parameter = 0;
 
         for (std::size_t i = 0; i < args.size(); ++i)
@@ -1085,7 +1089,7 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
             else
             {
                 while (next_positional_parameter < params.size() &&
-                       bound_arguments[next_positional_parameter].has_value())
+                       bound_arguments[next_positional_parameter] != nullptr)
                 {
                     ++next_positional_parameter;
                 }
@@ -1098,13 +1102,12 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
                 target_index = next_positional_parameter++;
             }
 
-            if (bound_arguments[target_index].has_value())
+            if (bound_arguments[target_index] != nullptr)
             {
                 raise_runtime_error(args[i].site, "le paramètre '" + params[target_index].name + "' est fourni plusieurs fois");
             }
 
-            bound_arguments[target_index] = args[i].value;
-            bound_argument_sites[target_index] = args[i].site;
+            bound_arguments[target_index] = &args[i];
         }
 
         for (std::size_t i = 0; i < params.size(); ++i)
@@ -1112,9 +1115,9 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
             const Parameter &parameter = params[i];
             Value argument_value = Value::rien();
 
-            if (bound_arguments[i].has_value())
+            if (bound_arguments[i] != nullptr)
             {
-                argument_value = *bound_arguments[i];
+                argument_value = bound_arguments[i]->value;
             }
             else if (parameter.default_value)
             {
@@ -1125,14 +1128,16 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
                 raise_runtime_error(call_site, "argument manquant pour le paramètre '" + parameter.name + "'");
             }
 
-            const RuntimeSite &argument_site = bound_argument_sites[i].has_value()
-                                                   ? *bound_argument_sites[i]
-                                                   : call_site;
+            const RuntimeSite &argument_site =
+                bound_arguments[i] != nullptr ? bound_arguments[i]->site : call_site;
+            // This token is read for its position only, so it carries no
+            // lexeme: naming the parameter here copied a string per parameter
+            // per call and nothing ever looked at it.
             ensure_value_matches_annotation(
                 argument_value,
                 parameter.type,
                 Token(TokenType::IDENT,
-                      parameter.name,
+                      {},
                       static_cast<std::uint32_t>(argument_site.line),
                       static_cast<std::uint32_t>(argument_site.column)),
                 "le paramètre '" + parameter.name + "'");

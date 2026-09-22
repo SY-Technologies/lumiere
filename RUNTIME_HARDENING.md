@@ -1519,6 +1519,56 @@ index access and every call lowering.
 that used to abort, and `tests/conformance/diagnostic_agir_selon` pins the
 caret on its keyword.
 
+### What carrying an argument's position cost, and what it should cost
+
+Giving every argument its own source position is what lets a diagnostic name the
+argument that failed, and it is worth having. The first implementation paid for
+it by copying the source *path* into every argument's `RuntimeSite` on every
+call, in both engines. Measured against `6d340c4`, the commit before the rule
+landed:
+
+| workload | moteur | avant | avec le chemin | corrigé |
+| --- | --- | --- | --- | --- |
+| typed_list | vm | 200 722 | 400 730 | 200 728 |
+| method_calls | vm | 2 001 058 | 4 001 066 | 2 001 064 |
+| function_calls | vm | 100 834 | 200 838 | 100 837 |
+| method_calls | tw | 36 000 565 | 42 000 565 | 36 000 565 |
+| function_calls | tw | 1 800 496 | 2 100 496 | 1 800 496 |
+
+One allocation per argument per call, which doubled two of these and undid the
+whole of the preceding commit's measured reduction on `typed_list`. The path
+bought nothing: **the frame that raises an argument diagnostic is the frame that
+wrote the argument.** A native member pushes no frame of its own, every
+argument-binding failure is thrown before the callee's frame exists, and the
+tree walker's current path only changes while a module is being loaded, which
+cannot happen between evaluating an argument and reporting on it. Both engines
+already fell back to exactly that path when the site carried none.
+
+Two other per-call costs went with it. `call_user_function` had grown a second
+vector, parallel to `bound_arguments`, to hold the positions; one vector of
+pointers into the arguments holds both, and copies the value once instead of
+twice. And the token handed to the parameter's type check carried the
+parameter's name, which nothing reads -- it is consulted for its line and
+column.
+
+What remains is the real price of the feature: an argument is 40 bytes larger
+because it carries a position. Three binaries in one run, medians of nine:
+
+| workload | avec le chemin | corrigé | avant la règle |
+| --- | --- | --- | --- |
+| function_calls | 0.02578s | 0.02463s | 0.02409s |
+| method_calls | 0.5005s | 0.4786s | 0.4703s |
+| typed_list | 0.03621s | 0.03380s | 0.03194s |
+| integer_loop (témoin) | 0.07279s | 0.07462s | 0.07324s |
+
+`integer_loop` executes no call and cannot have changed; it moves 2.5% between
+these binaries, which is this machine's floor. `function_calls` and
+`method_calls` are back inside it. `typed_list` is not: about 6% is still there,
+and it is not allocation, since the counts above match. It is the size of a
+`RuntimeArgument`, whose `RuntimeSite` spends 32 bytes on a `std::string` that
+is empty on every call. Making a position a pair of integers, with the path
+beside it rather than inside it, is the lever if that 6% is wanted back.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

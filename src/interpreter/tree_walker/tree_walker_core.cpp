@@ -362,7 +362,13 @@ namespace lumiere
                 arg.name,
                 // some args values will be expressions that need to be evaluated
                 evaluate(*arg.value),
-                RuntimeSite{m_current_source_path,
+                // A line and a column, and no path: the file is the one this
+                // walker is already running, and it cannot change between
+                // evaluating an argument and reporting on it. Copying it here
+                // cost one allocation per argument per call -- 200 000 of them
+                // in typed_list -- to name the file the diagnostic would have
+                // fallen back to anyway.
+                RuntimeSite{{},
                             static_cast<int>(arg.site.line),
                             static_cast<int>(arg.site.column)},
             });
