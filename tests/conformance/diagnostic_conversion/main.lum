@@ -1,0 +1,5 @@
+// Une conversion impossible désigne son type cible.
+fonction principal() {
+    soit nombre = "abc" en Entier
+    afficher(nombre)
+}

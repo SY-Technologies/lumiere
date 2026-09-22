@@ -145,11 +145,15 @@ struct LirInstruction
     LirOperand destination = LirOperand::temp(0);
     std::vector<LirOperand> operands;
     LirSourceLocation source {};
+    // Calls keep one source position per source-level argument. These become
+    // RuntimeArgument sites after the values have left the VM stack.
+    std::vector<LirSourceLocation> argument_sources;
 
     [[nodiscard]] static LirInstruction make(LirOpcode opcode,
                                              LirOperand destination,
                                              std::vector<LirOperand> operands = {},
-                                             LirSourceLocation source = {});
+                                             LirSourceLocation source = {},
+                                             std::vector<LirSourceLocation> argument_sources = {});
 };
 
 // Terminators own the outgoing control-flow decision for a block.

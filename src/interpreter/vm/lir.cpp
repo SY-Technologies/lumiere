@@ -125,9 +125,10 @@ LirOperand LirOperand::name_space(const std::size_t index) noexcept
 LirInstruction LirInstruction::make(const LirOpcode opcode,
                                     const LirOperand destination,
                                     std::vector<LirOperand> operands,
-                                    const LirSourceLocation source)
+                                    const LirSourceLocation source,
+                                    std::vector<LirSourceLocation> argument_sources)
 {
-    return {opcode, destination, std::move(operands), source};
+    return {opcode, destination, std::move(operands), source, std::move(argument_sources)};
 }
 
 LirTerminator LirTerminator::jump(const std::size_t target_block,

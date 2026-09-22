@@ -362,7 +362,15 @@ wrong.
 
 ---
 
-## Task 5 — State which token an error points at
+## Task 5 — State which token an error points at — DONE
+
+Landed. The rule is in `docs/runtime-diagnostic-locations.md`. Runtime arguments
+now retain their own source position through evaluation and, in the VM, through
+LIR linking and bytecode metadata. Calls, arguments, indices, iterables and
+conversion targets consequently identify the same source token in both engines.
+Five exact-stderr conformance cases pin the gaps this task closed; the existing
+corpus continues to cover the other diagnostic families. See
+`RUNTIME_HARDENING.md`.
 
 ### Why
 

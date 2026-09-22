@@ -1,7 +1,7 @@
 Traceback (most recent call last):
   in principal (error_traceback/main.lum)
-  in casser (error_traceback/main.lum:7:9)
-  File "error_traceback/main.lum", line 3, column 17
+  in casser (error_traceback/main.lum:7:3)
+  File "error_traceback/main.lum", line 3, column 18
       afficher(notes[4])
-                    ^
+                     ^
 erreur d'exécution: indice hors limites : 4 pour Liste de taille 1

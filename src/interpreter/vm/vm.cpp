@@ -88,6 +88,11 @@ public:
         return (static_cast<std::size_t>(m_chunk.code[at]) << 8) | m_chunk.code[at + 1];
     }
 
+    [[nodiscard]] SourceLocation location(const std::size_t argument) const
+    {
+        return m_chunk.locations[m_offset + argument * 2];
+    }
+
 private:
     const Chunk &m_chunk;
     std::size_t m_offset;
@@ -166,9 +171,9 @@ public:
         m_callback_executor = std::move(executor);
     }
 
-    [[noreturn]] void raise_runtime_error(const RuntimeSite &, const std::string &message) const override
+    [[noreturn]] void raise_runtime_error(const RuntimeSite &site, const std::string &message) const override
     {
-        throw VmRuntimeError("VM: " + message);
+        throw VmRuntimeError("VM: " + message, site);
     }
 
     bool is_equal(const Value &left, const Value &right) const override
@@ -1837,7 +1842,7 @@ std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
             }
             if (target == count)
             {
-                throw VmRuntimeError("aucun paramètre nommé '" + args[i].name + "'");
+                throw VmRuntimeError("aucun paramètre nommé '" + args[i].name + "'", args[i].site);
             }
         }
         else
@@ -1848,7 +1853,7 @@ std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
             }
             if (next_positional == count)
             {
-                throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction");
+                throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction", args[i].site);
             }
             target = next_positional++;
         }
@@ -1856,7 +1861,8 @@ std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
         if (sources[target] != no_argument)
         {
             throw VmRuntimeError("le paramètre '" + parameter_label(function, target) +
-                                 "' est fourni plusieurs fois");
+                                     "' est fourni plusieurs fois",
+                                 args[i].site);
         }
         sources[target] = i;
     }
@@ -1894,7 +1900,7 @@ void normalize_closure_arguments(FrameStack &frames,
                                    [](const RuntimeArgument &arg) { return !arg.name.empty(); });
     if (!named && args.size() > count)
     {
-        throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction");
+        throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction", args[count].site);
     }
 
     // Positional binding is the identity -- argument i fills parameter i -- and
@@ -1982,8 +1988,10 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
     std::vector<Value> stack;
     auto &runtime_services = execution.runtime_services;
 
-    const auto build_runtime_error = [&frames](std::string message, const std::size_t opcode_offset)
+    const auto build_runtime_error = [&frames](const VmRuntimeError &error,
+                                               const std::size_t opcode_offset)
     {
+        std::string message = error.what();
         if (message.starts_with("VM: "))
         {
             message.erase(0, 4);
@@ -1993,6 +2001,16 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
         if (opcode_offset < current.function->chunk.locations.size())
         {
             location = current.function->chunk.locations[opcode_offset];
+        }
+        std::string source_path = current.function->source_path;
+        if (error.site().has_value())
+        {
+            if (!error.site()->source_path.empty())
+            {
+                source_path = error.site()->source_path;
+            }
+            location.line = static_cast<std::size_t>(error.site()->line);
+            location.column = static_cast<std::size_t>(error.site()->column);
         }
         std::vector<StackFrame> trace;
         trace.reserve(frames.size());
@@ -2012,7 +2030,7 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
                              static_cast<std::uint32_t>(frame.call_site.column)});
         }
         return RuntimeError(std::move(message),
-                            current.function->source_path,
+                            std::move(source_path),
                             current.function->source_text,
                             static_cast<std::uint32_t>(location.line),
                             static_cast<std::uint32_t>(location.column),
@@ -2459,7 +2477,13 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             call_args.reserve(arity);
             for (std::size_t i = callee_index + 1; i < stack.size(); ++i)
             {
-                call_args.push_back({argument_name(i - callee_index - 1), std::move(stack[i])});
+                const std::size_t argument = i - callee_index - 1;
+                const SourceLocation location = argument_names.location(argument);
+                call_args.push_back({argument_name(argument),
+                                     std::move(stack[i]),
+                                     RuntimeSite{frame.function->source_path,
+                                                 static_cast<int>(location.line),
+                                                 static_cast<int>(location.column)}});
             }
 
             stack.resize(callee_index);
@@ -2526,7 +2550,12 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             call_args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                call_args.push_back({argument_name(i), std::move(stack[args_start + i])});
+                const SourceLocation location = argument_names.location(i);
+                call_args.push_back({argument_name(i),
+                                     std::move(stack[args_start + i]),
+                                     RuntimeSite{frame.function->source_path,
+                                                 static_cast<int>(location.line),
+                                                 static_cast<int>(location.column)}});
             }
             stack.resize(args_start);
 
@@ -2658,7 +2687,12 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                args.push_back({argument_name(i), std::move(stack[receiver_index + 1 + i])});
+                const SourceLocation location = argument_names.location(i);
+                args.push_back({argument_name(i),
+                                std::move(stack[receiver_index + 1 + i]),
+                                RuntimeSite{frame.function->source_path,
+                                            static_cast<int>(location.line),
+                                            static_cast<int>(location.column)}});
             }
             stack.resize(receiver_index);
 
@@ -3032,7 +3066,7 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
         }
         catch (const VmRuntimeError &error)
         {
-            throw build_runtime_error(error.what(), opcode_offset);
+            throw build_runtime_error(error, opcode_offset);
         }
     }
 

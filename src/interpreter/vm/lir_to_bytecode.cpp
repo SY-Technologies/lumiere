@@ -290,8 +290,12 @@ void emit_instr(const LirModule &module,
         chunk.write_byte(static_cast<std::uint8_t>(arity), bc_loc(instruction.source));
         for (std::size_t i = 1; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 1) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }
@@ -303,8 +307,12 @@ void emit_instr(const LirModule &module,
                                 bc_loc(instruction.source));
         for (std::size_t i = 1; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 1) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }
@@ -333,8 +341,12 @@ void emit_instr(const LirModule &module,
         }
         for (std::size_t i = 2; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 2) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }

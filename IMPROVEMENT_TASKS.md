@@ -167,11 +167,12 @@ Status: in progress — 2026-09-20; corpus, fuzzing and bytecode fuzzing in plac
       Analysis that carries earlier submissions forward is its own piece of work
       and is not done here.
 
-- [ ] Settle which token a runtime error points at. The two engines pick
-      different tokens for the same failure, so the caret can sit one character
-      apart. A spot fix traded one divergence for another; this needs a stated
-      rule, not a patch. Name resolution removed the largest family of these by
-      moving the diagnostic into the analyzer, where there is only one of it.
+- [x] Settle which token a runtime error points at. The rule is now explicit:
+      the caret points at the token naming the thing the message describes.
+      Runtime arguments retain their own source position through both engines,
+      including the VM's LIR and bytecode, so a failed argument no longer falls
+      back to the call. Exact-stderr conformance cases pin calls, member
+      arguments, indices, iterables and conversion targets.
 
 - [x] Point the caret at the token, not past it. A Token carried two positions:
       `line`/`column`, which the tokenizer set *after* the lexeme, and

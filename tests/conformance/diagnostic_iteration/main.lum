@@ -1,0 +1,6 @@
+// Une valeur non itérable désigne l'expression située après 'dans'.
+fonction principal() {
+    pour chaque item dans 1 {
+        afficher(item)
+    }
+}

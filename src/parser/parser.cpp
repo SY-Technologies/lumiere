@@ -927,7 +927,7 @@ namespace lumiere
 
         do
         {
-            Argument arg;
+            Argument arg{"", peek(), nullptr};
 
             // check for named argument — name: value
             if (can_appear_as_member_name(peek().type) &&

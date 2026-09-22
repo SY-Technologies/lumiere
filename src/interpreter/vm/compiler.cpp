@@ -439,7 +439,9 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
                     source_instruction.opcode,
                     remap_operand(source_instruction.destination, constants, globals, functions, types, annotations,
                                   members, classes, interfaces, argument_names, namespaces),
-                    std::move(operands), source_instruction.source));
+                    std::move(operands),
+                    source_instruction.source,
+                    source_instruction.argument_sources));
             }
             std::vector<LirOperand> term_operands;
             for (const LirOperand operand : source_block.terminator->operands)

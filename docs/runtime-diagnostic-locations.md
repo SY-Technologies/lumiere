@@ -14,7 +14,7 @@ l’instruction interne qui a découvert l’erreur.
 | Argument invalide | Expression de l’argument ; pour un argument nommé, son nom | L’autre argument et la fonction peuvent être valides. |
 | Appel impossible, mauvais nombre d’arguments ou argument requis absent | Nom du callable, ou début de l’expression appelée si elle n’a pas de nom | L’erreur porte sur le contrat de cet appel dans son ensemble. |
 | Construction d’objet | Nom du champ fourni lorsqu’il est inconnu, dupliqué ou mal typé ; nom de la classe pour un champ requis absent | Le curseur suit l’élément du contrat que le message nomme. |
-| Accès ou affectation par indice | Expression de l’indice si sa valeur est invalide ; `[` si le type du receveur ne permet pas l’opération | Une mauvaise clé ou position appartient à l’indice ; un accès impossible appartient à l’opération. |
+| Accès ou affectation par indice | Expression de l’indice | La clé ou la position identifie l’accès précis qui a échoué. |
 | Itération | Expression itérée | C’est sa valeur qui ne fournit pas une séquence itérable. |
 | Import | Nom du module ou du membre importé | Le message nomme l’import qui n’a pas pu être résolu. |
 | Instruction de contrôle ou de résultat | Mot-clé (`retourne`, `propager`, `ignorer`, `agir selon`, etc.) | Le message décrit l’usage de cette instruction. |

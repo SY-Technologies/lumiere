@@ -429,32 +429,33 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
 
 void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
 {
+    const Token &index_site = expression_start_token(*target.index);
     const Value object = evaluate(*target.object);
     const Value key = evaluate(*target.index);
     Value value = evaluate(value_expr);
 
     if (object.is_liste_fixe())
     {
-        throw_runtime_error(target.bracket,
+        throw_runtime_error(index_site,
                             messages::liste_fixe_immuable());
     }
 
     if (!supports_mutable_index_assignment(object))
     {
-        throw_runtime_error(target.bracket,
+        throw_runtime_error(index_site,
                             messages::affectation_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
     {
-        const int64_t position = assert_entier(key, target.bracket);
+        const int64_t position = assert_entier(key, index_site);
         auto list = object.as_liste();
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(target.bracket,
+            throw_runtime_error(index_site,
                                 messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
-        enforce_list_element_constraint(list, value, target.bracket, "Liste.ajouter");
+        enforce_list_element_constraint(list, value, index_site, "Liste.ajouter");
         list->elements[static_cast<std::size_t>(position)] = value;
         m_result = std::move(value);
         return;
@@ -463,14 +464,14 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     if (object.is_dictionnaire())
     {
         auto dict = object.as_dictionnaire();
-        enforce_dict_entry_constraint(dict, key, value, target.bracket, "l'entrée du dictionnaire");
-        require_dictionary_key(key, target.bracket);
+        enforce_dict_entry_constraint(dict, key, value, index_site, "l'entrée du dictionnaire");
+        require_dictionary_key(key, index_site);
         dict->set(key, value);
         m_result = std::move(value);
         return;
     }
 
-    throw_runtime_error(target.bracket,
+    throw_runtime_error(index_site,
                         messages::affectation_indice_impossible(object.type_name()));
 }
 
@@ -676,6 +677,7 @@ void TreeWalker::visit(FunctionExpr &expr)
 
 void TreeWalker::visit(CallExpr &expr)
 {
+    const Token &call_site = call_site_token(expr);
     if (auto *identifier = dynamic_cast<IdentifierExpr *>(expr.callee.get()))
     {
         const std::string &builtin_name = identifier->name.lexeme;
@@ -690,7 +692,7 @@ void TreeWalker::visit(CallExpr &expr)
             builtin_name == "Échec") &&
             (m_env == nullptr || !m_env->contains(builtin_name)))
         {
-            m_result = call_builtin(builtin_name, expr.args, expr.paren);
+            m_result = call_builtin(builtin_name, expr.args, call_site);
             return;
         }
     }
@@ -704,35 +706,35 @@ void TreeWalker::visit(CallExpr &expr)
         {
             if (expr.args.size() != 3)
             {
-                throw_runtime_error(expr.paren, "ListeFixe.remplir requiert exactement 3 argument(s)");
+                throw_runtime_error(call_site, "ListeFixe.remplir requiert exactement 3 argument(s)");
             }
             for (const auto &arg : expr.args)
             {
                 if (!arg.name.empty())
                 {
-                    throw_runtime_error(expr.paren, "ListeFixe.remplir n'accepte pas d'arguments nommés");
+                    throw_runtime_error(arg.site, "ListeFixe.remplir n'accepte pas d'arguments nommés");
                 }
             }
 
             const auto *type_expr = dynamic_cast<IdentifierExpr *>(expr.args[0].value.get());
             if (type_expr == nullptr)
             {
-                throw_runtime_error(expr.paren, "ListeFixe.remplir attend un nom de type comme premier argument");
+                throw_runtime_error(expr.args[0].site, "ListeFixe.remplir attend un nom de type comme premier argument");
             }
 
             const std::string element_type = type_expr->name.lexeme;
             const Value length_value = evaluate(*expr.args[1].value);
-            const int64_t length = assert_entier(length_value, expr.paren);
+            const int64_t length = assert_entier(length_value, expr.args[1].site);
             if (length < 0)
             {
-                throw_runtime_error(expr.paren, "la taille d'une ListeFixe ne peut pas être négative");
+                throw_runtime_error(expr.args[1].site, "la taille d'une ListeFixe ne peut pas être négative");
             }
 
             const Value fill_value = evaluate(*expr.args[2].value);
             ensure_value_matches_annotation(
                 fill_value,
                 Token(TokenType::IDENT, element_type, type_expr->name.line, type_expr->name.column),
-                expr.paren,
+                expr.args[2].site,
                 "ListeFixe.remplir");
 
             auto data = make_ref<ListeFixeData>();
@@ -742,8 +744,8 @@ void TreeWalker::visit(CallExpr &expr)
                 m_result,
                 Token(TokenType::IDENT,
                       "ListeFixe[" + element_type + ", " + std::to_string(length) + "]",
-                      expr.paren.line,
-                      expr.paren.column));
+                      call_site.line,
+                      call_site.column));
             return;
         }
     }
@@ -751,15 +753,15 @@ void TreeWalker::visit(CallExpr &expr)
     const Value callee = evaluate(*expr.callee);
     if (callee.is_classe())
     {
-        m_result = instantiate_class(callee.as_classe(), expr.args, expr.paren);
+        m_result = instantiate_class(callee.as_classe(), expr.args, call_site);
         return;
     }
     if (!callee.is_fonction())
     {
-        throw_runtime_error(expr.paren, messages::valeur_non_appelable(callee.type_name()));
+        throw_runtime_error(call_site, messages::valeur_non_appelable(callee.type_name()));
     }
 
-    m_result = call_function(callee.as_fonction(), expr.args, expr.paren);
+    m_result = call_function(callee.as_fonction(), expr.args, call_site);
 }
 
 void TreeWalker::visit(ListExpr &expr)
@@ -861,22 +863,23 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
 void TreeWalker::visit(IndexAccessExpr &expr)
 {
+    const Token &index_site = expression_start_token(*expr.index);
     const Value object = evaluate(*expr.object);
     const Value index = evaluate(*expr.index);
 
     if (!supports_index_read(object))
     {
-        throw_runtime_error(expr.bracket, messages::acces_indice_impossible(object.type_name()));
+        throw_runtime_error(index_site, messages::acces_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         auto list = object.as_liste();
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket,
+            throw_runtime_error(index_site,
                                 messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
@@ -886,12 +889,12 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
     if (object.is_liste_fixe())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         auto list = object.as_liste_fixe();
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket,
+            throw_runtime_error(index_site,
                                 messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
@@ -909,37 +912,37 @@ void TreeWalker::visit(IndexAccessExpr &expr)
             return;
         }
 
-        throw_runtime_error(expr.bracket, messages::cle_introuvable());
+        throw_runtime_error(index_site, messages::cle_introuvable());
     }
 
     if (object.is_texte())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         const std::string &text = object.as_texte();
         const std::optional<std::size_t> length = utf8::character_count(text);
 
         if (!length.has_value())
         {
-            throw_runtime_error(expr.bracket, "texte UTF-8 invalide");
+            throw_runtime_error(index_site, "texte UTF-8 invalide");
         }
 
         if (position < 0 || static_cast<std::size_t>(position) >= *length)
         {
-            throw_runtime_error(expr.bracket,
+            throw_runtime_error(index_site,
                                 messages::indice_hors_limites(position, *length, object.type_name()));
         }
 
         const std::optional<char32_t> symbol_char = utf8::character_at(text, static_cast<std::size_t>(position));
         if (!symbol_char.has_value())
         {
-            throw_runtime_error(expr.bracket, "texte UTF-8 invalide");
+            throw_runtime_error(index_site, "texte UTF-8 invalide");
         }
 
         m_result = Value::symbole(*symbol_char);
         return;
     }
 
-    throw_runtime_error(expr.bracket, messages::acces_indice_impossible(object.type_name()));
+    throw_runtime_error(index_site, messages::acces_indice_impossible(object.type_name()));
 }
 
 void TreeWalker::visit(PropagationExpr &expr)
@@ -1056,6 +1059,7 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
     try
     {
         std::vector<std::optional<Value>> bound_arguments(params.size());
+        std::vector<std::optional<RuntimeSite>> bound_argument_sites(params.size());
         std::size_t next_positional_parameter = 0;
 
         for (std::size_t i = 0; i < args.size(); ++i)
@@ -1075,7 +1079,7 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
 
                 if (target_index == params.size())
                 {
-                    raise_runtime_error(call_site, "aucun paramètre nommé '" + args[i].name + "'");
+                    raise_runtime_error(args[i].site, "aucun paramètre nommé '" + args[i].name + "'");
                 }
             }
             else
@@ -1088,7 +1092,7 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
 
                 if (next_positional_parameter == params.size())
                 {
-                    raise_runtime_error(call_site, "trop d'arguments fournis a l'appel de fonction");
+                    raise_runtime_error(args[i].site, "trop d'arguments fournis a l'appel de fonction");
                 }
 
                 target_index = next_positional_parameter++;
@@ -1096,10 +1100,11 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
 
             if (bound_arguments[target_index].has_value())
             {
-                raise_runtime_error(call_site, "le paramètre '" + params[target_index].name + "' est fourni plusieurs fois");
+                raise_runtime_error(args[i].site, "le paramètre '" + params[target_index].name + "' est fourni plusieurs fois");
             }
 
             bound_arguments[target_index] = args[i].value;
+            bound_argument_sites[target_index] = args[i].site;
         }
 
         for (std::size_t i = 0; i < params.size(); ++i)
@@ -1120,10 +1125,16 @@ Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
                 raise_runtime_error(call_site, "argument manquant pour le paramètre '" + parameter.name + "'");
             }
 
+            const RuntimeSite &argument_site = bound_argument_sites[i].has_value()
+                                                   ? *bound_argument_sites[i]
+                                                   : call_site;
             ensure_value_matches_annotation(
                 argument_value,
                 parameter.type,
-                site_token,
+                Token(TokenType::IDENT,
+                      parameter.name,
+                      static_cast<std::uint32_t>(argument_site.line),
+                      static_cast<std::uint32_t>(argument_site.column)),
                 "le paramètre '" + parameter.name + "'");
             m_env->define(parameter.name, std::move(argument_value), resolved_annotation_name(parameter.type));
         }

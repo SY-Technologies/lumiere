@@ -362,6 +362,9 @@ namespace lumiere
                 arg.name,
                 // some args values will be expressions that need to be evaluated
                 evaluate(*arg.value),
+                RuntimeSite{m_current_source_path,
+                            static_cast<int>(arg.site.line),
+                            static_cast<int>(arg.site.column)},
             });
         }
 

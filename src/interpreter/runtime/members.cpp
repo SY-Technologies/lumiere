@@ -37,6 +37,13 @@ struct MemberCall
         std::abort();
     }
 
+    [[noreturn]] void fail_argument(const std::size_t index, const std::string &message) const
+    {
+        const RuntimeSite &argument_site = args[index].site.line == 0 ? site : args[index].site;
+        runtime.raise_runtime_error(argument_site, message);
+        std::abort();
+    }
+
     [[nodiscard]] std::string signature() const
     {
         return receiver.type_name() + "." + std::string(member);
@@ -49,11 +56,11 @@ struct MemberCall
         {
             fail(messages::arite_exacte(signature(), arity));
         }
-        for (const RuntimeArgument &argument : args)
+        for (std::size_t index = 0; index < args.size(); ++index)
         {
-            if (!argument.name.empty())
+            if (!args[index].name.empty())
             {
-                fail(messages::arguments_nommes_refuses(signature()));
+                fail_argument(index, messages::arguments_nommes_refuses(signature()));
             }
         }
     }
@@ -64,7 +71,7 @@ struct MemberCall
     {
         if (!argument(index).is_entier())
         {
-            fail(messages::valeur_attendue(signature(), "Entier"));
+            fail_argument(index, messages::valeur_attendue(signature(), "Entier"));
         }
         return argument(index).as_entier();
     }
@@ -73,7 +80,7 @@ struct MemberCall
     {
         if (!argument(index).is_texte())
         {
-            fail(messages::valeur_attendue(signature(), "Texte"));
+            fail_argument(index, messages::valeur_attendue(signature(), "Texte"));
         }
         return argument(index).as_texte();
     }
@@ -87,6 +94,14 @@ struct MemberCall
         }
     }
 
+    void require_argument_key(const std::size_t index) const
+    {
+        if (const auto rejection = dictionary_key_rejection(argument(index)))
+        {
+            fail_argument(index, *rejection);
+        }
+    }
+
     /**
      * @brief Holds a value entering a collection to that collection's contract.
      *
@@ -94,13 +109,17 @@ struct MemberCall
      * type from here on, so the inner lists of a `Liste[Liste[Entier]]` enforce
      * `Liste[Entier]` on what is later added to them.
      */
-    void enforce(const Value &value, const std::string &type_name) const
+    void enforce(const std::size_t index, const std::string &type_name) const
     {
+        const Value &value = argument(index);
         if (!runtime.matches_declared_type(value, type_name))
         {
-            fail(messages::type_attendu(signature(), display_runtime_type(type_name), value.type_name()));
+            fail_argument(index,
+                          messages::type_attendu(signature(),
+                                                 display_runtime_type(type_name),
+                                                 value.type_name()));
         }
-        runtime.annotate_value(value, type_name, site);
+        runtime.annotate_value(value, type_name, args[index].site.line == 0 ? site : args[index].site);
     }
 
     /** @brief Records @p type_name on a collection built by this member. */
@@ -195,7 +214,7 @@ Value liste_ajouter(const MemberCall &call)
     const auto list = call.receiver.as_liste();
     if (list->constraint)
     {
-        call.enforce(call.argument(0), list->constraint->element_type);
+        call.enforce(0, list->constraint->element_type);
     }
     list->elements.push_back(call.argument(0));
     return Value::entier(static_cast<std::int64_t>(list->elements.size()));
@@ -207,11 +226,11 @@ Value liste_inserer(const MemberCall &call)
     const std::int64_t position = call.integer(0);
     if (position < 0 || static_cast<std::size_t>(position) > list->elements.size())
     {
-        call.fail("indice d'insertion hors limites");
+        call.fail_argument(0, "indice d'insertion hors limites");
     }
     if (list->constraint)
     {
-        call.enforce(call.argument(1), list->constraint->element_type);
+        call.enforce(1, list->constraint->element_type);
     }
     list->elements.insert(list->elements.begin() + position, call.argument(1));
     return Value::entier(position);
@@ -223,7 +242,7 @@ Value liste_retirer_a(const MemberCall &call)
     const std::int64_t position = call.integer(0);
     if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
     {
-        call.fail(messages::indice_hors_limites(position, list->elements.size(), "Liste"));
+        call.fail_argument(0, messages::indice_hors_limites(position, list->elements.size(), "Liste"));
     }
     Value removed = list->elements[static_cast<std::size_t>(position)];
     list->elements.erase(list->elements.begin() + position);
@@ -255,11 +274,13 @@ Value liste_en_liste_fixe(const MemberCall &call)
     const std::int64_t length = call.integer(0);
     if (length < 0)
     {
-        call.fail("la taille d'une ListeFixe ne peut pas être négative");
+        call.fail_argument(0, "la taille d'une ListeFixe ne peut pas être négative");
     }
     if (static_cast<std::size_t>(length) != list->elements.size())
     {
-        call.fail(call.signature() + " requiert une liste de taille exacte " + std::to_string(length));
+        call.fail_argument(0,
+                           call.signature() + " requiert une liste de taille exacte " +
+                               std::to_string(length));
     }
 
     auto fixed = make_ref<ListeFixeData>();
@@ -312,7 +333,7 @@ Ref<EnsembleData> other_set(const MemberCall &call)
 {
     if (!call.argument(0).is_ensemble())
     {
-        call.fail(messages::valeur_attendue(call.signature(), "Ensemble"));
+        call.fail_argument(0, messages::valeur_attendue(call.signature(), "Ensemble"));
     }
     return call.argument(0).as_ensemble();
 }
@@ -340,9 +361,9 @@ Value ensemble_ajouter(const MemberCall &call)
     const auto set = call.receiver.as_ensemble();
     if (set->constraint)
     {
-        call.enforce(call.argument(0), set->constraint->element_type);
+        call.enforce(0, set->constraint->element_type);
     }
-    call.require_key(call.argument(0));
+    call.require_argument_key(0);
     return Value::logique(set->insert(call.argument(0)));
 }
 
@@ -508,7 +529,7 @@ Value dictionnaire_retirer(const MemberCall &call)
     Value removed;
     if (!call.receiver.as_dictionnaire()->erase(call.argument(0), removed))
     {
-        call.fail(messages::cle_introuvable());
+        call.fail_argument(0, messages::cle_introuvable());
     }
     return removed;
 }

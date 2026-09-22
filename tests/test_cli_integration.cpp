@@ -2605,7 +2605,7 @@ TEST(CliIntegration, BothBackendsHonorResultReturningPrincipal)
             std::string::npos)
             << backend << ": " << failure.stderr_text;
         EXPECT_NE(
-            failure.stderr_text.find("line 2, column 18"),
+            failure.stderr_text.find("line 2, column 12"),
             std::string::npos)
             << backend << ": " << failure.stderr_text;
     }
@@ -2748,7 +2748,7 @@ TEST(CliIntegration, BothBackendsPreserveOriginsAcrossPropagationChains)
         EXPECT_NE(result.exit_code, 0) << backend;
         EXPECT_NE(
             result.stderr_text.find(
-                "line 2, column 18"),
+                "line 2, column 12"),
             std::string::npos)
             << backend << ": " << result.stderr_text;
         EXPECT_EQ(
@@ -2826,7 +2826,7 @@ TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
                 root);
         EXPECT_NE(forwarded.exit_code, 0);
         EXPECT_NE(
-            forwarded.stderr_text.find("line 2, column 18"),
+            forwarded.stderr_text.find("line 2, column 12"),
             std::string::npos)
             << backend << ": " << forwarded.stderr_text;
     }
@@ -2852,7 +2852,7 @@ TEST(CliIntegration, BothBackendsPreserveAndReplaceFailureOrigins)
                 root);
         EXPECT_NE(translated.exit_code, 0);
         EXPECT_NE(
-            translated.stderr_text.find("line 8, column 33"),
+            translated.stderr_text.find("line 8, column 27"),
             std::string::npos)
             << backend << ": " << translated.stderr_text;
     }
@@ -2907,8 +2907,10 @@ TEST(CliIntegration, BothBackendsRenderStackTraceForUnhandledPropagatedResults)
         EXPECT_LT(source_frame, milieu_frame) << backend;
         EXPECT_LT(milieu_frame, principal_frame) << backend;
 
+        // The failure originates in the Échec call, so the callable token owns
+        // the caret rather than its opening parenthesis.
         EXPECT_NE(
-            result.stderr_text.find("line 3, column 20"),
+            result.stderr_text.find("line 3, column 14"),
             std::string::npos)
             << backend << ": " << result.stderr_text;
         EXPECT_NE(

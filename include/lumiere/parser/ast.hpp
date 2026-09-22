@@ -22,6 +22,10 @@ namespace lumiere
     struct Argument
     {
         std::string name;
+        // Named arguments point at their name; positional arguments point at
+        // the first token of their expression. Runtime diagnostics retain this
+        // after evaluation so they can identify the argument that failed.
+        Token site;
         ExprPtr value;
     };
 
@@ -297,6 +301,48 @@ namespace lumiere
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
     };
+
+    /** @brief First token of an expression, for diagnostics about the value as a whole. */
+    inline const Token &expression_start_token(const Expr &expr)
+    {
+        if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expr))
+            return literal->token;
+        if (const auto *identifier = dynamic_cast<const IdentifierExpr *>(&expr))
+            return identifier->name;
+        if (const auto *binary = dynamic_cast<const BinaryExpr *>(&expr))
+            return expression_start_token(*binary->left);
+        if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expr))
+            return dictionary->brace;
+        if (const auto *set = dynamic_cast<const SetExpr *>(&expr))
+            return set->brace;
+        if (const auto *unary = dynamic_cast<const UnaryExpr *>(&expr))
+            return unary->op;
+        if (const auto *cast = dynamic_cast<const CastExpr *>(&expr))
+            return expression_start_token(*cast->operand);
+        if (const auto *check = dynamic_cast<const TypeCheckExpr *>(&expr))
+            return expression_start_token(*check->operand);
+        if (const auto *function = dynamic_cast<const FunctionExpr *>(&expr))
+            return function->keyword;
+        if (const auto *call = dynamic_cast<const CallExpr *>(&expr))
+            return expression_start_token(*call->callee);
+        if (const auto *list = dynamic_cast<const ListExpr *>(&expr))
+            return list->bracket;
+        if (const auto *member = dynamic_cast<const MemberAccessExpr *>(&expr))
+            return expression_start_token(*member->object);
+        if (const auto *index = dynamic_cast<const IndexAccessExpr *>(&expr))
+            return expression_start_token(*index->object);
+        return dynamic_cast<const PropagationExpr &>(expr).keyword;
+    }
+
+    /** @brief Token that names the callable in a source-level call. */
+    inline const Token &call_site_token(const CallExpr &expr)
+    {
+        if (const auto *member = dynamic_cast<const MemberAccessExpr *>(expr.callee.get()))
+        {
+            return member->member;
+        }
+        return expression_start_token(*expr.callee);
+    }
 
     // Statement nodes 
 

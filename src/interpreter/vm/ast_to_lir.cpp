@@ -238,7 +238,7 @@ public:
                                           {lower_expr(*index->object),
                                            lower_expr(*index->index),
                                            lower_expr(*expr.right)},
-                                          lir_loc(index->bracket));
+                                          lir_loc(expression_start_token(*index->index)));
                 return;
             }
             if (auto *member = dynamic_cast<MemberAccessExpr *>(expr.left.get()))
@@ -491,7 +491,7 @@ public:
     {
         m_last_value = emit_value(LirOpcode::IR_OP_INDEX_GET,
                                   {lower_expr(*expr.object), lower_expr(*expr.index)},
-                                  lir_loc(expr.bracket));
+                                  lir_loc(expression_start_token(*expr.index)));
     }
 
     void visit(PropagationExpr &expr) override
@@ -511,6 +511,14 @@ public:
 
     void visit(CallExpr &expr) override
     {
+        const LirSourceLocation call_source = lir_loc(call_site_token(expr));
+        std::vector<LirSourceLocation> argument_sources;
+        argument_sources.reserve(expr.args.size());
+        for (const Argument &argument : expr.args)
+        {
+            argument_sources.push_back(lir_loc(argument.site));
+        }
+
         auto *callee = dynamic_cast<IdentifierExpr *>(expr.callee.get());
         if (auto *member = dynamic_cast<MemberAccessExpr *>(expr.callee.get()))
         {
@@ -531,7 +539,8 @@ public:
                                          : LirOpcode::IR_OP_CALL_MEMBER;
             m_last_value = emit_value(opcode,
                                       std::move(operands),
-                                      lir_loc(member->member));
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
         if (callee == nullptr || lookup_local(callee->name.lexeme).has_value() ||
@@ -546,7 +555,10 @@ public:
             {
                 throw VmCompileError("VM: trop d'arguments dans un appel");
             }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL, std::move(operands), lir_loc(expr.paren));
+            m_last_value = emit_value(LirOpcode::IR_OP_CALL,
+                                      std::move(operands),
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
 
@@ -563,7 +575,10 @@ public:
             {
                 throw VmCompileError("VM: trop d'arguments dans un appel");
             }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL, std::move(operands), lir_loc(expr.paren));
+            m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL,
+                                      std::move(operands),
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
 
@@ -661,7 +676,9 @@ public:
         {
             throw VmCompileError("VM: trop d'arguments ABI dans un appel");
         }
-        m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL, std::move(operands), lir_loc(expr.paren));
+        m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL,
+                                  std::move(operands),
+                                  call_source);
     }
 
     void visit(BlockStmt &stmt) override
@@ -1010,7 +1027,7 @@ public:
         const LirOperand iterable = lower_expr(*stmt.iterable);
         const LirOperand snapshot = emit_value(LirOpcode::IR_OP_ITERATION_SNAPSHOT,
                                                {iterable},
-                                               lir_loc(stmt.variable));
+                                               lir_loc(expression_start_token(*stmt.iterable)));
         const std::size_t iterable_local = allocate_hidden_local("$iter");
         const std::size_t index_local = allocate_hidden_local("$index");
         const std::size_t item_local = m_next_local_index++;
@@ -1846,12 +1863,17 @@ private:
     // names its result.
     [[nodiscard]] LirOperand emit_value(LirOpcode opcode,
                                         std::vector<LirOperand> operands,
-                                        LirSourceLocation source)
+                                        LirSourceLocation source,
+                                        std::vector<LirSourceLocation> argument_sources = {})
     {
         const LirOperand destination = allocate_temp();
         m_function.append_instruction(
             m_current_block,
-            LirInstruction::make(opcode, destination, std::move(operands), source));
+            LirInstruction::make(opcode,
+                                 destination,
+                                 std::move(operands),
+                                 source,
+                                 std::move(argument_sources)));
         return destination;
     }
 

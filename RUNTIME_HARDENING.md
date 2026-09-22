@@ -1448,18 +1448,46 @@ member that assumed its arity without checking would be a fast path with an
 unasserted assumption. It is stated once for all members, in the table, rather
 than repeated as the first line of each.
 
-### What is pinned, and what is not yet
+### What is pinned
 
 `tests/conformance/membres_liste` runs every Liste member through both engines,
 including the empty receiver and both ends of the index range.
 
-The failing cases could not go there, because **the two engines still point the
-caret at different tokens**: the tree walker at the call's parenthesis, the VM at
-the member's name. Conformance compares stderr whole, so a case that fails would
-fail on the caret rather than on the message. That difference is Task 5's — the
-rule for which token a runtime error points at — and the member errors are pinned
-meanwhile by `CliIntegration.BothBackendsReportTheSameRuntimeDiagnostic`, which
-compares the message line. When Task 5 lands, those cases belong in the corpus.
+The member failures are now also in the exact-stderr conformance corpus. The
+runtime-location rule below removed the caret difference that had kept them out.
+
+## One source token for each runtime failure — 2026-09-21
+
+The tree walker used the token available at the point it noticed a failure; the
+VM used the bytecode opcode's location. Those are implementation details, not a
+language rule. They made a bad member argument point at `(` in one engine and
+the member name in the other, while an out-of-range index pointed at `[` rather
+than at the index that was wrong.
+
+The rule is now stated in `docs/runtime-diagnostic-locations.md`: **the caret
+points at the token that names the thing the message is about.** A call-wide
+failure points at the callable, an argument failure at that argument, an index
+failure at the index expression, a non-iterable value at the iterable expression,
+and a failed conversion at its target type.
+
+That required preserving information rather than guessing later. `Argument`
+records its source token. `RuntimeArgument` carries the resulting `RuntimeSite`.
+The VM stores one source location per argument on call instructions, copies it
+when modules are linked, writes it beside the encoded argument name, and
+restores it when the stack values become runtime arguments. A site-aware
+`VmRuntimeError` then lets shared runtime code report that location without
+knowing which engine called it. Call and expression-start token selection is
+shared AST logic, so the two lowering paths do not encode separate policies.
+
+Five exact-stderr cases pin the previously unpinned families:
+`diagnostic_appel`, `diagnostic_argument_membre`, `diagnostic_indice`,
+`diagnostic_iteration` and `diagnostic_conversion`. Existing conformance cases
+continue to pin symbols, members, operators, imports and control flow. The
+traceback fixture now also records callable-token frame locations. No
+`divergence.connue` remains under `tests/conformance`.
+
+This is a correctness change, not a performance claim; no timing result is
+attributed to it.
 
 ## Next engineering priorities
 
