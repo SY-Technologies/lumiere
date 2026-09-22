@@ -238,7 +238,7 @@ public:
                                           {lower_expr(*index->object),
                                            lower_expr(*index->index),
                                            lower_expr(*expr.right)},
-                                          lir_loc(expression_start_token(*index->index)));
+                                          lir_loc(index->index->start_token()));
                 return;
             }
             if (auto *member = dynamic_cast<MemberAccessExpr *>(expr.left.get()))
@@ -491,7 +491,7 @@ public:
     {
         m_last_value = emit_value(LirOpcode::IR_OP_INDEX_GET,
                                   {lower_expr(*expr.object), lower_expr(*expr.index)},
-                                  lir_loc(expression_start_token(*expr.index)));
+                                  lir_loc(expr.index->start_token()));
     }
 
     void visit(PropagationExpr &expr) override
@@ -1027,7 +1027,7 @@ public:
         const LirOperand iterable = lower_expr(*stmt.iterable);
         const LirOperand snapshot = emit_value(LirOpcode::IR_OP_ITERATION_SNAPSHOT,
                                                {iterable},
-                                               lir_loc(expression_start_token(*stmt.iterable)));
+                                               lir_loc(stmt.iterable->start_token()));
         const std::size_t iterable_local = allocate_hidden_local("$iter");
         const std::size_t index_local = allocate_hidden_local("$index");
         const std::size_t item_local = m_next_local_index++;

@@ -124,6 +124,19 @@ namespace lumiere
     {
         virtual ~Expr() = default;
         virtual void accept(ExprVisitor &v) = 0;
+
+        /**
+         * @brief The first token of this expression.
+         *
+         * A runtime diagnostic about an expression's value as a whole points
+         * here; `docs/runtime-diagnostic-locations.md` says which failures
+         * those are. It is pure so that a new expression node cannot forget to
+         * answer: the question used to be asked by a chain of `dynamic_cast`
+         * ending in one that throws, and `agir selon` -- an expression as well
+         * as a statement -- was not in it, so using one as an index or as the
+         * thing iterated aborted with `std::bad_cast`.
+         */
+        [[nodiscard]] virtual const Token &start_token() const = 0;
     };
 
     struct Stmt
@@ -142,6 +155,8 @@ namespace lumiere
             : token(std::move(token)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return token; }
     };
 
     struct IdentifierExpr : Expr
@@ -152,6 +167,8 @@ namespace lumiere
             : name(std::move(name)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return name; }
     };
 
     struct BinaryExpr : Expr
@@ -164,6 +181,8 @@ namespace lumiere
             : left(std::move(left)), op(std::move(op)), right(std::move(right)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return left->start_token(); }
     };
 
     struct DictionaryEntryExpr
@@ -181,6 +200,8 @@ namespace lumiere
             : brace(std::move(brace)), entries(std::move(entries)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return brace; }
     };
 
     /** @brief A set literal, `{a, b, c}`. An empty `{}` is a dictionary. */
@@ -193,6 +214,8 @@ namespace lumiere
             : brace(std::move(brace)), elements(std::move(elements)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return brace; }
     };
 
     struct UnaryExpr : Expr
@@ -204,6 +227,8 @@ namespace lumiere
             : op(std::move(op)), operand(std::move(operand)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return op; }
     };
 
     struct CastExpr : Expr
@@ -215,6 +240,8 @@ namespace lumiere
             : operand(std::move(operand)), target_type(std::move(target_type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return operand->start_token(); }
     };
 
     struct TypeCheckExpr : Expr
@@ -227,6 +254,8 @@ namespace lumiere
             : operand(std::move(operand)), keyword(std::move(keyword)), type(std::move(type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return operand->start_token(); }
     };
 
     struct FunctionExpr : Expr
@@ -243,6 +272,8 @@ namespace lumiere
               body(std::move(body)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
     };
 
     struct CallExpr : Expr
@@ -255,6 +286,8 @@ namespace lumiere
             : callee(std::move(callee)), paren(std::move(paren)), args(std::move(args)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return callee->start_token(); }
     };
 
     struct ListExpr : Expr
@@ -266,6 +299,8 @@ namespace lumiere
             : bracket(std::move(bracket)), elements(std::move(elements)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return bracket; }
     };
 
     struct MemberAccessExpr : Expr
@@ -278,6 +313,8 @@ namespace lumiere
             : object(std::move(object)), dot(std::move(dot)), member(std::move(member)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return object->start_token(); }
     };
 
     struct IndexAccessExpr : Expr
@@ -290,6 +327,8 @@ namespace lumiere
             : object(std::move(object)), bracket(std::move(bracket)), index(std::move(index)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return object->start_token(); }
     };
     struct PropagationExpr : Expr
     {
@@ -300,39 +339,9 @@ namespace lumiere
             : keyword(std::move(keyword)), operand(std::move(operand)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
-    };
 
-    /** @brief First token of an expression, for diagnostics about the value as a whole. */
-    inline const Token &expression_start_token(const Expr &expr)
-    {
-        if (const auto *literal = dynamic_cast<const LiteralExpr *>(&expr))
-            return literal->token;
-        if (const auto *identifier = dynamic_cast<const IdentifierExpr *>(&expr))
-            return identifier->name;
-        if (const auto *binary = dynamic_cast<const BinaryExpr *>(&expr))
-            return expression_start_token(*binary->left);
-        if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expr))
-            return dictionary->brace;
-        if (const auto *set = dynamic_cast<const SetExpr *>(&expr))
-            return set->brace;
-        if (const auto *unary = dynamic_cast<const UnaryExpr *>(&expr))
-            return unary->op;
-        if (const auto *cast = dynamic_cast<const CastExpr *>(&expr))
-            return expression_start_token(*cast->operand);
-        if (const auto *check = dynamic_cast<const TypeCheckExpr *>(&expr))
-            return expression_start_token(*check->operand);
-        if (const auto *function = dynamic_cast<const FunctionExpr *>(&expr))
-            return function->keyword;
-        if (const auto *call = dynamic_cast<const CallExpr *>(&expr))
-            return expression_start_token(*call->callee);
-        if (const auto *list = dynamic_cast<const ListExpr *>(&expr))
-            return list->bracket;
-        if (const auto *member = dynamic_cast<const MemberAccessExpr *>(&expr))
-            return expression_start_token(*member->object);
-        if (const auto *index = dynamic_cast<const IndexAccessExpr *>(&expr))
-            return expression_start_token(*index->object);
-        return dynamic_cast<const PropagationExpr &>(expr).keyword;
-    }
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
+    };
 
     /** @brief Token that names the callable in a source-level call. */
     inline const Token &call_site_token(const CallExpr &expr)
@@ -341,7 +350,7 @@ namespace lumiere
         {
             return member->member;
         }
-        return expression_start_token(*expr.callee);
+        return expr.callee->start_token();
     }
 
     // Statement nodes 
@@ -626,6 +635,9 @@ namespace lumiere
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        // The keyword, as for every other control-flow construct.
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
     };
 
 } // namespace lumiere

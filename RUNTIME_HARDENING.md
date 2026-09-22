@@ -1489,6 +1489,36 @@ traceback fixture now also records callable-token frame locations. No
 This is a correctness change, not a performance claim; no timing result is
 attributed to it.
 
+### The token an expression starts at, asked so it cannot be forgotten
+
+The location rule needs the first token of an arbitrary expression, and that was
+answered by a chain of fourteen `dynamic_cast`s whose last line was
+`dynamic_cast<const PropagationExpr &>(expr)` -- a reference cast, which throws
+rather than returning null. `AgirSelonStmt` derives from `Stmt` *and* `Expr`,
+and it was not in the chain, so every expression position the rule reaches
+aborted on it:
+
+```
+pour chaque x dans agir selon n { 1 -> [1, 2]  sinon -> [3] } { afficher(x) }
+```
+
+printed `1` and `2` before the rule landed and `erreur: std::bad_cast` after, in
+both engines -- the VM while lowering, the tree walker while evaluating. Using
+one as an index, on either side of an assignment, or as an operand of an index
+expression did the same. A C++ exception's type name is not a diagnostic of this
+language.
+
+`Expr::start_token()` is now pure virtual, so a node that does not answer does
+not compile, which is the guarantee `ExprVisitor` already gives for evaluation
+and which a cast chain cannot give at all. Each node answers in one line;
+`agir selon` answers with its keyword, like every other control-flow construct
+in the rule's table. The chain is gone, and with it a `dynamic_cast` on every
+index access and every call lowering.
+
+`tests/conformance/agir_selon_expression` runs `agir selon` in each position
+that used to abort, and `tests/conformance/diagnostic_agir_selon` pins the
+caret on its keyword.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

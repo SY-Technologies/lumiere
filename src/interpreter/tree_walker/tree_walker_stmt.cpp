@@ -274,7 +274,7 @@ void TreeWalker::visit(IfStmt &stmt)
 void TreeWalker::visit(ForStmt &stmt)
 {
     const std::vector<Value> items = enumerate_iterable(evaluate(*stmt.iterable),
-                                                        expression_start_token(*stmt.iterable));
+                                                        stmt.iterable->start_token());
 
     for (const Value &item : items)
     {

@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_agir_selon/main.lum)
+  File "diagnostic_agir_selon/main.lum", line 5, column 24
+        pour chaque x dans agir selon n { 1 -> 1  sinon -> 2 } {
+                           ^
+erreur d'exécution: cette valeur n'est pas itérable : elle est de type Entier

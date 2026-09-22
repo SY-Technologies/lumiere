@@ -429,7 +429,7 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
 
 void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
 {
-    const Token &index_site = expression_start_token(*target.index);
+    const Token &index_site = target.index->start_token();
     const Value object = evaluate(*target.object);
     const Value key = evaluate(*target.index);
     Value value = evaluate(value_expr);
@@ -863,7 +863,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
 void TreeWalker::visit(IndexAccessExpr &expr)
 {
-    const Token &index_site = expression_start_token(*expr.index);
+    const Token &index_site = expr.index->start_token();
     const Value object = evaluate(*expr.object);
     const Value index = evaluate(*expr.index);
 
