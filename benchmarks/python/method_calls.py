@@ -7,9 +7,13 @@ class Accumulateur:
         return self.total
 
 
-accumulateur = Accumulateur(0)
-index = 0
-while index < 2000000:
-    accumulateur.ajouter(index)
-    index = index + 1
-print(accumulateur.total)
+def principal():
+    accumulateur = Accumulateur(0)
+    index = 0
+    while index < 2000000:
+        accumulateur.ajouter(index)
+        index = index + 1
+    print(accumulateur.total)
+
+
+principal()

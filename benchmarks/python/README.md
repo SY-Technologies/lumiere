@@ -14,5 +14,12 @@ Deux règles suivies partout :
 - même sortie, au caractère près, y compris les mots français (`vrai`), pour
   qu'une exécution qui n'a pas fait le travail soit détectée plutôt que
   chronométrée.
+- le programme tourne dans une fonction `principal()`, comme le programme
+  Lumière. Écrit au niveau du module, chaque variable Python est une globale,
+  cherchée dans un dictionnaire à chaque lecture, alors que les variables d'une
+  fonction sont des cases indexées — ce que sont aussi les `soit` d'un
+  `principal()` Lumière. Les huit premiers programmes étaient écrits au niveau
+  du module, où CPython prenait de 14 % à 75 % de temps en plus : la
+  comparaison mesurait ce choix d'écriture, pas les deux interpréteurs.
 
 `scripts/compare-languages.py` apparie chaque `.lum` avec le `.py` de même nom.
