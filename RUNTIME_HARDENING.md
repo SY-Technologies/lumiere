@@ -1569,6 +1569,56 @@ and it is not allocation, since the counts above match. It is the size of a
 is empty on every call. Making a position a pair of integers, with the path
 beside it rather than inside it, is the lever if that 6% is wanted back.
 
+## The target, re-read — 2026-09-23
+
+"Ahead of CPython at the median" was measured, and it was measured wrong. Two
+things in the comparison favoured Lumière, and neither was either interpreter.
+
+**The Python programs ran at module level.** A Lumière workload runs inside
+`principal()`, where a `soit` is a slot in the frame. Its Python counterpart ran
+as a top-level script, where every variable is a global looked up in a
+dictionary on every read. Put in a `principal()` and called, the same Python
+code does the same work in 14% to 75% less time -- 75% on the integer loop,
+which was the workload the target had first been claimed on. The C reference
+already kept its variables local, so only the Python column was affected.
+
+**CPython's startup was counted as execution.** CPython spends 8.2 ms before its
+first line and Lumière 0.7 ms, and every comparison timed the whole process. On
+the two text workloads CPython *executes* for about 1 and 2.5 ms, so what was
+being compared there was mostly two startups: the "0.24x" and "0.47x" leads on
+text were CPython launching. `compare-languages.py` now measures each runtime's
+empty program, subtracts it, prints the startups on their own line, and leaves
+out of the median any workload whose CPython execution is under ten times the
+spread of CPython's own startup -- below that, the subtraction alone can move
+the ratio.
+
+Same binary, same machine, one session:
+
+| workload | old method | Python in a function | and net of startup |
+| --- | --- | --- | --- |
+| integer_loop | 0.88x | 1.56x | 1.88x |
+| method_calls | 1.54x | 1.87x | 1.93x |
+| function_calls | 1.02x | 1.27x | 2.10x |
+| typed_list | 1.26x | 1.71x | 2.95x |
+| dictionary_lookup | 0.90x | 1.10x | 1.58x |
+| wide_object | 0.98x | 1.26x | 1.49x |
+| text_iteration | 0.47x | 0.49x | (1.80x) |
+| text_calls | 0.30x | 0.24x | (1.21x) |
+| **median** | **0.94x** | **1.27x** | **1.91x** |
+
+In parentheses: too short to rank. **The VM executes every workload in the
+suite more slowly than CPython, by 1.5x to 3x, and by 1.9x at the median.** Its
+startup is eleven times shorter, which is real and worth saying, and belongs
+on its own line rather than inside every ratio.
+
+Nothing here is a regression: the binary is the one every recent entry
+measured. What changed is that the comparison now compares interpreters. The
+recorded optimizations were each measured Lumière against Lumière, binary
+against binary, and those measurements stand; what does not stand is the
+claim, made on top of them, that the target had been reached. The note of
+2026-09-20 names this exact failure -- the target read off a proxy for it --
+and it happened again one level down, in how the proxy was built.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

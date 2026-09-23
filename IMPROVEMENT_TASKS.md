@@ -283,6 +283,15 @@ text iteration 0.47x, integer loop 0.91x, dictionary lookup 0.93x, function
 calls 1.15x, typed lists 1.56x, method calls 1.87x — median 0.93x.** The target
 is met at the median; three workloads are still behind.
 
+**Withdrawn, 2026-09-23.** That reading was produced by the comparison, not by
+the interpreters: the Python programs ran at module level, where every variable
+is a dictionary lookup, while the Lumière ones ran in `principal()`; and
+CPython's 8 ms startup was timed as though it were execution, which is all of
+the lead on the two text workloads. With both corrected, the VM executes every
+workload more slowly than CPython — **1.9x at the median**, from 1.5x on
+`wide_object` to 3x on `typed_list`. The target is not met. See "The target,
+re-read" in `RUNTIME_HARDENING.md`.
+
 Acceptance: benchmark reports include reproducible baselines and explain each
 optimization using measured time and memory changes. Note that no interpreter
 reaches the Go target; see the hardening notes.
