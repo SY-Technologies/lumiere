@@ -417,11 +417,22 @@ where the token starts.
 
 ## Task 6 — Resolve a runtime type once
 
-**In progress.** The first step found that the largest term was not parsing but
-scanning: a typed collection argument had every element checked on every call.
-Collections are now matched from their contract when it is exactly the type
-asked about; `commandes` is 3.7x to 6.1x faster. See `RUNTIME_HARDENING.md`,
-"Resolving a runtime type once". The descriptor below is the second step.
+**Done on the VM.** Step one removed the element scan; step two gave the VM a
+`VmType` read once per text -- from the module's type table, a field's
+declared type, or a run-time contract -- instead of re-parsed at every check.
+`commandes` on the VM is 6.2x to 13.0x faster than the parent commit and now
+within 3% across a 63- to 201-character path, where it used to move by 117%;
+against CPython it is 2.60x (was 8.3x to 17.5x). See `RUNTIME_HARDENING.md`,
+"Resolving a runtime type once".
+
+The tree walker was not given the same descriptor. It kept step one's
+contract fast path, but its other checks still parse strings, so its
+`commandes` still moves about 8% with path length -- outside noise, unlike
+the VM. The brief asked for one descriptor shared by both engines from
+`src/interpreter/runtime/`; splitting `VmType` free of `VmClassBody`'s cached
+lookups and the VM's index-based module type table to share it turned out to
+be its own task, and the tree walker is the reference engine, not the
+performance target. Left open below.
 
 ### Why
 
@@ -481,11 +492,27 @@ what is left once that is gone before deciding what else to change.
 ### Acceptance
 
 - `commandes` from a 10-character path and from a 150-character path within
-  noise of each other, on both engines.
+  noise of each other, on both engines. **Met on the VM** (63 vs 201
+  characters, 2.7% apart). **Not met on the tree walker** (8% apart) -- see
+  above.
 - `commandes` and `expressions` measured against the parent commit and against
   CPython, recorded in `RUNTIME_HARDENING.md`; the eight probes not regressed.
+  **Met.**
 - `matches_type_name`, `split_generic_arguments` and `trim_type_name` gone from
-  the profile of `commandes`.
+  the profile of `commandes`. **Met** (gone from the source, not just the
+  profile, on the VM; the tree walker keeps its own copies of the same
+  names).
+
+### What is left
+
+Give the tree walker a type read once the same way, sharing the parts of
+`VmType` that do not depend on the VM's module-indexed type table or
+`VmClassBody`'s per-class field cache -- `parse_vm_type`'s reading (already
+engine-agnostic) is the obvious first piece to lift into
+`src/interpreter/runtime/`; `matches` and `annotate` can likely follow once
+`ListConstraint` and its siblings are read once too. Re-run this task's
+acceptance check afterward: `commandes` from a 10- and a 150-character path
+within noise of each other on the tree walker as well.
 
 ---
 

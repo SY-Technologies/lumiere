@@ -1812,6 +1812,74 @@ the largest single entry in the profile, 2.6 million calls that each build a
 vector, beside `matches_type_name`'s own 1 million -- type names parsed on
 every check.
 
+### Second: reading the type once, not parsing it at every check
+
+Step one found the walk; this step found what still cost something once the
+walk was gone. `matches_type_name` still re-read a type's text on every
+check: trim it, scan for a union bar, find the bracket, split the arguments
+into a fresh vector, compare the head against a dozen names. `annotate_value`
+did the same work a second time. A field's type was parsed on every access; a
+class's constructor fields were collected -- walked, allocated, freed -- for
+every object built.
+
+`VmType` is a type read once: a tag for a builtin scalar, a kind for
+`Résultat`, `Classe`, `Interface` and each collection, a head name for a
+class or interface, and its arguments already parsed. `parse_vm_type` reads
+the text exactly as the string matcher it replaces did, union bar and all, so
+no answer changes; `matches` and `annotate` walk the structure instead of the
+text, keeping the contract fast path from step one, `assert` and all.
+
+Three places now hold a `VmType` instead of re-parsing:
+
+- **the module's own types**, read once when a run starts and reached by
+  index -- `TYPE_ASSERT`, `TYPE_CHECK`, the failure-type pattern check;
+- **a field's type**, read the first time the field is resolved and kept on
+  the class; a class's constructor field list is now built once as well,
+  instead of collected fresh for every instance;
+- **text that only exists at run time** -- a collection's contract, a
+  builtin member's parameter type, a `propager` return type -- through
+  `VmTypeTable`, which reads each distinct text once and finds it again by
+  that text.
+
+`matches_type_name`, `classify_type_name`, `annotation_arguments` and the
+`TypeShape` scalar-only enum are gone; `matches` and `annotate` are what is
+left, called from one place regardless of where the type came from.
+
+`commandes` on the VM, medians of five, against the parent commit (3413b9a):
+
+| source path | before | after |
+| --- | --- | --- |
+| 63 characters | 2.320 s | 0.376 s |
+| 201 characters | 5.031 s | 0.386 s |
+
+6.2x faster at the short path, 13.0x at the long one, and the path now moves
+the result by 2.7% where it moved it by 117%: within noise, on the VM. The
+profile no longer has `matches_type_name`, `split_generic_arguments` or
+`trim_type_name` in it at all -- `execute_frames`, `pop_value` and the cycle
+collector's root tracking are what is left.
+
+Against CPython, net of startup: `commandes` 2.60x (was 8.3x to 17.5x,
+depending on path), `expressions` 2.88x (was 3.4x to 4.6x). The eight probes
+sit between 1.49x and 2.95x, the same band as before this task, so nothing
+regressed to buy this. The full suite passes under Release and under
+`-fsanitize=address,undefined`; `scripts/check-leaks` finds nothing on either
+engine, cycles included; `scripts/fuzz` found one pre-existing divergence
+(`vide.e/(0)` on an empty typed `Liste`, reachable from before 3413b9a) and
+nothing new.
+
+The tree walker still matches types by string, as before this task. It kept
+the contract fast path from step one, but not this step's descriptor, so its
+`commandes` still depends on path length: 8.5 s at 63 characters against 9.2
+s at 201, an 8% gap that repeats across runs rather than washing out as
+noise. The brief for this task asked for the descriptor in both engines,
+sharing it from `src/interpreter/runtime/`; splitting it out from
+`VmClassBody`'s cached lookups and the VM's byte-code-indexed type table
+turned out to be its own piece of work, and the tree walker is the reference
+engine, not what the performance target is measured against. Left for a pass
+that gives the tree walker its own once-read type, sharing what can be
+shared with `VmType` rather than duplicating its parse.
+
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong
