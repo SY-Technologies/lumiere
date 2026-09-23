@@ -810,6 +810,11 @@ private:
                         *element,
                         expected->arguments()[0],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(element.get()),
+                        expected->arguments()[0],
+                        element->start_token(),
+                        "un élément de " + std::string(expected->display()));
                 }
                 m_analysis.model.m_expression_types[
                     &expression] = expected;
@@ -831,10 +836,20 @@ private:
                         *entry.key,
                         expected->arguments()[0],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(entry.key.get()),
+                        expected->arguments()[0],
+                        entry.key->start_token(),
+                        "une clé de " + std::string(expected->display()));
                     contextualize_result_construction(
                         *entry.value,
                         expected->arguments()[1],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(entry.value.get()),
+                        expected->arguments()[1],
+                        entry.value->start_token(),
+                        "une valeur de " + std::string(expected->display()));
                 }
                 m_analysis.model.m_expression_types[
                     &expression] = expected;
@@ -2292,6 +2307,29 @@ private:
             return is_assignable(source->arguments()[0], target->arguments()[0]) &&
                    is_assignable(source->arguments()[1], target->arguments()[1]);
         }
+        // A `Liste[⊥]` (an empty list literal's type) is assignable to any
+        // `Liste[T]`, and likewise for `Dictionnaire`, `Ensemble` and
+        // `ListeFixe` -- not because these are covariant in general (a
+        // `Liste[Entier]` reaching a binding declared `Liste[Décimal]` would
+        // let a `Décimal` be `ajouter`-ed through that alias, and the same
+        // list would then hold one where its own declared type promises
+        // none), but because `⊥` has no values: there is nothing in an empty
+        // list for a wider element type to be wrong about. This is narrower
+        // than general generic covariance on purpose, and is the only
+        // generic assignability rule besides `Résultat`'s.
+        if (source->kind() == SemanticTypeKind::GENERIC &&
+            target->kind() == SemanticTypeKind::GENERIC &&
+            source->name() == target->name() &&
+            source->arguments().size() == target->arguments().size() &&
+            !source->arguments().empty() &&
+            std::all_of(source->arguments().begin(), source->arguments().end(),
+                       [](const SemanticTypeRef &argument) {
+                           return argument != nullptr &&
+                                  argument->kind() == SemanticTypeKind::BOTTOM;
+                       }))
+        {
+            return true;
+        }
         if (source->kind() == SemanticTypeKind::CLASS &&
             (target->kind() == SemanticTypeKind::CLASS ||
              target->kind() == SemanticTypeKind::INTERFACE))
@@ -2564,7 +2602,7 @@ private:
                     element_types.push_back(found->second);
                 }
             }
-            SemanticTypeRef element_type = *m_analysis.model.find_type("Universel");
+            SemanticTypeRef element_type = m_analysis.model.types.bottom();
             if (element_types.size() == 1)
             {
                 element_type = element_types.front();
@@ -2590,7 +2628,7 @@ private:
                     element_types.push_back(found->second);
                 }
             }
-            SemanticTypeRef element_type = *m_analysis.model.find_type("Universel");
+            SemanticTypeRef element_type = m_analysis.model.types.bottom();
             if (element_types.size() == 1)
             {
                 element_type = element_types.front();
@@ -2623,7 +2661,7 @@ private:
             auto aggregate = [&](std::vector<SemanticTypeRef> types) {
                 if (types.empty())
                 {
-                    return *m_analysis.model.find_type("Universel");
+                    return m_analysis.model.types.bottom();
                 }
                 return types.size() == 1
                            ? types.front()

@@ -516,13 +516,14 @@ within noise of each other on the tree walker as well.
 
 ---
 
-## Task 7 — Types that flow out of collections, `ici` and interfaces
+## Task 7 — Types that flow out of collections, `ici` and interfaces — DONE
 
-**The reads are done.** All eight rows below compile and run identically on
-both engines; see `tests/conformance/types_inferes_des_lectures` and
-`RUNTIME_HARDENING.md`, "Reading the type a value already has". Collection
-literals and the empty set (below, "Collection literals") are not -- the
-brief said to decide the reads first, and this is that half.
+All eight rows below compile and run identically on both engines; see
+`tests/conformance/types_inferes_des_lectures` and `RUNTIME_HARDENING.md`,
+"Reading the type a value already has". Collection literals and the empty
+set are also done; see "Collection literals" below and
+`RUNTIME_HARDENING.md`, "An empty literal has no elements to be wrong
+about".
 
 ### Why
 
@@ -607,13 +608,22 @@ value already has is what removes that interaction: `m[0]` is now `Texte`
 when `m: Liste[Texte]`, so checking `[m[0]]` against `Liste[Texte]` accepts
 it on its own merits rather than needing an exemption.
 
-The empty set belongs here too. `[]` adapts to its context only because it is
-a literal in that position; `[].en_ensemble()` is a call, so it keeps
-`Ensemble[Universel]`. Two ways out: give an empty literal the element type
-that has no values, so `Liste[⊥]` and `Ensemble[⊥]` are assignable to any
-`Liste[T]` and `Ensemble[T]` -- sound for a fresh value, and not for a variable
-holding one that two typed bindings could then share with different contracts
--- or give the language an empty-set literal.
+The empty set belonged here too. `[]` adapted to its context only because it
+was a literal in that position; `[].en_ensemble()` is a call, so it kept
+`Ensemble[Universel]`. Took the first way out: an empty literal now gets the
+element type that has no values, so `Liste[⊥]` and `Ensemble[⊥]` are
+assignable to any `Liste[T]` and `Ensemble[T]`, `en_ensemble()` included,
+since it reads its return type off the receiver's own. `⊥` is already
+universally assignable both ways (`is_assignable`'s first check), so this
+needed one narrow addition: two generics of the same name and arity, where
+every one of the source's arguments is `⊥`, are assignable regardless of the
+target's. A variable holding the same empty allocation and lent to two
+incompatible concrete types is the case the second way out (a literal
+empty-set syntax) would have avoided entirely -- it still compiles, since
+each loan is sound on its own, but the second, incompatible re-annotation
+throws at run time (`merge_collection_constraint`'s existing rule, unchanged
+by this). See `RUNTIME_HARDENING.md`, "An empty literal has no elements to
+be wrong about".
 
 ### Acceptance
 
@@ -621,8 +631,16 @@ holding one that two typed bindings could then share with different contracts
   with a conformance case. **Met** --
   `tests/conformance/types_inferes_des_lectures`.
 - A collection literal is checked against its declared type in every position
-  it can be written, and an empty set can be typed. **Not done** -- the
-  second half of this task, described above.
+  it can be written, and an empty set can be typed. **Met** --
+  `tests/conformance/elements_de_litteral_verifies` and
+  `tests/conformance/collection_vide_typee`. "Every position it can be
+  written" is narrower than it sounds: only `contextualize_result_construction`
+  ever forces a literal's type from context (a typed `soit`, a typed argument,
+  a typed return, recursively through `agir selon` branches and nested
+  literals), and that is the only place a literal's own inference could be
+  overridden without being checked -- a `Set` literal (`{1, 2}`) was never
+  routed through it and was already checked, which is how the bug was
+  isolated to `Liste` and `Dictionnaire` alone.
 - The three programs in `benchmarks/` lose their `en` casts and their
   unannotated bindings, and `expressions` gets its parser back as methods;
   re-measure them, since a cast and a check cost time. **Partly met.**

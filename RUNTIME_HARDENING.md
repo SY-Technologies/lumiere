@@ -1943,8 +1943,71 @@ Against CPython, net of startup: `expressions` 2.73x (was 2.88x), `commandes`
 2.61x (was 2.60x -- two casts move it less than `expressions`'s method
 calls and eliminated `en` checks did).
 
-Collection literals and the empty set are the other half of this task's
-brief and are not done -- see NEXT_TASKS.md, Task 7.
+## An empty literal has no elements to be wrong about (Task 7)
+
+### The gap
+
+`soit l: Liste[Texte] = [1]` passed analysis: a list or dictionary literal
+initializing a typed binding took that type from context
+(`contextualize_result_construction`) without checking its elements against
+it, so the mistake surfaced only at run time, in a message that did not say
+which element (`attend une valeur de type Liste[Texte]; type reçu : Liste`).
+`f([1])` for a parameter `f(l: Liste[Texte])` was already refused statically
+-- the same literal, checked in one position and not in the other.
+
+Separately, an empty literal had no type of its own until context gave it
+one: `[]`'s own inference, with no elements to look at, fell back to
+`Universel`, so `[].en_ensemble()` -- a call, never reached by the context
+that rescues a literal in a `soit` -- stayed `Ensemble[Universel]` and could
+not initialize an `Ensemble[Texte]`.
+
+### The fix
+
+Two small pieces, both in `src/analysis/semantic_analysis.cpp`:
+
+- `contextualize_result_construction`'s `Liste`/`ListeFixe`/`Dictionnaire`
+  branches already recurse into every element to propagate context into
+  nested `Succès`/`Échec`/literals; each now also calls `require_assignable`
+  on the element's now-final type against the position it fills, with the
+  same diagnostic code and shape as everywhere else in the analyzer.
+- An empty `Liste`/`Ensemble`/`Dictionnaire` literal's own inference -- the
+  path taken with no context, or for a nested empty literal a typed one does
+  not reach -- now reports `⊥` instead of `Universel` for the element (and,
+  for a dictionary, key and value) types it has none of. `⊥` was already
+  universally assignable both ways (`is_assignable`'s very first check, used
+  today for a `Résultat`'s untaken side), so `Liste[⊥]` matching any
+  `Liste[T]` needed one addition to `is_assignable`: two generics of the
+  same name and arity are assignable when every one of the source's
+  arguments is `⊥`, regardless of the target's. This is deliberately not
+  general covariance -- a `Liste[Entier]` still cannot reach a binding typed
+  `Liste[Décimal]`, which would let a `Décimal` be `ajouter`-ed through that
+  alias into a list something else still holds as `Liste[Entier]` -- only an
+  argument that is `⊥` licenses it, and `⊥` has no values for a wider type
+  to be wrong about. `en_ensemble()`'s return type already reads off its
+  receiver's element type, so `[].en_ensemble()` got `Ensemble[⊥]` for free.
+
+A binding that holds the one allocation an empty literal made and lends it to
+two different concrete element types compiles under this rule -- each use is
+sound taken alone -- and the runtime's existing, unchanged
+`merge_collection_constraint` rule (conservative: refines `Universel`,
+refuses anything else) throws on the second, incompatible one, on both
+engines, rather than letting either binding believe something false about
+the list. Checked by hand rather than pinned in the corpus: the two engines
+report it at a different column (`annotate_value`'s call sites still pass a
+default `RuntimeSite`{} in places, a pre-existing gap this task did not
+create and does not close), which the conformance harness's cross-engine
+check does not forgive even under `expected.stderr.contains`.
+
+`tests/conformance/elements_de_litteral_verifies` pins the element check;
+`tests/conformance/collection_vide_typee` pins `Liste[⊥]`, `Ensemble[⊥]`
+through `en_ensemble()`, and `Dictionnaire[⊥,⊥]` all initializing concrete
+declared types and running correctly, on both engines. `tests/`, `examples/`
+and `benchmarks/` swept under `check` against this change and its parent,
+file by file: nothing newly fails. Full suite passes under Release and ASan
+(460/460 each); `check-leaks` clean on both engines; the fuzzer found
+nothing in 2,000 runs. This is purely an analysis-time check -- no bytecode,
+no runtime change on either engine -- so the three `benchmarks/` programs
+were not re-measured against CPython for this half.
 
 
 ## Next engineering priorities
