@@ -1716,6 +1716,43 @@ the default engine at all (see "A loop over `et` or `ou`", above), and several
 things a user would write are refused or quietly untyped; they are specified as
 the next pieces of work in `NEXT_TASKS.md`.
 
+## Things a program should not reach (Task 8) — 2026-09-23
+
+**A condition that began with a parenthesis.** `si (a) >= b` and
+`tant que (a et b) ou c` were refused: `si` and `tant que` took a leading `(` as
+the condition's own delimiter, consumed one expression and required `)` and a
+block. A condition is an expression, and a grouped expression already parses
+without a node of its own, so the special case went and `si (a) {` keeps its
+tree. Found by the first ordinary program, which wrote one.
+
+**`en`, twice.** The conversion existed once per engine, and once more in the
+analyzer's silence about it:
+
+- A cast to a class, an interface or a collection passed analysis and failed
+  every time it ran -- `l[0] en Point` was the obvious way round Task 7's
+  untyped reads, and it was a certain runtime error. Analysis now refuses any
+  target outside Entier, Décimal, Logique, Symbole, Texte and Universel
+  (LUM-S0058).
+- The VM named the class in that runtime error by its internal identity,
+  `'L@2f746d702f776c2f712e6c756d:7'`; the tree walker said `'L'`.
+- An operand with no conversion to the target was refused four different ways:
+  `vrai en Entier` read `non prise en charge vers le type 'Entier'` in one engine
+  and `non prise en charge vers Entier` in the other, and the VM answered
+  `3 en Logique` with "le texte doit valoir 'vrai' ou 'faux'", about a value
+  that was not text.
+- An alias as the target, `t en Nombre` with `type Nombre = Entier`, worked on
+  the VM, whose compiler expands aliases, and failed on the tree walker, which
+  compared the alias's own name with the builtin ones. The specification says
+  an alias is transparent.
+
+There is one conversion now, `runtime/conversions.cpp`, called by both engines
+the way the collection members are. An operand with no conversion is refused in
+the words the unreadable-text case already used, naming both types:
+`conversion vers Entier impossible pour une valeur de type Logique`. The tree
+walker expands an alias before converting. `conversion_vers_classe`,
+`diagnostic_conversion_operande` and `conversion_alias` pin the three, and the
+diagnostic parity test the remaining operands.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

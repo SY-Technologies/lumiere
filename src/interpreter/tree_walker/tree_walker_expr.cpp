@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/interpreter/runtime/conversions.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
 #include "lumiere/interpreter/runtime/numeric.hpp"
@@ -537,132 +538,13 @@ void TreeWalker::visit(UnaryExpr &expr)
 void TreeWalker::visit(CastExpr &expr)
 {
     const Value operand = evaluate(*expr.operand);
-    const std::string target = expr.target_type.to_string();
-
-    if (target == "Entier")
-    {
-        if (operand.is_entier())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_decimal())
-        {
-            m_result = checked_integer(*this, expr.target_type.source, numeric::to_integer(operand.as_decimal()));
-            return;
-        }
-        if (operand.is_symbole())
-        {
-            m_result = Value::entier(static_cast<int64_t>(operand.as_symbole()));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            try
-            {
-                std::size_t consumed = 0;
-                const auto value = std::stoll(operand.as_texte(), &consumed);
-                if (consumed != operand.as_texte().size())
-                    throw std::invalid_argument("caractères restants");
-                m_result = Value::entier(value);
-                return;
-            }
-            catch (...)
-            {
-                throw_runtime_error(expr.target_type.source, messages::conversion_impossible("Entier", "Texte"));
-            }
-        }
-    }
-
-    if (target == "Décimal" || target == "Decimal")
-    {
-        if (operand.is_decimal())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_entier())
-        {
-            m_result = Value::decimal(static_cast<double>(operand.as_entier()));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            if (const auto value = numeric::parse_decimal(operand.as_texte()))
-            {
-                m_result = Value::decimal(*value);
-                return;
-            }
-            throw_runtime_error(expr.target_type.source, messages::conversion_impossible("Décimal", "Texte"));
-        }
-    }
-
-    if (target == "Logique")
-    {
-        if (operand.is_logique())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_texte())
-        {
-            if (operand.as_texte() == "vrai")
-            {
-                m_result = Value::logique(true);
-                return;
-            }
-            if (operand.as_texte() == "faux")
-            {
-                m_result = Value::logique(false);
-                return;
-            }
-            throw_runtime_error(expr.target_type.source, "conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
-        }
-    }
-
-    if (target == "Symbole")
-    {
-        if (operand.is_symbole())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_entier())
-        {
-            const int64_t unicode_value = operand.as_entier();
-            if (unicode_value < 0 || unicode_value > 0x10FFFF ||
-                (unicode_value >= 0xD800 && unicode_value <= 0xDFFF))
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le point de code Unicode est invalide");
-            }
-            m_result = Value::symbole(static_cast<char32_t>(unicode_value));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            const std::optional<char32_t> symbol_char = utf8::decode_single_character(operand.as_texte());
-            if (!symbol_char.has_value())
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le texte doit contenir exactement un caractère");
-            }
-            m_result = Value::symbole(*symbol_char);
-            return;
-        }
-    }
-
-    if (target == "Texte")
-    {
-        m_result = Value::texte(to_texte(operand));
-        return;
-    }
-
-    if (target == "Universel")
-    {
-        m_result = operand;
-        return;
-    }
-
-    throw_runtime_error(expr.target_type.source, "conversion explicite non prise en charge vers le type '" + target + "'");
+    // An alias is transparent, and the VM's compiler expands it; this engine
+    // compared the alias's own name against the builtin ones and refused it.
+    const Token &site = expr.target_type.source;
+    m_result = convert(*this,
+                       operand,
+                       resolved_annotation_name(expr.target_type),
+                       RuntimeSite{{}, static_cast<int>(site.line), static_cast<int>(site.column)});
 }
 
 void TreeWalker::visit(TypeCheckExpr &expr)

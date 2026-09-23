@@ -551,11 +551,11 @@ rejection nobody looked at.
 
 Small and independent; each gets a conformance case.
 
-1. **`valeur en MaClasse` passes analysis and always fails at run time**, in
+1. **Done.** **`valeur en MaClasse` passes analysis and always fails at run time**, in
    both engines: `conversion explicite non prise en charge vers le type`.
    Either analysis refuses a cast to a class or interface, or the language
    defines one as a checked downcast. Decide, then make the two agree.
-2. **The VM names a class by its internal identity in that message**:
+2. **Done.** **The VM names a class by its internal identity in that message**:
    `'L@2f746d702f776c2f712e6c756d:7'` where the tree walker says `'L'`. It is a
    divergence the conformance corpus would have caught had it held a case, and
    an internal name shown to a user. Every message naming a type goes through

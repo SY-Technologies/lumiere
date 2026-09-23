@@ -1,3 +1,4 @@
+#include "lumiere/interpreter/runtime/conversions.hpp"
 #include "lumiere/analysis/semantic_analysis.hpp"
 #include "lumiere/analysis/native_signatures.hpp"
 #include "lumiere/interpreter/runtime/numeric.hpp"
@@ -3143,7 +3144,29 @@ private:
                                      propagation->keyword);
             }
         }
-        m_analysis.model.m_expression_types[&expression] = inferred_type(expression);
+        const SemanticTypeRef type = inferred_type(expression);
+        m_analysis.model.m_expression_types[&expression] = type;
+        if (const auto *cast = dynamic_cast<const CastExpr *>(&expression))
+        {
+            reject_impossible_conversion(*cast, type);
+        }
+    }
+
+    // A cast's type is its target, resolved once above: resolving it again
+    // here would report an unknown type twice.
+    void reject_impossible_conversion(const CastExpr &cast, const SemanticTypeRef &target)
+    {
+        // Neither engine converts to anything else, so a cast to a class, an
+        // interface or a collection used to pass here and then fail every time
+        // it ran. An unknown type resolves to BOTTOM and has been reported.
+        if (target->kind() == SemanticTypeKind::BOTTOM ||
+            (target->kind() == SemanticTypeKind::BUILTIN && is_conversion_target(target->name())))
+        {
+            return;
+        }
+        diagnose(cast.target_type.source, "LUM-S0058",
+                 "aucune conversion explicite vers " + cast.target_type.to_string() +
+                     " : 'en' convertit vers Entier, Décimal, Logique, Symbole, Texte ou Universel");
     }
 
     void resolve_block(const BlockStmt &block, const bool creates_scope)

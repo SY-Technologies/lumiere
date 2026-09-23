@@ -3966,6 +3966,13 @@ TEST(CliIntegration, BothBackendsReportTheSameRuntimeDiagnostic)
         "soit x = 1 x[0] = 2",
         "afficher(\"zz\" en Entier)",
         "afficher(\"zz\" en Décimal)",
+        // Each engine refused an operand with no conversion in its own words,
+        // and the VM answered an Entier sent to Logique with a sentence about
+        // text. There is one conversion now, in runtime/conversions.cpp.
+        "soit v: Universel = vrai afficher(v en Entier)",
+        "soit v: Universel = vrai afficher(v en Décimal)",
+        "soit v: Universel = 3 afficher(v en Logique)",
+        "soit v: Universel = vrai afficher(v en Symbole)",
         "soit e = {1} e.union(3)",
         "soit e: Ensemble[Entier] = {1} e.ajouter(\"x\")",
         "soit l: Liste[Entier] = [1] l.ajouter(\"x\")",

@@ -1,4 +1,5 @@
 #include "lumiere/interpreter/vm/vm.hpp"
+#include "lumiere/interpreter/runtime/conversions.hpp"
 #include "lumiere/interpreter/runtime/members.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
@@ -586,135 +587,6 @@ void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary
     }
     annotate_value(key, constraint->key_type, {});
     annotate_value(value, constraint->value_type, {});
-}
-
-void execute_cast(std::vector<Value> &stack, const std::string &target)
-{
-    const Value operand = pop_value(stack);
-
-    if (target == "Entier")
-    {
-        if (operand.is_entier())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_decimal())
-        {
-            stack.push_back(checked_integer(numeric::to_integer(operand.as_decimal())));
-        }
-        else if (operand.is_symbole())
-        {
-            stack.push_back(Value::entier(static_cast<std::int64_t>(operand.as_symbole())));
-        }
-        else if (operand.is_texte())
-        {
-            try {
-                std::size_t consumed = 0;
-                const auto value = std::stoll(operand.as_texte(), &consumed);
-                if (consumed != operand.as_texte().size())
-                    throw std::invalid_argument("caractères restants");
-                stack.push_back(Value::entier(value));
-            }
-            catch (...) { throw VmRuntimeError("VM: " + messages::conversion_impossible("Entier", "Texte")); }
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Entier");
-        }
-        return;
-    }
-
-    if (target == "Décimal" || target == "Decimal")
-    {
-        if (operand.is_decimal())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_entier())
-        {
-            stack.push_back(Value::decimal(static_cast<double>(operand.as_entier())));
-        }
-        else if (operand.is_texte())
-        {
-            const auto value = numeric::parse_decimal(operand.as_texte());
-            if (!value)
-            {
-                throw VmRuntimeError("VM: " + messages::conversion_impossible("Décimal", "Texte"));
-            }
-            stack.push_back(Value::decimal(*value));
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Décimal");
-        }
-        return;
-    }
-
-    if (target == "Logique")
-    {
-        if (operand.is_logique())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_texte() && operand.as_texte() == "vrai")
-        {
-            stack.push_back(Value::logique(true));
-        }
-        else if (operand.is_texte() && operand.as_texte() == "faux")
-        {
-            stack.push_back(Value::logique(false));
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
-        }
-        return;
-    }
-
-    if (target == "Symbole")
-    {
-        if (operand.is_symbole())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_entier())
-        {
-            const std::int64_t code_point = operand.as_entier();
-            if (code_point < 0 || code_point > 0x10FFFF ||
-                (code_point >= 0xD800 && code_point <= 0xDFFF))
-            {
-                throw VmRuntimeError("VM: conversion vers Symbole impossible: le point de code Unicode est invalide");
-            }
-            stack.push_back(Value::symbole(static_cast<char32_t>(code_point)));
-        }
-        else if (operand.is_texte())
-        {
-            const auto character = utf8::decode_single_character(operand.as_texte());
-            if (!character.has_value())
-            {
-                throw VmRuntimeError("VM: conversion vers Symbole impossible: le texte doit contenir exactement un caractère");
-            }
-            stack.push_back(Value::symbole(*character));
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Symbole");
-        }
-        return;
-    }
-
-    if (target == "Texte")
-    {
-        stack.push_back(Value::texte(operand.to_string()));
-        return;
-    }
-    if (target == "Universel")
-    {
-        stack.push_back(operand);
-        return;
-    }
-
-    throw VmRuntimeError("VM: conversion explicite non prise en charge vers le type '" + target + "'");
 }
 
 void execute_type_check(std::vector<Value> &stack, const std::string &type_name)
@@ -2915,7 +2787,14 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
             {
                 throw VmRuntimeError("VM: index de type invalide");
             }
-            execute_cast(stack, module.types[index]);
+            RuntimeSite site;
+            if (opcode_offset < chunk.locations.size())
+            {
+                site.line = static_cast<int>(chunk.locations[opcode_offset].line);
+                site.column = static_cast<int>(chunk.locations[opcode_offset].column);
+            }
+            const Value operand = pop_value(stack);
+            stack.push_back(convert(runtime_services, operand, module.types[index], site));
             break;
         }
         case Opcode::TYPE_CHECK:
