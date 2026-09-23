@@ -1753,6 +1753,15 @@ walker expands an alias before converting. `conversion_vers_classe`,
 `diagnostic_conversion_operande` and `conversion_alias` pin the three, and the
 diagnostic parity test the remaining operands.
 
+**The typed empty set was not small.** `[].en_ensemble()` cannot initialise an
+`Ensemble[Texte]` because `[]` only adapts to its declared type when it *is* the
+initializer: a list literal in that position is given the declared type
+outright, without its elements being checked. So `soit l: Liste[Texte] = [1]`
+passes analysis and fails at run time, while the same `[1]` passed to a
+`Liste[Texte]` parameter is refused statically. Checking the elements would
+start refusing programs that run today, because a value read from a collection
+is `Universel` -- which is Task 7's question. The item moved there.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

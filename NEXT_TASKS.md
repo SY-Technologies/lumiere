@@ -536,10 +536,40 @@ Typing reads more precisely will also reject programs that relied on
 list every program that newly fails, and decide each one; do not ship a
 rejection nobody looked at.
 
+### Collection literals
+
+`soit l: Liste[Texte] = []` is accepted because a list or dictionary literal
+initialising a typed binding is *given* the declared type, in
+`contextualize_result_construction` -- written so that `Succès(...)` inside a
+literal takes its type from context. Nothing checks the elements against it, so
+
+    soit l: Liste[Texte] = [1]
+    soit d: Dictionnaire[Texte, Entier] = {"a": "b"}
+
+pass analysis and fail at run time, with a message that does not say which
+element (`attend une valeur de type Liste[Texte]; type reçu : Liste`), while
+`f([1])` for `f(l: Liste[Texte])` is refused statically. The same literal is
+checked in one position and not in the other.
+
+Checking the elements is the obvious fix, and it interacts with everything
+above: an element read from a collection is `Universel` today, and `Universel`
+is not assignable to `Texte`, so `soit l: Liste[Texte] = [m[0]]` -- which runs
+-- would start being refused. Decide the reads first, then the literals.
+
+The empty set belongs here too. `[]` adapts to its context only because it is
+a literal in that position; `[].en_ensemble()` is a call, so it keeps
+`Ensemble[Universel]`. Two ways out: give an empty literal the element type
+that has no values, so `Liste[⊥]` and `Ensemble[⊥]` are assignable to any
+`Liste[T]` and `Ensemble[T]` -- sound for a fresh value, and not for a variable
+holding one that two typed bindings could then share with different contracts
+-- or give the language an empty-set literal.
+
 ### Acceptance
 
 - Every row above compiles as written and runs identically on both engines,
   with a conformance case.
+- A collection literal is checked against its declared type in every position
+  it can be written, and an empty set can be typed.
 - The three programs in `benchmarks/` lose their `en` casts and their
   unannotated bindings, and `expressions` gets its parser back as methods;
   re-measure them, since a cast and a check cost time.
@@ -560,10 +590,10 @@ Small and independent; each gets a conformance case.
    divergence the conformance corpus would have caught had it held a case, and
    an internal name shown to a user. Every message naming a type goes through
    `display_runtime_type`; this one does not.
-3. **The specified empty set cannot be typed.** `[].en_ensemble()` is an
-   `Ensemble[Universel]` and cannot initialise an `Ensemble[Texte]`, while `[]`
-   initialises a `Liste[Texte]`. Either the empty literal's adaptation carries
-   through `en_ensemble()`, or the language needs an empty-set literal.
+3. **Moved to Task 7.** The specified empty set cannot be typed:
+   `[].en_ensemble()` is an `Ensemble[Universel]` and cannot initialise an
+   `Ensemble[Texte]`, while `[]` initialises a `Liste[Texte]`. Looking at why
+   showed it is not small -- see "Collection literals" under Task 7.
 4. **Done.** **A condition that begins with `(` must be wholly parenthesised.**
    `si (a) >= b {` and `tant que (a et b) ou c {` fail with `attendu '{' pour
    ouvrir le bloc`: the parser takes the leading parenthesis as the
