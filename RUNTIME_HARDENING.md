@@ -1878,6 +1878,73 @@ turned out to be its own piece of work, and the tree walker is the reference
 engine, not what the performance target is measured against. Left for a pass
 that gives the tree walker its own once-read type, sharing what can be
 shared with `VmType` rather than duplicating its parse.
+## Reading the type a value already has (Task 7)
+
+### The gap
+
+`liste[0]` on a `liste: Liste[Entier]`, the loop variable in
+`pour chaque x dans liste`, a call to `ici.methode()`, and a call through an
+interface-typed value all inferred `Universel`, regardless of what the
+analyzer already knew. A value out of a typed collection could not be bound
+to an annotated name, passed to a typed parameter, or returned from a typed
+function without an `en` cast; a class whose methods called one another
+through `ici` could not use `ou propager`, because a call the analyzer
+cannot type is not known to return a `Résultat`; an interface's declared
+return type went unused by its own callers.
+
+### The decision
+
+`is_assignable` has no rule for `Liste`, `Dictionnaire`, `ListeFixe` or
+`Ensemble` -- only `Résultat` has a generic case, and every other generic
+compares by pointer identity on the interned type. So there is no way today
+for a `Liste[Entier]` to reach a binding typed `Liste[Universel]`, and the
+covariance question the brief raised does not arise from reading this task
+adds. What makes reading sound regardless: `soit x: T = expr` and every
+typed parameter compile to an unconditional `ASSERT_TYPE` (`ast_to_lir.cpp`),
+checked at run time whatever the analyzer inferred for `expr`. A wrong guess
+here is caught there, as a runtime error naming what was expected -- never
+trusted into silent corruption. `tests/`, `examples/` and `benchmarks/` were
+run under `check` against this change and against its parent, file by file;
+no program's `check` output moved, so nothing relied on being told
+`Universel`.
+
+### The fix
+
+Four additions to `src/analysis/semantic_analysis.cpp`, all read-only against
+the type already computed for the receiver:
+
+- `IndexAccessExpr` in `inferred_type`: a `Liste[T]`/`ListeFixe[T, n]` reads
+  `T`, a `Dictionnaire[K, V]` reads `V`, a `Texte` reads `Symbole` -- the same
+  rule `matches_type_name`/`VmType` and the tree walker's element checks
+  already enforce on the way in, and `enumerate_iterable`/`sequence_elements`
+  already return at run time.
+- The `ForStmt` resolver now calls `set_local_type` on the loop variable, the
+  same call every other typed local already gets. A `Dictionnaire[K, V]`
+  yields `K` here, not `V` -- iterating one walks its keys, exactly as
+  `enumerate_iterable` does at run time; `d[cle]` is how the value is
+  reached, not the loop.
+- `callable_signature` resolves `ici.methode()` against the class on
+  `m_class_stack.back()`, the same lookup a field read through `ici` already
+  had; and resolves a method on an interface-typed receiver by walking that
+  interface's declared methods, the same way it already walked a class's.
+- Nothing else changed: no new assignability rule, no new bytecode, no
+  runtime change on either engine.
+
+`tests/conformance/types_inferes_des_lectures` pins all eight rows on both
+engines. `benchmarks/expressions.lum`'s three free functions (`expression`,
+`terme`, `facteur`) are now `Analyseur` methods calling `ici.terme()` /
+`ici.facteur()` / `ici.expression()`, which is the case this task exists for;
+`benchmarks/commandes.lum` lost the two casts this task made redundant. Full
+suite passes under Release and ASan (460/460 each); `check-leaks` finds
+nothing on either engine; the fuzzer found the same two pre-existing
+divergences step 2 found (unrelated to this change) and nothing new.
+
+Against CPython, net of startup: `expressions` 2.73x (was 2.88x), `commandes`
+2.61x (was 2.60x -- two casts move it less than `expressions`'s method
+calls and eliminated `en` checks did).
+
+Collection literals and the empty set are the other half of this task's
+brief and are not done -- see NEXT_TASKS.md, Task 7.
 
 
 ## Next engineering priorities

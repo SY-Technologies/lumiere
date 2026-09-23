@@ -518,6 +518,12 @@ within noise of each other on the tree walker as well.
 
 ## Task 7 — Types that flow out of collections, `ici` and interfaces
 
+**The reads are done.** All eight rows below compile and run identically on
+both engines; see `tests/conformance/types_inferes_des_lectures` and
+`RUNTIME_HARDENING.md`, "Reading the type a value already has". Collection
+literals and the empty set (below, "Collection literals") are not -- the
+brief said to decide the reads first, and this is that half.
+
 ### Why
 
 Each row is refused by the analyzer with `attend T; reçu Universel`, for a type
@@ -553,21 +559,30 @@ falls into.
 declares its variable with no type; a member call's return type is looked up
 for a receiver of class type but not for `ici` or for an interface.
 
-### The decision first
+### The decision, taken
 
-Reading `T` out of a `Liste[T]` is sound only if a binding of type `Liste[T]`
-can never reach a list holding something else. The runtime enforces a contract
-on the allocation and lets re-annotation refine `Universel` only; the analyzer
-has its own assignability rule between `Liste[Universel]` and `Liste[Entier]`.
-Confirm that the two agree -- that nothing the analyzer accepts as a
-`Liste[Entier]` can hold a `Texte` at run time -- before the analyzer promises
-it. This is the "richer mutable-generic relations" question from the
-priorities below, and this task cannot be done without answering it.
+Checked: `is_assignable` has no rule at all for `Liste`, `Dictionnaire`,
+`ListeFixe` or `Ensemble` today -- only `Résultat` gets a generic case, and
+every other generic falls through to pointer equality on the interned type.
+So there is no path by which a `Liste[Entier]` reaches a binding declared
+`Liste[Universel]` for this task to reason about; that question does not
+arise until a covariance rule is added, which this task does not add one.
 
-Typing reads more precisely will also reject programs that relied on
-`Universel`'s permissiveness. Run `tests/`, `examples/` and `benchmarks/`,
-list every program that newly fails, and decide each one; do not ship a
-rejection nobody looked at.
+What *is* true regardless: `soit x: T = expr` and every typed parameter
+compile to an unconditional `ASSERT_TYPE`, checked at run time, whatever the
+analyzer inferred for `expr` (`ast_to_lir.cpp`, `assert_type`, called for
+every `VarDeclStmt` with a type and every typed parameter, not gated on
+whether the static and declared types already match). A wrong guess here --
+an over-optimistic element type read out of a collection whose contract was
+never checked, say -- is caught there, as a runtime error naming what was
+expected, not trusted into silent corruption. Reading a type once a value
+already has is therefore sound by construction: the analyzer's inference is
+a diagnostic convenience, `ASSERT_TYPE` is the enforcement, and this task
+changes only the former.
+
+Ran `tests/`, `examples/` and `benchmarks/` under `check` against this
+task's binary and against its parent, `.lum` file by `.lum` file: no
+program's `check` output changed. Nothing relied on being told `Universel`.
 
 ### Collection literals
 
@@ -584,10 +599,13 @@ element (`attend une valeur de type Liste[Texte]; type reçu : Liste`), while
 `f([1])` for `f(l: Liste[Texte])` is refused statically. The same literal is
 checked in one position and not in the other.
 
-Checking the elements is the obvious fix, and it interacts with everything
-above: an element read from a collection is `Universel` today, and `Universel`
-is not assignable to `Texte`, so `soit l: Liste[Texte] = [m[0]]` -- which runs
--- would start being refused. Decide the reads first, then the literals.
+Checking the elements is the obvious fix, and it interacted with the reads
+above: before this task's first half, an element read from a collection was
+`Universel`, so `soit l: Liste[Texte] = [m[0]]` -- which runs -- would have
+started being refused once literal elements were checked. Reading a type a
+value already has is what removes that interaction: `m[0]` is now `Texte`
+when `m: Liste[Texte]`, so checking `[m[0]]` against `Liste[Texte]` accepts
+it on its own merits rather than needing an exemption.
 
 The empty set belongs here too. `[]` adapts to its context only because it is
 a literal in that position; `[].en_ensemble()` is a call, so it keeps
@@ -600,13 +618,27 @@ holding one that two typed bindings could then share with different contracts
 ### Acceptance
 
 - Every row above compiles as written and runs identically on both engines,
-  with a conformance case.
+  with a conformance case. **Met** --
+  `tests/conformance/types_inferes_des_lectures`.
 - A collection literal is checked against its declared type in every position
-  it can be written, and an empty set can be typed.
+  it can be written, and an empty set can be typed. **Not done** -- the
+  second half of this task, described above.
 - The three programs in `benchmarks/` lose their `en` casts and their
   unannotated bindings, and `expressions` gets its parser back as methods;
-  re-measure them, since a cast and a check cost time.
-- Every newly rejected program is recorded with the decision taken.
+  re-measure them, since a cast and a check cost time. **Partly met.**
+  `expressions.lum`'s three free functions are now `Analyseur` methods
+  calling `ici.terme()` / `ici.facteur()` / `ici.expression()`, which is what
+  needed the `ici` fix; `commandes.lum` lost the two casts this task made
+  redundant (`reference en Texte` on a `Dictionnaire[Texte, Entier]`'s key,
+  `categories[i] en Texte` on a `Liste[Texte]`). `expressions.lum` and
+  `journal.lum` keep the casts that parse a `Texte` into an `Entier` or a
+  `Symbole` into one -- real conversions, not this task's `Universel`.
+  Re-measured against CPython: `expressions` 2.73x (was 2.88x), `commandes`
+  2.61x (was 2.60x, two casts move it less). "Unannotated bindings" -- no
+  example was found that needed one just to route around `Universel`; if the
+  next pass on this task finds one, note it here.
+- Every newly rejected program is recorded with the decision taken. **Met,
+  vacuously** -- the audit above found none.
 
 ---
 

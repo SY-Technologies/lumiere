@@ -1863,6 +1863,14 @@ private:
             }
             if (const auto *object = dynamic_cast<const IdentifierExpr *>(member->object.get()))
             {
+                if (object->name.lexeme == "ici" && !m_class_stack.empty())
+                {
+                    if (const FunctionDeclStmt *method =
+                            find_method(*m_class_stack.back(), member->member.lexeme))
+                    {
+                        return &ensure_signature(*method);
+                    }
+                }
                 if (object->name.lexeme == "parent" &&
                     !m_class_stack.empty() &&
                     !m_class_stack.back()->parent.empty())
@@ -1928,6 +1936,15 @@ private:
                         return &ensure_signature(*method);
                     }
                 }
+                if (const InterfaceDeclStmt *interface =
+                        interface_declaration(object_type->second))
+                {
+                    if (const FunctionDeclStmt *method =
+                            find_interface_method(*interface, member->member.lexeme))
+                    {
+                        return &ensure_signature(*method);
+                    }
+                }
             }
         }
         return nullptr;
@@ -1988,6 +2005,38 @@ private:
                    : dynamic_cast<const ClassDeclStmt *>(symbol->declaration);
     }
 
+    const InterfaceDeclStmt *interface_declaration(const SemanticTypeRef &type) const
+    {
+        if (type == nullptr || type->kind() != SemanticTypeKind::INTERFACE)
+        {
+            return nullptr;
+        }
+        std::string name(type->name());
+        if (const std::size_t dot = name.rfind('.'); dot != std::string::npos)
+        {
+            name = name.substr(dot + 1);
+        }
+        const SemanticSymbol *symbol = m_analysis.model.find_value(name);
+        return symbol == nullptr
+                   ? nullptr
+                   : dynamic_cast<const InterfaceDeclStmt *>(symbol->declaration);
+    }
+
+    const FunctionDeclStmt *find_interface_method(const InterfaceDeclStmt &interface,
+                                                   const std::string &name)
+    {
+        for (const StmtPtr &member : interface.methods)
+        {
+            if (const auto *method =
+                    dynamic_cast<const FunctionDeclStmt *>(member.get());
+                method != nullptr && method->name.lexeme == name)
+            {
+                return method;
+            }
+        }
+        return nullptr;
+    }
+
     const FunctionDeclStmt *find_method(const ClassDeclStmt &klass,
                                         const std::string &name)
     {
@@ -2038,6 +2087,70 @@ private:
             }
         }
         return *m_analysis.model.find_type("Universel");
+    }
+
+    /**
+     * @brief What `objet[indice]` reads out of @p receiver, or null if the
+     * receiver's static type does not say -- an unresolved expression, a bare
+     * `Liste` written with no element type, anything not indexable.
+     *
+     * A miss is not a rejection: `inferred_type` falls back to `Universel`,
+     * exactly as it did before this exists. This only ever narrows what
+     * `Universel` would have said, and the runtime's `ASSERT_TYPE` checks the
+     * value regardless of which one was inferred, so a wrong guess here is
+     * caught there, never trusted silently.
+     */
+    SemanticTypeRef index_result_type(const SemanticTypeRef &receiver) const
+    {
+        if (receiver == nullptr)
+        {
+            return nullptr;
+        }
+        if (receiver->kind() == SemanticTypeKind::BUILTIN && receiver->name() == "Texte")
+        {
+            return *m_analysis.model.find_type("Symbole");
+        }
+        if (receiver->kind() == SemanticTypeKind::GENERIC && receiver->arguments().size() >= 1 &&
+            (receiver->name() == "Liste" || receiver->name() == "ListeFixe"))
+        {
+            return receiver->arguments()[0];
+        }
+        if (receiver->kind() == SemanticTypeKind::GENERIC && receiver->name() == "Dictionnaire" &&
+            receiver->arguments().size() == 2)
+        {
+            return receiver->arguments()[1];
+        }
+        return nullptr;
+    }
+
+    /**
+     * @brief What `pour chaque x dans objet` binds `x` to, or null if the
+     * iterated type does not say. A `Dictionnaire[K, V]` walks its keys, as
+     * `enumerate_iterable` does at run time -- `d[cle]` is how the value is
+     * reached, so the loop variable is `K`, not `V`.
+     */
+    SemanticTypeRef iteration_element_type(const SemanticTypeRef &iterable) const
+    {
+        if (iterable == nullptr)
+        {
+            return nullptr;
+        }
+        if (iterable->kind() == SemanticTypeKind::BUILTIN && iterable->name() == "Texte")
+        {
+            return *m_analysis.model.find_type("Symbole");
+        }
+        if (iterable->kind() == SemanticTypeKind::GENERIC && receiver_iterates_by_first_argument(iterable))
+        {
+            return iterable->arguments()[0];
+        }
+        return nullptr;
+    }
+
+    static bool receiver_iterates_by_first_argument(const SemanticTypeRef &type)
+    {
+        return !type->arguments().empty() &&
+               (type->name() == "Liste" || type->name() == "ListeFixe" ||
+                type->name() == "Ensemble" || type->name() == "Dictionnaire");
     }
 
     void validate_call(const CallExpr &call, const CallableSignature &signature)
@@ -2412,6 +2525,19 @@ private:
                                 module->second);
                         }
                     }
+                }
+            }
+        }
+        if (const auto *index = dynamic_cast<const IndexAccessExpr *>(&expression))
+        {
+            const auto object_type =
+                m_analysis.model.m_expression_types.find(index->object.get());
+            if (object_type != m_analysis.model.m_expression_types.end())
+            {
+                if (const SemanticTypeRef read = index_result_type(object_type->second);
+                    read != nullptr)
+                {
+                    return read;
                 }
             }
         }
@@ -3457,6 +3583,16 @@ private:
             ++m_loop_depth;
             push_scope();
             declare_local(loop->variable, SemanticSymbolKind::VARIABLE);
+            if (const auto iterable_type =
+                    m_analysis.model.m_expression_types.find(loop->iterable.get());
+                iterable_type != m_analysis.model.m_expression_types.end())
+            {
+                if (const SemanticTypeRef element = iteration_element_type(iterable_type->second);
+                    element != nullptr)
+                {
+                    set_local_type(loop->variable.lexeme, element);
+                }
+            }
             if (const auto *body = dynamic_cast<const BlockStmt *>(loop->body.get()))
             {
                 resolve_block(*body, false);

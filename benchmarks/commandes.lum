@@ -82,8 +82,8 @@ fonction traiter(commande: Commande, catalogue: Dictionnaire[Texte, Produit])
     pour chaque reference dans demande {
         soit disponible = catalogue[reference].stock
         si disponible < demande[reference] {
-            retourne Échec(ErreurStockInsuffisant(reference: reference en Texte,
-                                                  manque: (demande[reference] - disponible) en Entier))
+            retourne Échec(ErreurStockInsuffisant(reference: reference,
+                                                  manque: demande[reference] - disponible))
         }
     }
 
@@ -134,7 +134,7 @@ fonction principal() {
             l = l + 1
         }
         soit identifiant = hasard.suivant(500)
-        soit client = Client(nom: "client" + identifiant, categorie: categories[identifiant % 4] en Texte)
+        soit client = Client(nom: "client" + identifiant, categorie: categories[identifiant % 4])
         soit commande = Commande(numero: numero, client: client, lignes: lignes)
 
         agir selon traiter(commande, catalogue) {

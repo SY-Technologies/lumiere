@@ -93,9 +93,11 @@ fonction decouper(texte: Texte) -> Liste[Lexeme] {
 // terme      := facteur ('*' facteur)*
 // facteur    := nombre | '(' expression ')'
 //
-// Les trois règles sont des fonctions sur l'analyseur plutôt que ses méthodes :
-// un appel `ici.terme()` n'a pas le type de retour que `terme` déclare, et
-// `ou propager` le refuse.
+// The three rules are methods on the analyzer: `ici.terme()` now carries the
+// same type `terme` declares, so `ou propager` reads it -- a value out of a
+// typed field (`ici.lexemes[ici.position]`) and the result of an `ici` call
+// are both typed since Task 7, where they used to be `Universel` and forced
+// these into free functions instead.
 classe Analyseur {
     lexemes: Liste[Lexeme]
     position: Entier
@@ -107,52 +109,52 @@ classe Analyseur {
     fonction avancer() {
         ici.position = ici.position + 1
     }
-}
 
-fonction expression(analyseur: Analyseur) -> Résultat[Noeud, ErreurSyntaxe] {
-    soit gauche = terme(analyseur) ou propager
-    tant que analyseur.courant().genre == "+" ou analyseur.courant().genre == "-" {
-        soit operateur = analyseur.courant().genre en Texte
-        analyseur.avancer()
-        soit droite = terme(analyseur) ou propager
-        gauche = Operation(operateur: operateur, gauche: gauche, droite: droite)
-    }
-    retourne Succès(gauche)
-}
-
-fonction terme(analyseur: Analyseur) -> Résultat[Noeud, ErreurSyntaxe] {
-    soit gauche = facteur(analyseur) ou propager
-    tant que analyseur.courant().genre == "*" {
-        analyseur.avancer()
-        soit droite = facteur(analyseur) ou propager
-        gauche = Operation(operateur: "*", gauche: gauche, droite: droite)
-    }
-    retourne Succès(gauche)
-}
-
-fonction facteur(analyseur: Analyseur) -> Résultat[Noeud, ErreurSyntaxe] {
-    soit lexeme = analyseur.courant()
-    si lexeme.genre == "n" {
-        analyseur.avancer()
-        retourne Succès(Nombre(valeur: lexeme.valeur en Entier))
-    }
-    si lexeme.genre == "(" {
-        analyseur.avancer()
-        soit interieur = expression(analyseur) ou propager
-        si analyseur.courant().genre != ")" {
-            retourne Échec(ErreurSyntaxe(position: analyseur.courant().position en Entier))
+    fonction expression() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit gauche = ici.terme() ou propager
+        tant que ici.courant().genre == "+" ou ici.courant().genre == "-" {
+            soit operateur = ici.courant().genre
+            ici.avancer()
+            soit droite = ici.terme() ou propager
+            gauche = Operation(operateur: operateur, gauche: gauche, droite: droite)
         }
-        analyseur.avancer()
-        retourne Succès(interieur)
+        retourne Succès(gauche)
     }
-    retourne Échec(ErreurSyntaxe(position: lexeme.position en Entier))
+
+    fonction terme() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit gauche = ici.facteur() ou propager
+        tant que ici.courant().genre == "*" {
+            ici.avancer()
+            soit droite = ici.facteur() ou propager
+            gauche = Operation(operateur: "*", gauche: gauche, droite: droite)
+        }
+        retourne Succès(gauche)
+    }
+
+    fonction facteur() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit lexeme = ici.courant()
+        si lexeme.genre == "n" {
+            ici.avancer()
+            retourne Succès(Nombre(valeur: lexeme.valeur))
+        }
+        si lexeme.genre == "(" {
+            ici.avancer()
+            soit interieur = ici.expression() ou propager
+            si ici.courant().genre != ")" {
+                retourne Échec(ErreurSyntaxe(position: ici.courant().position))
+            }
+            ici.avancer()
+            retourne Succès(interieur)
+        }
+        retourne Échec(ErreurSyntaxe(position: lexeme.position))
+    }
 }
 
 fonction analyser(texte: Texte) -> Résultat[Noeud, ErreurSyntaxe] {
     soit analyseur = Analyseur(lexemes: decouper(texte), position: 0)
-    soit arbre = expression(analyseur) ou propager
+    soit arbre = analyseur.expression() ou propager
     si analyseur.courant().genre != "fin" {
-        retourne Échec(ErreurSyntaxe(position: analyseur.courant().position en Entier))
+        retourne Échec(ErreurSyntaxe(position: analyseur.courant().position))
     }
     retourne Succès(arbre)
 }
