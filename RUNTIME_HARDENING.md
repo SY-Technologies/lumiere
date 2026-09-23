@@ -1619,6 +1619,37 @@ claim, made on top of them, that the target had been reached. The note of
 2026-09-20 names this exact failure -- the target read off a proxy for it --
 and it happened again one level down, in how the proxy was built.
 
+## A loop over `et` or `ou` did not run on the default engine — 2026-09-23
+
+```
+tant que i < limite ou i == limite {
+    i = i + 1
+}
+```
+
+was refused by the VM before a line ran -- `bytecode invalide : la fonction
+peut continuer après sa dernière instruction` -- and has been since the verifier
+landed on 2026-09-18. The VM is the default engine, so `lumiere programme.lum`
+could not run a loop whose condition combined two tests, in either spelling.
+The tree walker ran it correctly throughout.
+
+The bytecode was valid; the verifier was wrong about it. A function must end on
+an instruction that cannot fall through, and the verifier's list of those was
+`RETURN`, `JUMP`, `PROPAGATE` and `MATCH_ERROR`. It left out `JUMP_IF_FALSE`,
+which -- despite its name -- carries both of its targets and always takes one.
+Nothing usually puts a branch last: a loop's condition block comes before its
+body and its exit. But `et` and `ou` short-circuit, so their operands become
+blocks of their own, and those are appended *after* the loop's exit block,
+which puts the branch that closes the condition at the very end of the
+function.
+
+Nothing in the suite had written one. It was found by the first program
+written to be ordinary rather than to exercise one feature -- an expression
+parser whose loop reads `tant que courant == "+" ou courant == "-"`. The
+verifier's own tests now include a function ending on a branch, and
+`tests/conformance/tant_que_condition_composee` puts both operators, nested,
+into the corpus the fuzzer mutates.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

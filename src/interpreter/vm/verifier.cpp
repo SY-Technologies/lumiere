@@ -46,9 +46,15 @@ public:
             return fail("la dernière instruction dépasse la fin du code");
         }
 
-        // Falling past the last instruction would run off the end of the chunk.
-        if (last != Opcode::RETURN && last != Opcode::JUMP && last != Opcode::PROPAGATE &&
-            last != Opcode::MATCH_ERROR)
+        // Falling past the last instruction would run off the end of the chunk,
+        // so a function must end on one that never falls through. JUMP_IF_FALSE
+        // is one, whatever its name says: it carries both targets and always
+        // takes one of them. Leaving it off this list refused every function
+        // whose last block ends in a branch -- which is what a `tant que` over
+        // `et` or `ou` lays out, since the condition's blocks are appended after
+        // the loop's exit -- so the default engine could not run the loop at all.
+        if (last != Opcode::RETURN && last != Opcode::JUMP && last != Opcode::JUMP_IF_FALSE &&
+            last != Opcode::PROPAGATE && last != Opcode::MATCH_ERROR)
         {
             return fail("la fonction peut continuer après sa dernière instruction");
         }

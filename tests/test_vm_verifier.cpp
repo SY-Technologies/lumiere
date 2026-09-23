@@ -92,6 +92,24 @@ TEST(VmVerifier, RejectsAFunctionThatRunsPastItsCode)
     EXPECT_NE(problem->find("après sa dernière instruction"), std::string::npos) << *problem;
 }
 
+TEST(VmVerifier, AcceptsATwoWayBranchAsTheLastInstruction)
+{
+    // JUMP_IF_FALSE names both of its targets and always takes one, so it can
+    // end a function. The compiler lays one out last whenever a `tant que`
+    // condition uses `et` or `ou`.
+    Handbuilt built;
+    built.chunk().add_constant(Value::logique(true));
+    built.op(Opcode::JUMP);
+    built.u16(4); // over the RETURN, to the CONSTANT
+    built.op(Opcode::RETURN); // offset 3
+    built.op(Opcode::CONSTANT); // offset 4
+    built.byte(0);
+    built.op(Opcode::JUMP_IF_FALSE); // offset 6, the last instruction
+    built.u16(3);
+    built.u16(3);
+    EXPECT_FALSE(built.verify().has_value()) << *built.verify();
+}
+
 TEST(VmVerifier, RejectsAJumpIntoTheMiddleOfAnInstruction)
 {
     Handbuilt built;
