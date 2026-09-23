@@ -543,19 +543,11 @@ namespace lumiere
     {
         advance(); // consume si
 
-        // optional parentheses around condition
-        bool has_parens = check(TokenType::PAREN_OUV);
-        if (has_parens)
-        {
-            advance();
-        } // consume (
-
+        // A condition is an expression, parentheses included. Treating a leading
+        // '(' as the condition's own delimiter made `si (a) >= b` stop at `(a)`
+        // and then refuse the `>=`; a grouped expression already accepts
+        // `si (a) {`, with the same tree.
         ExprPtr condition = parse_expression();
-
-        if (has_parens)
-        {
-            expect(TokenType::PAREN_FERM, "attendu ')' après la condition");
-        }
 
         StmtPtr then_branch = parse_block();
 
@@ -584,19 +576,8 @@ namespace lumiere
     {
         advance(); // consume tant que
 
-        // optional parentheses around condition
-        bool has_parens = check(TokenType::PAREN_OUV);
-        if (has_parens)
-        {
-            advance(); // consume (
-        }
-
+        // As for `si`: the condition is an ordinary expression.
         ExprPtr condition = parse_expression();
-
-        if (has_parens)
-        {
-            expect(TokenType::PAREN_FERM, "attendu ')' après la condition");
-        }
 
         StmtPtr body = parse_block();
 

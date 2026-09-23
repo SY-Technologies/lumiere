@@ -564,7 +564,7 @@ Small and independent; each gets a conformance case.
    `Ensemble[Universel]` and cannot initialise an `Ensemble[Texte]`, while `[]`
    initialises a `Liste[Texte]`. Either the empty literal's adaptation carries
    through `en_ensemble()`, or the language needs an empty-set literal.
-4. **A condition that begins with `(` must be wholly parenthesised.**
+4. **Done.** **A condition that begins with `(` must be wholly parenthesised.**
    `si (a) >= b {` and `tant que (a et b) ou c {` fail with `attendu '{' pour
    ouvrir le bloc`: the parser takes the leading parenthesis as the
    condition's delimiter rather than as the start of an expression.
