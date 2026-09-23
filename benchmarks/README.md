@@ -18,6 +18,17 @@ on trust. Both read one workload table, `scripts/workloads.py`, which also holds
 the exact output each program must print: a run that did not do the work is
 rejected rather than timed.
 
+`journal`, `expressions` and `commandes` are programs rather than probes: a
+log analysis, an expression parser and an order-processing service, written the
+way a user would write them. The other eight each isolate one operation. A
+change is shown to work on a probe; the target is read off the programs.
+
+The VM's time on the two object-heavy programs depends on the length of the
+path the source file is read from, because a class's runtime identity embeds
+that path and typed checks still compare type names as strings (see
+`RUNTIME_HARDENING.md`, "What ordinary programs spend their time on"). Compare
+two builds from the same directory, and state the path when quoting a number.
+
 Every run validates its result. These are end-to-end process timings, not
 isolated VM dispatch timings. They include parsing and compilation. Use Release
 builds with identical compiler options, and stop concurrent builds or tests

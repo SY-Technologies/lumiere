@@ -1,9 +1,13 @@
 # Next tasks — implementation briefs
 
-Five pieces of work, specified so they can be implemented one at a time and
-reviewed one at a time. They are ordered: 1 and 2 are contained and measurable,
-3 removes a duplication that will otherwise keep producing bugs, 4 and 5 close
-recorded correctness gaps.
+Pieces of work specified so they can be implemented one at a time and reviewed
+one at a time. Tasks 1 to 5 are done and stay here as the record of what each
+brief asked for. Tasks 6 to 8 come from the first programs written to be
+ordinary rather than to probe one operation (`benchmarks/journal.lum`,
+`expressions.lum`, `commandes.lum`): 6 is the performance lever they measured,
+7 is the type gap a user meets first and needs a decision before it needs code,
+and 8 is four small things a program should not be able to reach. They are
+independent; 6 touches the runtime, 7 the analyzer.
 
 `IMPROVEMENT_TASKS.md` says what the project is trying to do and why.
 `RUNTIME_HARDENING.md` is the log of what was measured and what it cost. This
@@ -95,7 +99,9 @@ nothing is a plausible optimization that cost readability for nothing.
 
 ---
 
-## Task 1 — One field table: no hashing, and a defined order
+## Task 1 — One field table: no hashing, and a defined order — DONE
+
+Landed in `40fd1c9`: a field lives in an insertion-ordered `FieldTable`.
 
 ### Why
 
@@ -167,7 +173,10 @@ the step that makes that one smaller and is worth having on its own.
 
 ---
 
-## Task 2 — A call should allocate once, not three times
+## Task 2 — A call should allocate once, not three times — DONE
+
+Landed in `a9fc6e1` and `8ca8134`: `method_calls` makes 2,001,064 allocations
+for 2,000,000 calls.
 
 ### Why
 
@@ -403,6 +412,162 @@ where the token starts.
 - The rule exists as prose before any code moves.
 - Conformance cases pin the column, so the next spot fix fails the build.
 - No `divergence.connue` file remains anywhere under `tests/conformance`.
+
+---
+
+## Task 6 — Resolve a runtime type once
+
+### Why
+
+Against CPython, net of startup, the VM runs `commandes` 8.3x slower from a
+10-character path and 17.5x slower from this repository's 75-character one, and
+`expressions` 3.4x and 4.6x. The eight probes are all between 1.5x and 3x and
+none of them depends on the path. A profile of `commandes` puts 42% of its time
+in `matches_type_name` and 17% in `VmRuntimeServices::annotate_value`, with
+`trim_type_name` called 19 million times for 30,000 orders.
+
+The VM checks a value against a collection's contract, a function's result type
+and a typed `agir selon` branch by parsing the type's *name*: trimming it,
+scanning it for a union bar, splitting it at its brackets, comparing the
+pieces. A class's name is its runtime identity, `Produit@<source path in
+hex>:<line>`, so every one of those strings is as long as the path it came from.
+A benchmark whose result depends on where the repository is checked out is not
+a result, and a program that gets slower when it is moved is not specified.
+
+Round one of 2026-09-20 found this cost and removed it for parameter types,
+which are classified once per module. Collection contracts, `annotate_value`,
+result types and patterns were left on strings. No probe could see it: the one
+typed collection among the eight is a `Liste[Entier]`, whose check ends at the
+first comparison.
+
+### What
+
+A runtime type descriptor, built once and checked by structure:
+
+- a tag for each builtin, a pointer (or an index into the module's class
+  table) for a class or an interface, element descriptors for a generic, a list
+  of alternatives for a union;
+- built where a type enters the runtime -- when bytecode is loaded, when a
+  collection's contract is set -- and never from a string afterwards;
+- `ListConstraint::element_type` and its siblings hold one instead of a
+  `std::string`; `matches_type_name(value, text)` becomes a match against a
+  descriptor; `annotate_value` takes one;
+- the name survives only where a person reads it: diagnostics and `type_de`.
+
+Both engines. The tree walker's `matches_type_name(Value, Token)` and
+`register_value_annotation` do the same string work, so the descriptor and its
+matcher belong in `src/interpreter/runtime/`, called by both -- the same move
+Task 3 made for the members.
+
+### How
+
+One family at a time, measured on `commandes` from a fixed path and from a long
+one: collection contracts first (the largest share), then result types and
+patterns, then annotation. Keep the merge rule exact -- re-annotation may refine
+`Universel` and must never erase a concrete contract -- and keep every
+diagnostic's wording, including the type names in it; a conformance case with a
+class-typed contract violation pins that.
+
+A scalar element needs no annotation at all. `annotate_value` returns early for
+non-collections today, but only after trimming and scanning its string; check
+what is left once that is gone before deciding what else to change.
+
+### Acceptance
+
+- `commandes` from a 10-character path and from a 150-character path within
+  noise of each other, on both engines.
+- `commandes` and `expressions` measured against the parent commit and against
+  CPython, recorded in `RUNTIME_HARDENING.md`; the eight probes not regressed.
+- `matches_type_name`, `split_generic_arguments` and `trim_type_name` gone from
+  the profile of `commandes`.
+
+---
+
+## Task 7 — Types that flow out of collections, `ici` and interfaces
+
+### Why
+
+Each row is refused by the analyzer with `attend T; reçu Universel`, for a type
+the analyzer knows:
+
+| written | analyzer says | should be |
+| --- | --- | --- |
+| `soit v: Entier = liste[0]` with `liste: Liste[Entier]` | `Universel` | `Entier` |
+| `soit v: Entier = dico["a"]` with `dico: Dictionnaire[Texte, Entier]` | `Universel` | `Entier` |
+| `pour chaque x dans liste { soit y: Entier = x }` | `Universel` | `Entier` |
+| `pour chaque k dans dico { soit t: Texte = k }` | `Universel` | `Texte` |
+| `pour chaque c dans texte { soit s: Symbole = c }` | `Universel` | `Symbole` |
+| `soit x: Entier = ici.calculer()` with `calculer() -> Entier` | `Universel` | `Entier` |
+| `soit n = ici.analyser() ou propager` | refused: not a `Résultat` | the declared `Résultat` |
+| `soit v: Entier = noeud.evaluer()` with `interface Noeud { fonction evaluer() -> Entier }` | `Universel` | `Entier` |
+
+`c.calculer()` on a parameter or local `c: C` *is* typed; only `ici` is not.
+
+The consequences are what a user meets first. A value read out of a typed
+collection cannot be bound to an annotated name, passed to a typed parameter or
+returned from a typed function without an `en` cast. A class whose methods call
+one another cannot use typed errors, because `ici.m() ou propager` is refused --
+the parser in `benchmarks/expressions.lum` is three free functions for that
+reason alone. An interface cannot declare a return type its callers can rely
+on, so the examples leave interface methods unannotated. For a language whose
+differentiator is its type discipline, these are the holes a first program
+falls into.
+
+### What
+
+`inferred_type` in `src/analysis/semantic_analysis.cpp` has no case for
+`IndexAccessExpr` and falls through to `Universel`; the `ForStmt` resolver
+declares its variable with no type; a member call's return type is looked up
+for a receiver of class type but not for `ici` or for an interface.
+
+### The decision first
+
+Reading `T` out of a `Liste[T]` is sound only if a binding of type `Liste[T]`
+can never reach a list holding something else. The runtime enforces a contract
+on the allocation and lets re-annotation refine `Universel` only; the analyzer
+has its own assignability rule between `Liste[Universel]` and `Liste[Entier]`.
+Confirm that the two agree -- that nothing the analyzer accepts as a
+`Liste[Entier]` can hold a `Texte` at run time -- before the analyzer promises
+it. This is the "richer mutable-generic relations" question from the
+priorities below, and this task cannot be done without answering it.
+
+Typing reads more precisely will also reject programs that relied on
+`Universel`'s permissiveness. Run `tests/`, `examples/` and `benchmarks/`,
+list every program that newly fails, and decide each one; do not ship a
+rejection nobody looked at.
+
+### Acceptance
+
+- Every row above compiles as written and runs identically on both engines,
+  with a conformance case.
+- The three programs in `benchmarks/` lose their `en` casts and their
+  unannotated bindings, and `expressions` gets its parser back as methods;
+  re-measure them, since a cast and a check cost time.
+- Every newly rejected program is recorded with the decision taken.
+
+---
+
+## Task 8 — Four things a program should not reach
+
+Small and independent; each gets a conformance case.
+
+1. **`valeur en MaClasse` passes analysis and always fails at run time**, in
+   both engines: `conversion explicite non prise en charge vers le type`.
+   Either analysis refuses a cast to a class or interface, or the language
+   defines one as a checked downcast. Decide, then make the two agree.
+2. **The VM names a class by its internal identity in that message**:
+   `'L@2f746d702f776c2f712e6c756d:7'` where the tree walker says `'L'`. It is a
+   divergence the conformance corpus would have caught had it held a case, and
+   an internal name shown to a user. Every message naming a type goes through
+   `display_runtime_type`; this one does not.
+3. **The specified empty set cannot be typed.** `[].en_ensemble()` is an
+   `Ensemble[Universel]` and cannot initialise an `Ensemble[Texte]`, while `[]`
+   initialises a `Liste[Texte]`. Either the empty literal's adaptation carries
+   through `en_ensemble()`, or the language needs an empty-set literal.
+4. **A condition that begins with `(` must be wholly parenthesised.**
+   `si (a) >= b {` and `tant que (a et b) ou c {` fail with `attendu '{' pour
+   ouvrir le bloc`: the parser takes the leading parenthesis as the
+   condition's delimiter rather than as the start of an expression.
 
 ---
 

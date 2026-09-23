@@ -1650,6 +1650,72 @@ verifier's own tests now include a function ending on a branch, and
 `tests/conformance/tant_que_condition_composee` puts both operators, nested,
 into the corpus the fuzzer mutates.
 
+## What ordinary programs spend their time on — 2026-09-23
+
+The eight workloads are probes: each isolates one operation, which is how a
+cost is found and how a fix is shown to work. None of them says what an
+ordinary program spends its time on, and the target had been read off them.
+Three programs were written the way a user would write them, each with a
+CPython counterpart under the same rules as the others:
+
+- **`journal`** -- produce a service log of 40,000 lines, then analyse it:
+  split, convert, count per key, aggregate per route, collect distinct users.
+- **`expressions`** -- tokenize, parse by recursive descent and evaluate 4,000
+  generated arithmetic expressions, through an interface, with syntax errors
+  as typed `Résultat` failures propagated by `ou propager`.
+- **`commandes`** -- process 40,000 orders against a 300-product catalogue:
+  validate, apply a customer discount, decrement stock, or refuse with one of
+  three typed errors matched by `agir selon`.
+
+Against CPython, net of startup:
+
+| workload | VM/CPython, repository path | VM/CPython, 10-character path |
+| --- | --- | --- |
+| journal | 1.99x | 2.00x |
+| expressions | 4.63x | 3.41x |
+| commandes | 17.49x | 8.28x |
+
+The second column is not a typo. **The VM's speed depends on the length of the
+source file's path.** The same `commandes` program takes 1.15 s from a
+10-character path, 2.53 s from this repository's 75-character one, and 4.05 s
+from a 152-character one; the tree walker moves 8% over the same range. None of
+the eight probes moves at all, nor does `journal`.
+
+The reason is the same finding from the other side. A class's runtime identity
+is its name plus its source file, hex-encoded -- `Produit@2f746d70…:21` -- and
+the VM checks values against collection contracts, result types and typed
+patterns by parsing type-name *strings* at run time: `Dictionnaire[Texte,
+Produit@…]` is trimmed, scanned for a union bar, split at its brackets and
+compared, on every insertion into a typed collection, every typed return and
+every typed branch of `agir selon`. The longer the path, the longer every one of
+those strings. A profile of `commandes` (gprof, which inflates small functions,
+so read these as attribution rather than as a model):
+
+| function | share | calls |
+| --- | --- | --- |
+| `matches_type_name` | 42% | 774,462 |
+| `VmRuntimeServices::annotate_value` | 17% | 443,855 |
+| `CycleCollector::note_possible_root` | 13% | 25,319,209 |
+| `split_generic_arguments` | 3% | 1,980,710 |
+| `trim_type_name` | -- | 19,021,298 |
+
+In `expressions` the same three functions take about a quarter, beside the
+dispatch loop itself at 28%.
+
+Round one of 2026-09-20 found this exact cost -- "a type was re-read at every
+check" -- and classified a *parameter's* type once per module. Collection
+contracts, annotation, result types and patterns were left on strings, and no
+probe exercised them: the one typed collection in the eight is a
+`Liste[Entier]`, whose check ends at the first comparison. **The next lever is therefore not the
+two items the backlog named** -- a field slot, a frame window onto the stack --
+but giving a runtime type a representation that is resolved once. The analyzer
+already interns one for every expression.
+
+Writing the programs found more than a cost. The first of them could not run on
+the default engine at all (see "A loop over `et` or `ou`", above), and several
+things a user would write are refused or quietly untyped; they are specified as
+the next pieces of work in `NEXT_TASKS.md`.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

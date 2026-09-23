@@ -237,10 +237,14 @@ Status: in progress — 2026-09-20; ahead of CPython at the median, behind on th
       which is why it is level with CPython, while a call allocated four times
       and a list append three. The gap is not interpretation, it is what each
       operation does on the heap.
-- [ ] Establish representative workloads in addition to microbenchmarks. The
-      seven that exist are all microbenchmarks; what they now have is a CPython
-      counterpart each (`benchmarks/python/`), so the target can be read off
-      more than one of them.
+- [x] Establish representative workloads in addition to microbenchmarks.
+      `journal`, `expressions` and `commandes` are programs a user would write,
+      each with a CPython counterpart. Against CPython they run 2.0x, 3.4x and
+      8.3x slower from a short path, and 17.5x on `commandes` from this
+      repository's -- the VM's time depends on the source path's length. The
+      cost none of the probes could see is runtime type checks that still
+      parse type names as strings. Writing them also found that a `tant que`
+      over `et` or `ou` did not run on the default engine.
 - [ ] Replace the value representation. No longer blocked: `Value` holds a
       `Ref`, not a `shared_ptr`, and is down to 24 bytes. Lower priority than it
       looked: the four things the profile actually named were names resolved at
@@ -249,16 +253,23 @@ Status: in progress — 2026-09-20; ahead of CPython at the median, behind on th
 These two, and three correctness items, are specified for implementation in
 `NEXT_TASKS.md`.
 
-- [ ] **Give a field a slot instead of a name.** The class-chain walk is gone —
-      each class remembers what a member index resolves to — but a field still
-      lives in a hash table keyed by its name, so reading one hashes a string. A
-      field belongs at a fixed offset chosen when the class is compiled.
+- [ ] **Resolve a runtime type once.** Collection contracts, value annotation,
+      result types and typed patterns are checked by parsing type-name strings
+      on every operation, and a class's name embeds its source path. About 60%
+      of `commandes` and a quarter of `expressions`. Specified as Task 6 in
+      `NEXT_TASKS.md`; measured first, so it goes first.
 
-- [ ] **Let a frame's locals be a window onto the stack.** A call allocates
-      three times: the argument vector, the normalized values, and the frame's
-      locals — while the values are already sitting contiguously on the VM
-      stack. Recycling frames rather than freeing them is the smaller half of
-      this and could be done on its own.
+- [ ] **Give a field a slot instead of a name.** The class-chain walk is gone
+      and, since Task 1, so is the hash table: a field lives in an
+      insertion-ordered vector and reading one compares names. A field still
+      belongs at a fixed offset chosen when the class is compiled, but the
+      programs put this below the item above.
+
+- [ ] **Let a frame's locals be a window onto the stack.** A call used to
+      allocate three times; since Task 2 it allocates once (2,001,064
+      allocations for 2,000,000 method calls). What remains is the argument
+      vector built for a member call while the values sit contiguously on the
+      stack.
 
       Both of these touch the object and frame representations, which the tree
       walker and every standard-library native share. They are a step up in size
