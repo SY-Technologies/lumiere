@@ -1762,6 +1762,56 @@ passes analysis and fails at run time, while the same `[1]` passed to a
 start refusing programs that run today, because a value read from a collection
 is `Universel` -- which is Task 7's question. The item moved there.
 
+## Resolving a runtime type once (Task 6)
+
+### First: a typed argument cost as much as the collection it named
+
+The profile that named `matches_type_name` as 42% of `commandes` counted its
+calls more closely under a call graph: 1,032,825 from outside, and 24,175,739
+from *itself*. The type-string parsing the brief blamed was real, but the
+bulk was algorithmic. `traiter(commande, catalogue)` declares
+`catalogue: Dictionnaire[Texte, Produit]`, and checking that argument walked
+all 300 entries -- a key and a value each, 600 recursive checks -- on every
+one of 40,000 calls. The class identity those checks compared carries the
+source path, which is why the path mattered so much; but the path only
+multiplied a cost that should not have been there.
+
+A collection already knows its type. Its contract is set once, by
+`annotate_value`, after a check, and every element added later is checked on
+the way in (`enforce_declared_type`, the members' `enforce`). Nothing sets a
+contract any other way -- there is no assignment to `constraint` outside
+`merge_collection_constraint`. So a collection whose contract is exactly the
+type asked about has already had every element checked against it, and
+matches without them being looked at. Annotating it again with the same
+contract has nothing left to do either, and used to walk every element as
+well.
+
+Both engines now answer from the contract when it is exactly the type asked
+about, and fall back to the walk otherwise: an absent contract, `Universel`,
+a different spelling of the same type. A miss costs what it always did; it is
+never a wrong answer. In the Debug and sanitizer builds the fast path asserts
+that the walk agrees, and the whole suite, the corpus and the three programs
+run with it live.
+
+`commandes` on the VM, medians of five, against the parent commit:
+
+| source path | before | after |
+| --- | --- | --- |
+| 46 characters | 2.096 s | 0.565 s |
+| 75 characters (this repository) | 2.573 s | 0.592 s |
+| 187 characters | 4.862 s | 0.798 s |
+
+3.7x to 6.1x faster, and the path now moves it by 41% where it moved it by
+132%. The probes and `journal` are unchanged within their bands; `expressions`
+moves 3%, since it passes objects rather than collections. Allocations fall by
+one per order (4,285,060 to 4,245,060), the re-annotation of the catalogue's
+contract.
+
+What remains is the part the brief described: `split_generic_arguments` is now
+the largest single entry in the profile, 2.6 million calls that each build a
+vector, beside `matches_type_name`'s own 1 million -- type names parsed on
+every check.
+
 ## Next engineering priorities
 
 1. **Runtime lifetime and type invariants.** Collection constraints now belong

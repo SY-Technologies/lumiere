@@ -257,6 +257,17 @@ std::string_view trim_type_name(std::string_view name)
     return name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
 }
 
+// A collection carries its contract, and every element it holds was checked
+// against that contract on the way in -- `enforce_declared_type` on insertion,
+// `annotate_value` when the contract is first set, after a check. A collection
+// whose contract is exactly the type asked about therefore matches it without
+// its elements being looked at. Scanning them instead made passing a 300-entry
+// Dictionnaire[Texte, Produit] as an argument cost 600 checks per call.
+bool same_contract(const std::string &contract, const std::string_view requested)
+{
+    return trim_type_name(contract) == trim_type_name(requested);
+}
+
 bool matches_type_name(const Value &value, std::string_view full_name)
 {
     full_name = trim_type_name(full_name);
@@ -370,14 +381,17 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        for (const Value &element : value.as_liste()->elements)
+        const auto list = value.as_liste();
+        const auto every_element_matches = [&] {
+            return std::all_of(list->elements.begin(), list->elements.end(),
+                               [&](const Value &element) { return matches_type_name(element, arguments[0]); });
+        };
+        if (list->constraint && same_contract(list->constraint->element_type, arguments[0]))
         {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
+            assert(every_element_matches());
+            return true;
         }
-        return true;
+        return every_element_matches();
     }
 
     if (name == "ListeFixe")
@@ -404,18 +418,22 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        if (value.as_liste_fixe()->elements.size() != expected_length)
+        const auto fixed = value.as_liste_fixe();
+        if (fixed->elements.size() != expected_length)
         {
             return false;
         }
-        for (const Value &element : value.as_liste_fixe()->elements)
+        const auto every_element_matches = [&] {
+            return std::all_of(fixed->elements.begin(), fixed->elements.end(),
+                               [&](const Value &element) { return matches_type_name(element, arguments[0]); });
+        };
+        if (fixed->constraint && fixed->constraint->length == expected_length &&
+            same_contract(fixed->constraint->element_type, arguments[0]))
         {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
+            assert(every_element_matches());
+            return true;
         }
-        return true;
+        return every_element_matches();
     }
 
     if (name == "Dictionnaire")
@@ -433,14 +451,21 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
+        const auto dictionary = value.as_dictionnaire();
+        const auto every_entry_matches = [&] {
+            return std::all_of(dictionary->items().begin(), dictionary->items().end(),
+                               [&](const DictEntry &entry) {
+                                   return matches_type_name(entry.first, arguments[0]) &&
+                                          matches_type_name(entry.second, arguments[1]);
+                               });
+        };
+        if (dictionary->constraint && same_contract(dictionary->constraint->key_type, arguments[0]) &&
+            same_contract(dictionary->constraint->value_type, arguments[1]))
         {
-            if (!matches_type_name(key, arguments[0]) || !matches_type_name(entry_value, arguments[1]))
-            {
-                return false;
-            }
+            assert(every_entry_matches());
+            return true;
         }
-        return true;
+        return every_entry_matches();
     }
 
     if (name == "Ensemble")
@@ -458,14 +483,17 @@ bool matches_type_name(const Value &value, std::string_view full_name)
         {
             return false;
         }
-        for (const Value &element : value.as_ensemble()->items())
+        const auto set = value.as_ensemble();
+        const auto every_element_matches = [&] {
+            return std::all_of(set->items().begin(), set->items().end(),
+                               [&](const Value &element) { return matches_type_name(element, arguments[0]); });
+        };
+        if (set->constraint && same_contract(set->constraint->element_type, arguments[0]))
         {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
+            assert(every_element_matches());
+            return true;
         }
-        return true;
+        return every_element_matches();
     }
 
     return false;
@@ -502,26 +530,41 @@ void VmRuntimeServices::annotate_value(const Value &value,
         const auto result = value.as_resultat();
         annotate_value(result->payload, arguments[result->success ? 0 : 1], site);
     }
+    // A collection already bound to exactly this contract has nothing to learn
+    // from it: its elements were annotated when the contract was set, and every
+    // one added since was annotated on the way in. Walking them again made a
+    // typed argument cost as much as the collection it named.
     else if (type_name.starts_with("Liste[") && value.is_liste() && arguments.size() == 1)
     {
-        if (!merge_collection_constraint(value.as_liste()->constraint, ListConstraint{std::string(arguments[0])}))
+        const auto list = value.as_liste();
+        if (list->constraint && same_contract(list->constraint->element_type, arguments[0]))
+            return;
+        if (!merge_collection_constraint(list->constraint, ListConstraint{std::string(arguments[0])}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &element : value.as_liste()->elements)
+        for (const auto &element : list->elements)
             annotate_value(element, arguments[0], site);
     }
     else if (type_name.starts_with("ListeFixe[") && value.is_liste_fixe() && arguments.size() == 2)
     {
-        if (!merge_collection_constraint(value.as_liste_fixe()->constraint, FixedListConstraint{
-                std::string(arguments[0]), value.as_liste_fixe()->elements.size()}))
+        const auto fixed = value.as_liste_fixe();
+        if (fixed->constraint && fixed->constraint->length == fixed->elements.size() &&
+            same_contract(fixed->constraint->element_type, arguments[0]))
+            return;
+        if (!merge_collection_constraint(fixed->constraint, FixedListConstraint{
+                std::string(arguments[0]), fixed->elements.size()}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &element : value.as_liste_fixe()->elements)
+        for (const auto &element : fixed->elements)
             annotate_value(element, arguments[0], site);
     }
     else if (type_name.starts_with("Dictionnaire[") && value.is_dictionnaire() && arguments.size() == 2)
     {
-        if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{std::string(arguments[0]), std::string(arguments[1])}))
+        const auto dictionary = value.as_dictionnaire();
+        if (dictionary->constraint && same_contract(dictionary->constraint->key_type, arguments[0]) &&
+            same_contract(dictionary->constraint->value_type, arguments[1]))
+            return;
+        if (!merge_collection_constraint(dictionary->constraint, DictConstraint{std::string(arguments[0]), std::string(arguments[1])}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &[key, element] : value.as_dictionnaire()->items())
+        for (const auto &[key, element] : dictionary->items())
         {
             annotate_value(key, arguments[0], site);
             annotate_value(element, arguments[1], site);
@@ -529,9 +572,12 @@ void VmRuntimeServices::annotate_value(const Value &value,
     }
     else if (type_name.starts_with("Ensemble[") && value.is_ensemble() && arguments.size() == 1)
     {
-        if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{std::string(arguments[0])}))
+        const auto set = value.as_ensemble();
+        if (set->constraint && same_contract(set->constraint->element_type, arguments[0]))
+            return;
+        if (!merge_collection_constraint(set->constraint, SetConstraint{std::string(arguments[0])}))
             throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-        for (const auto &element : value.as_ensemble()->items())
+        for (const auto &element : set->items())
             annotate_value(element, arguments[0], site);
     }
 }

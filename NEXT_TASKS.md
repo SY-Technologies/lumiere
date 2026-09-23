@@ -417,6 +417,12 @@ where the token starts.
 
 ## Task 6 — Resolve a runtime type once
 
+**In progress.** The first step found that the largest term was not parsing but
+scanning: a typed collection argument had every element checked on every call.
+Collections are now matched from their contract when it is exactly the type
+asked about; `commandes` is 3.7x to 6.1x faster. See `RUNTIME_HARDENING.md`,
+"Resolving a runtime type once". The descriptor below is the second step.
+
 ### Why
 
 Against CPython, net of startup, the VM runs `commandes` 8.3x slower from a

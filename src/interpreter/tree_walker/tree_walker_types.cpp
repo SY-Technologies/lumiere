@@ -4,6 +4,9 @@
 #include "lumiere/interpreter/runtime/type_aliases.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
+#include <algorithm>
+#include <cassert>
+
 namespace lumiere
 {
 
@@ -100,6 +103,27 @@ namespace lumiere
         }
         return false;
     }
+
+    namespace
+    {
+        std::string_view trimmed(const std::string_view name)
+        {
+            const std::size_t first = name.find_first_not_of(" \t\r\n");
+            return first == std::string_view::npos
+                       ? std::string_view{}
+                       : name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
+        }
+
+        // A collection carries its contract, and every element it holds was
+        // checked against it on the way in, so a collection whose contract is
+        // exactly the type asked about matches it without its elements being
+        // looked at -- and needs no annotating with it again. The VM does the
+        // same; the reasoning is under `same_contract` there.
+        bool same_contract(const std::string &contract, const std::string &requested)
+        {
+            return trimmed(contract) == trimmed(requested);
+        }
+    } // namespace
 
     bool TreeWalker::matches_type_name(const Value &value, const Token &type_token) const
     {
@@ -211,14 +235,18 @@ namespace lumiere
                 return false;
             }
 
-            for (const Value &element : value.as_liste()->elements)
+            const auto list = value.as_liste();
+            const auto every_element_matches = [&] {
+                const Token element_type(TokenType::IDENT, generic_args[0], type_token.line, type_token.column);
+                return std::all_of(list->elements.begin(), list->elements.end(),
+                                   [&](const Value &element) { return matches_type_name(element, element_type); });
+            };
+            if (list->constraint && same_contract(list->constraint->element_type, generic_args[0]))
             {
-                if (!matches_type_name(element, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)))
-                {
-                    return false;
-                }
+                assert(every_element_matches());
+                return true;
             }
-            return true;
+            return every_element_matches();
         }
         if (type_name == "ListeFixe")
         {
@@ -253,14 +281,18 @@ namespace lumiere
                 return false;
             }
 
-            for (const Value &element : list->elements)
+            const auto every_element_matches = [&] {
+                const Token element_type(TokenType::IDENT, generic_args[0], type_token.line, type_token.column);
+                return std::all_of(list->elements.begin(), list->elements.end(),
+                                   [&](const Value &element) { return matches_type_name(element, element_type); });
+            };
+            if (list->constraint && list->constraint->length == expected_length &&
+                same_contract(list->constraint->element_type, generic_args[0]))
             {
-                if (!matches_type_name(element, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)))
-                {
-                    return false;
-                }
+                assert(every_element_matches());
+                return true;
             }
-            return true;
+            return every_element_matches();
         }
         if (type_name == "Dictionnaire")
         {
@@ -279,15 +311,23 @@ namespace lumiere
                 return false;
             }
 
-            for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
+            const auto dictionary = value.as_dictionnaire();
+            const auto every_entry_matches = [&] {
+                const Token key_type(TokenType::IDENT, generic_args[0], type_token.line, type_token.column);
+                const Token value_type(TokenType::IDENT, generic_args[1], type_token.line, type_token.column);
+                return std::all_of(dictionary->items().begin(), dictionary->items().end(),
+                                   [&](const DictEntry &entry) {
+                                       return matches_type_name(entry.first, key_type) &&
+                                              matches_type_name(entry.second, value_type);
+                                   });
+            };
+            if (dictionary->constraint && same_contract(dictionary->constraint->key_type, generic_args[0]) &&
+                same_contract(dictionary->constraint->value_type, generic_args[1]))
             {
-                if (!matches_type_name(key, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)) ||
-                    !matches_type_name(entry_value, Token(TokenType::IDENT, generic_args[1], type_token.line, type_token.column)))
-                {
-                    return false;
-                }
+                assert(every_entry_matches());
+                return true;
             }
-            return true;
+            return every_entry_matches();
         }
         if (type_name == "Ensemble")
         {
@@ -306,14 +346,18 @@ namespace lumiere
                 return false;
             }
 
-            for (const Value &element : value.as_ensemble()->items())
+            const auto set = value.as_ensemble();
+            const auto every_element_matches = [&] {
+                const Token element_type(TokenType::IDENT, generic_args[0], type_token.line, type_token.column);
+                return std::all_of(set->items().begin(), set->items().end(),
+                                   [&](const Value &element) { return matches_type_name(element, element_type); });
+            };
+            if (set->constraint && same_contract(set->constraint->element_type, generic_args[0]))
             {
-                if (!matches_type_name(element, Token(TokenType::IDENT, generic_args[0], type_token.line, type_token.column)))
-                {
-                    return false;
-                }
+                assert(every_element_matches());
+                return true;
             }
-            return true;
+            return every_element_matches();
         }
         if (type_name == "Classe")
         {
@@ -434,6 +478,11 @@ namespace lumiere
 
         if (type_name == "Liste" && value.is_liste() && generic_args.size() == 1)
         {
+            if (const auto &existing = value.as_liste()->constraint;
+                existing && same_contract(existing->element_type, generic_args[0]))
+            {
+                return;
+            }
             if (!merge_collection_constraint(value.as_liste()->constraint, ListConstraint{generic_args[0]}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_liste()->elements)
@@ -455,6 +504,11 @@ namespace lumiere
                 return;
             }
 
+            if (const auto &existing = value.as_liste_fixe()->constraint;
+                existing && existing->length == expected_length && same_contract(existing->element_type, generic_args[0]))
+            {
+                return;
+            }
             if (!merge_collection_constraint(value.as_liste_fixe()->constraint, FixedListConstraint{generic_args[0], expected_length}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_liste_fixe()->elements)
@@ -466,6 +520,12 @@ namespace lumiere
 
         if (type_name == "Dictionnaire" && value.is_dictionnaire() && generic_args.size() == 2)
         {
+            if (const auto &existing = value.as_dictionnaire()->constraint;
+                existing && same_contract(existing->key_type, generic_args[0]) &&
+                same_contract(existing->value_type, generic_args[1]))
+            {
+                return;
+            }
             if (!merge_collection_constraint(value.as_dictionnaire()->constraint, DictConstraint{generic_args[0], generic_args[1]}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const auto &[key, entry_value] : value.as_dictionnaire()->items())
@@ -478,6 +538,11 @@ namespace lumiere
 
         if (type_name == "Ensemble" && value.is_ensemble() && generic_args.size() == 1)
         {
+            if (const auto &existing = value.as_ensemble()->constraint;
+                existing && same_contract(existing->element_type, generic_args[0]))
+            {
+                return;
+            }
             if (!merge_collection_constraint(value.as_ensemble()->constraint, SetConstraint{generic_args[0]}))
                 throw_runtime_error(annotation, "annotation de collection incompatible avec le contrat existant");
             for (const Value &element : value.as_ensemble()->items())
