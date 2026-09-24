@@ -1991,6 +1991,19 @@ TEST(InterpreterBuiltinModules, RejectsInvalidCheminArguments)
     EXPECT_NE(error.find("Chemin.joindre"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, RejectsAnActualDotDotPathSegment)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Fichier\n"
+        "fonction principal() {\n"
+        "  afficher(Fichier.existe(\"../en-dehors\"))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Fichier.existe rejette les chemins contenant '..'"), std::string::npos);
+}
+
 TEST(InterpreterBuiltinModules, RejectsReadingMissingFile)
 {
     const auto [output, completed, error] = execute_program_with_error(
