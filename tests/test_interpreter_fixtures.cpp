@@ -2810,6 +2810,76 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
     EXPECT_EQ(server_line, "bonjour\\n");
 }
 
+TEST(InterpreterBuiltinModules, RejectsAnOversizedLireOctetsRequest)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    const TestSocket server_fd =
+        test_open_socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(server_fd));
+    test_set_reuseaddr(server_fd);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&addr),
+            sizeof(addr)) != 0)
+    {
+        test_close_socket(server_fd);
+        GTEST_SKIP() << "TCP binding is unavailable";
+    }
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(
+        ::getsockname(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&bound),
+            &bound_len),
+        0);
+    ASSERT_EQ(::listen(server_fd, 1), 0);
+    const int port = ntohs(bound.sin_port);
+
+    // The server only needs to accept and hold the connection open long
+    // enough for the client to call lire_octets; it never has to send
+    // anything, because the size cap is checked before any recv.
+    auto future = std::async(
+        std::launch::async,
+        [server_fd]() -> bool {
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return false;
+        }
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        const bool accepted = test_socket_valid(client_fd);
+        if (accepted)
+        {
+            test_wait_until_readable(client_fd, std::chrono::milliseconds(500));
+            test_close_socket(client_fd);
+        }
+        test_close_socket(server_fd);
+        return accepted;
+    });
+
+    const auto [client_output, client_completed, client_error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "fonction principal() {\n"
+        "  soit connexion = LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ") ou propager\n"
+        "  afficher(connexion.lire_octets(20971521) ou propager)\n"
+        "  connexion.fermer()\n"
+        "}\n");
+
+    EXPECT_TRUE(future.get());
+    EXPECT_FALSE(client_completed);
+    EXPECT_TRUE(client_output.empty());
+    EXPECT_NE(client_error.find("ConnexionTCP.lire_octets ne peut pas lire plus de 10 Mo en un seul appel"), std::string::npos);
+}
+
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 {
     SKIP_IF_LUMINET_DISABLED();
