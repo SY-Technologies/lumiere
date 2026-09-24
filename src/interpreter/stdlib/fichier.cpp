@@ -296,7 +296,14 @@ void register_fichier_module(Module &module)
                     call_site);
             }
             file << content;
-            if (!file)
+            // A buffered ofstream can accept `<<` without complaint and only
+            // discover a full disk when its buffer is actually flushed to the
+            // OS; checking `file` right after `<<` can therefore miss a
+            // write failure entirely. close() forces that flush now, so any
+            // error (disk full, quota, I/O failure) is caught here instead
+            // of being silently lost when the stream is later destroyed.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ecrire_texte",
@@ -326,7 +333,10 @@ void register_fichier_module(Module &module)
                     call_site);
             }
             file << content;
-            if (!file)
+            // See ecrire_texte above: close() forces the buffered write out
+            // now so a full disk is caught here, not lost silently later.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ajouter_texte",
@@ -386,7 +396,10 @@ void register_fichier_module(Module &module)
                 }
                 file << list->elements[i].as_texte();
             }
-            if (!file)
+            // See ecrire_texte above: close() forces the buffered write out
+            // now so a full disk is caught here, not lost silently later.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ecrire_lignes",

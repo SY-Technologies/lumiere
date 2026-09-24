@@ -2033,6 +2033,31 @@ TEST(InterpreterBuiltinModules, RejectsReadingMissingFile)
     EXPECT_NE(error.find("principal a échoué"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, ReportsADiskFullWriteFailureInsteadOfSilentlySucceeding)
+{
+    // /dev/full is a standard POSIX/Linux device that accepts any write and
+    // always reports it as failed with ENOSPC, and is the deterministic
+    // stand-in this codebase's own tooling can't otherwise construct for "the
+    // disk is full": std::ofstream's internal buffer can accept `<<` without
+    // complaint and only discover the failure once that buffer is actually
+    // flushed, which previously happened only in the stream's destructor,
+    // after ecrire_texte had already returned success.
+    if (!std::filesystem::exists("/dev/full"))
+    {
+        GTEST_SKIP() << "/dev/full is not available on this platform";
+    }
+
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Fichier.{ecrire_texte}\n"
+        "fonction principal() {\n"
+        "  ecrire_texte(\"/dev/full\", \"un contenu assez long pour forcer un vidage du tampon\") ou propager\n"
+        "}\n");
+
+    EXPECT_FALSE(completed) << "a full disk must be reported, not silently accepted";
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("échec pendant l'écriture"), std::string::npos) << error;
+}
+
 TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
 {
     auto [output1, completed1, error1] = execute_program_with_error(
