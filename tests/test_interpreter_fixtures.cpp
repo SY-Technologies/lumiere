@@ -14,6 +14,7 @@
 #endif
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -2878,6 +2879,79 @@ TEST(InterpreterBuiltinModules, RejectsAnOversizedLireOctetsRequest)
     EXPECT_FALSE(client_completed);
     EXPECT_TRUE(client_output.empty());
     EXPECT_NE(client_error.find("ConnexionTCP.lire_octets ne peut pas lire plus de 10 Mo en un seul appel"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RespectsConnectTimeoutInsteadOfHangingUntilTheOsGivesUp)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(server_fd));
+    test_set_reuseaddr(server_fd);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+    {
+        test_close_socket(server_fd);
+        GTEST_SKIP() << "TCP binding is unavailable";
+    }
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
+    // A backlog of 1, never accepted, is the black hole this test needs: once
+    // the accept queue is full, this platform drops further SYNs silently
+    // (tcp_abort_on_overflow=0) instead of sending RST, which is exactly the
+    // "connect() never gets a reply" scenario a connect timeout has to bound.
+    ASSERT_EQ(::listen(server_fd, 1), 0);
+    const int port = ntohs(bound.sin_port);
+
+    // Fire a few non-blocking connects to fill (and overflow) that queue.
+    // Non-blocking so this setup can never itself hang on the OS's own SYN
+    // retry timeout; the sockets are left open and unaccepted for the
+    // duration of the test below.
+    std::vector<TestSocket> filler_sockets;
+    for (int i = 0; i < 4; ++i)
+    {
+        TestSocket filler = test_open_socket(AF_INET, SOCK_STREAM, 0);
+        ASSERT_TRUE(test_socket_valid(filler));
+#ifdef _WIN32
+        u_long non_blocking = 1;
+        ::ioctlsocket(filler, FIONBIO, &non_blocking);
+#else
+        const int filler_flags = ::fcntl(filler, F_GETFL, 0);
+        ::fcntl(filler, F_SETFL, filler_flags | O_NONBLOCK);
+#endif
+        sockaddr_in target{};
+        target.sin_family = AF_INET;
+        target.sin_port = htons(static_cast<uint16_t>(port));
+        target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        ::connect(filler, reinterpret_cast<sockaddr *>(&target), sizeof(target));
+        filler_sockets.push_back(filler);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  afficher(LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ", délai: Temps.millisecondes(300)) ou propager)\n"
+        "}\n");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    for (TestSocket &filler : filler_sockets)
+    {
+        test_close_socket(filler);
+    }
+    test_close_socket(server_fd);
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_LT(elapsed, std::chrono::seconds(5))
+        << "connect() should be bounded by délai, not the OS's own much longer SYN retry timeout";
+    EXPECT_NE(error.find("LumiNet.TCP.connecter"), std::string::npos) << error;
 }
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
