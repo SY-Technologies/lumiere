@@ -58,6 +58,19 @@ SemanticModuleExports::Callable callable(
     return result;
 }
 
+// Like callable(), but additionally accepts any number of trailing positional
+// arguments beyond `parameters`, each checked against `variadic_type`.
+SemanticModuleExports::Callable variadic_callable(
+    std::initializer_list<NativeParameterSpec> parameters,
+    TypeExpr variadic_type,
+    TypeExpr return_type)
+{
+    SemanticModuleExports::Callable result = callable(parameters, std::move(return_type));
+    result.variadic = true;
+    result.variadic_type = std::move(variadic_type);
+    return result;
+}
+
 void export_callable(
     SemanticModuleExports &exports,
     std::string name,
@@ -605,8 +618,9 @@ native_module_exports(const std::string_view module_name)
         export_callable(
             exports,
             "joindre",
-            callable(
-                {parameter("segments", "Texte")},
+            variadic_callable(
+                {parameter("premier_segment", "Texte")},
+                named("Texte"),
                 named("Texte")));
         return exports;
     }

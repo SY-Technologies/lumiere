@@ -24,7 +24,12 @@ bool is_lumiere_absolute(const std::filesystem::path &path)
 void register_chemin_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    stdlib_bind_public_value(module, "separateur", Value::texte(std::string(1, std::filesystem::path::preferred_separator)));
+    // path_to_text() above normalizes every Chemin output to forward-slash
+    // form so Lumiere programs do not depend on the host platform's
+    // separator spelling; this constant must match that convention rather
+    // than exposing the platform-native separator (which would be "\\" on
+    // Windows, contradicting every other value this module produces).
+    stdlib_bind_public_value(module, "separateur", Value::texte(std::string("/")));
 
     stdlib_bind_public_function(
         module,
@@ -64,6 +69,15 @@ void register_chemin_module(Module &module)
                 if (!arg.value.is_texte())
                 {
                     runtime.raise_runtime_error(call_site, "Chemin.joindre attend des segments de type Texte");
+                }
+                if (arg.value.as_texte().empty())
+                {
+                    // An empty segment is never a meaningful path component, and
+                    // operator/= appends a trailing separator with nothing after
+                    // it ("a/b" + "" -> "a/b/"), silently changing the joined
+                    // path's meaning (e.g. turning a file path into what looks
+                    // like a directory path) rather than being a no-op.
+                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas de segment vide");
                 }
                 const std::filesystem::path segment = arg.value.as_texte();
                 if (i > 0 && is_lumiere_absolute(segment))
