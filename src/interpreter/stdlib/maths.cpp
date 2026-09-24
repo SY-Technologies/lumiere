@@ -18,6 +18,39 @@ Value rounded_integer(IRuntime &runtime, const RuntimeSite &site, double value)
         runtime.raise_runtime_error(site, "Maths: valeur hors limites pour Entier");
     return Value::entier(*integer);
 }
+
+// Exact int64 exponentiation by repeated squaring, or nullopt on overflow.
+// puissance's general path converts both operands to double and calls
+// std::pow, which loses precision for any Entier argument or result past
+// 2^53 -- both in the Entier->double coercion of the inputs and, separately,
+// in whatever rounding std::pow's own implementation does, which is not
+// required to be correctly rounded. When both operands started out as
+// Entier with a non-negative exponent, the true result is representable
+// exactly in int64 arithmetic up to int64's own range, so compute it that
+// way instead of going through double at all.
+std::optional<std::int64_t> integer_power(std::int64_t base, std::int64_t exponent)
+{
+    std::int64_t result = 1;
+    std::int64_t squared_base = base;
+    for (std::int64_t remaining_exponent = exponent; remaining_exponent > 0; remaining_exponent >>= 1)
+    {
+        if (remaining_exponent & 1)
+        {
+            const auto next_result = numeric::multiply(result, squared_base);
+            if (!next_result)
+                return std::nullopt;
+            result = *next_result;
+        }
+        if (remaining_exponent > 1)
+        {
+            const auto next_squared_base = numeric::multiply(squared_base, squared_base);
+            if (!next_squared_base)
+                return std::nullopt;
+            squared_base = *next_squared_base;
+        }
+    }
+    return result;
+}
 }
 
 void register_maths_module(Module &module)
@@ -215,6 +248,16 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site,
                     "Maths.puissance ne peut pas élever une valeur négative à une puissance non entière");
+            }
+            if (args[0].value.is_entier() && args[1].value.is_entier() && args[1].value.as_entier() >= 0)
+            {
+                if (const auto exact = integer_power(args[0].value.as_entier(), args[1].value.as_entier()))
+                {
+                    return Value::decimal(static_cast<double>(*exact));
+                }
+                // int64 overflow: fall through to the general path below,
+                // which reports it honestly as infini rather than erroring,
+                // matching this function's IEEE-honesty policy above.
             }
             return Value::decimal(std::pow(base, exponent));
         });

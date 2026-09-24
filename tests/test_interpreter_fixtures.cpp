@@ -2040,6 +2040,26 @@ TEST(InterpreterBuiltinModules, RejectsANegativeBaseToANonIntegerPower)
               std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, ComputesExactIntegerPowersInsteadOfLosingPrecisionThroughDouble)
+{
+    // Maths.puissance's general path converts both operands to double and
+    // calls std::pow. For Entier operands whose true result exceeds 2^53,
+    // that loses precision -- confirmed against this machine's libm:
+    // pow(3.0, 34.0) rounds to 16677181699666570.0, while the true value
+    // 3**34 = 16677181699666569 is only 16677181699666568.0 once rounded to
+    // the nearest double. When both operands are Entier with a
+    // non-negative exponent, the result is computed exactly with int64
+    // repeated squaring instead, and only converted to Decimal at the end.
+    const auto [output, completed] = execute_program(
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  afficher(Maths.puissance(3, 34))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "16677181699666568.0\n");
+}
+
 TEST(InterpreterBuiltinModules, RejectsAnActualDotDotPathSegment)
 {
     const auto [output, completed, error] = execute_program_with_error(
