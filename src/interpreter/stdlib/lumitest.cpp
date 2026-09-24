@@ -102,11 +102,18 @@ void run_before_all_hooks_if_needed(IRuntime &runtime,
             continue;
         }
 
-        group.before_all_ran = true;
+        // Marked ran only once every hook has actually completed. A hook that
+        // throws must leave this group retried on the next test(), not marked
+        // done: setting the flag first (as before) meant a failing avant_tout
+        // reported its error on the first test in the group and then silently
+        // skipped setup -- never retried, never reported again -- for every
+        // test after it, which could pass or fail for unrelated reasons with
+        // no fixture in place.
         for (const Value &hook : group.before_all_hooks)
         {
             run_hook(runtime, hook, site, "LumiTest.avant_tout");
         }
+        group.before_all_ran = true;
     }
 }
 
