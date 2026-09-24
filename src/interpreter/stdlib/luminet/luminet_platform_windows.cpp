@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 
+#include <climits>
 #include <mutex>
 #include <sstream>
 
@@ -102,6 +103,72 @@ bool platform_socket_set_timeout(SocketHandle handle, int64_t timeout_ms)
     const DWORD timeout = static_cast<DWORD>(timeout_ms);
     return ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&timeout), sizeof(timeout)) == 0 &&
            ::setsockopt(handle, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&timeout), sizeof(timeout)) == 0;
+}
+
+bool platform_socket_connect_with_timeout(SocketHandle handle,
+                                          const sockaddr *addr,
+                                          socklen_t addrlen,
+                                          int64_t timeout_ms)
+{
+    u_long non_blocking = 1;
+    if (::ioctlsocket(handle, FIONBIO, &non_blocking) != 0)
+    {
+        return false;
+    }
+    const auto restore_blocking = [&]() {
+        u_long blocking = 0;
+        ::ioctlsocket(handle, FIONBIO, &blocking);
+    };
+
+    if (::connect(handle, addr, static_cast<int>(addrlen)) == 0)
+    {
+        restore_blocking();
+        return true;
+    }
+    if (::WSAGetLastError() != WSAEWOULDBLOCK)
+    {
+        const int connect_error = ::WSAGetLastError();
+        restore_blocking();
+        ::WSASetLastError(connect_error);
+        return false;
+    }
+
+    WSAPOLLFD pfd{};
+    pfd.fd = handle;
+    pfd.events = POLLOUT;
+    const int poll_timeout_ms =
+        timeout_ms > static_cast<int64_t>(INT_MAX) ? INT_MAX : static_cast<int>(timeout_ms);
+    const int poll_rc = ::WSAPoll(&pfd, 1, poll_timeout_ms);
+    if (poll_rc == 0)
+    {
+        restore_blocking();
+        ::WSASetLastError(WSAETIMEDOUT);
+        return false;
+    }
+    if (poll_rc == SOCKET_ERROR)
+    {
+        const int poll_error = ::WSAGetLastError();
+        restore_blocking();
+        ::WSASetLastError(poll_error);
+        return false;
+    }
+
+    int so_error = 0;
+    int so_error_len = sizeof(so_error);
+    if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&so_error), &so_error_len) != 0)
+    {
+        const int getsockopt_error = ::WSAGetLastError();
+        restore_blocking();
+        ::WSASetLastError(getsockopt_error);
+        return false;
+    }
+    restore_blocking();
+    if (so_error != 0)
+    {
+        ::WSASetLastError(so_error);
+        return false;
+    }
+    return true;
 }
 
 void platform_socket_enable_reuse_address(SocketHandle handle)

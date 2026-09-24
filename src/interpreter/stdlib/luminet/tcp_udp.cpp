@@ -64,7 +64,10 @@ Value make_luminet_tcp_module(const NativeFunctionFactory &make_native_function)
                 {
                     apply_timeout(runtime, fd, *timeout_ms, "LumiNet.TCP.connecter", native_args.site);
                 }
-                if (::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0)
+                const bool connected = timeout_ms.has_value()
+                    ? platform_socket_connect_with_timeout(fd, entry->ai_addr, entry->ai_addrlen, *timeout_ms)
+                    : ::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0;
+                if (connected)
                 {
                     peer_address = address_to_text(entry->ai_addr);
                     break;

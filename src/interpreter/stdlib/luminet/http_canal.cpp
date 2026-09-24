@@ -87,8 +87,9 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             }
             platform_socket_enable_nosigpipe(fd);
             constexpr int64_t kDefaultTimeoutMs = 30000;
-            apply_timeout(runtime, fd, timeout_ms.value_or(kDefaultTimeoutMs), signature, native_args.site);
-            if (::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0)
+            const int64_t connect_timeout_ms = timeout_ms.value_or(kDefaultTimeoutMs);
+            apply_timeout(runtime, fd, connect_timeout_ms, signature, native_args.site);
+            if (platform_socket_connect_with_timeout(fd, entry->ai_addr, entry->ai_addrlen, connect_timeout_ms))
             {
                 break;
             }
