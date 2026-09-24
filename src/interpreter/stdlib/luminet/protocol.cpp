@@ -653,6 +653,13 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         }
     }
 
+    // A header has already been read at this point, so the peer has committed
+    // to sending a frame: any further truncation here (extended length, the
+    // masking key, the payload itself) is a peer that started a frame and
+    // then vanished mid-way through it, not a clean close at a frame
+    // boundary. Reporting that as std::nullopt -- this function's "no more
+    // frames, channel ended gracefully" signal -- would silently discard a
+    // genuine protocol violation as if nothing had gone wrong.
     const bool masked = (header[1] & 0x80) != 0;
     uint64_t payload_length = header[1] & 0x7f;
     if (payload_length == 126)
@@ -660,7 +667,8 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         unsigned char ext[2];
         if (!recv_exact_bytes(fd, pending_bytes, ext, sizeof(ext)))
         {
-            return std::nullopt;
+            throw NetworkFailure(
+                context + " a reçu une trame websocket incomplète");
         }
         payload_length = (static_cast<uint64_t>(ext[0]) << 8) | ext[1];
     }
@@ -674,13 +682,15 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     std::array<unsigned char, 4> masking_key{};
     if (masked && !recv_exact_bytes(fd, pending_bytes, masking_key.data(), masking_key.size()))
     {
-        return std::nullopt;
+        throw NetworkFailure(
+            context + " a reçu une trame websocket incomplète");
     }
 
     std::vector<unsigned char> payload(payload_length);
     if (payload_length > 0 && !recv_exact_bytes(fd, pending_bytes, payload.data(), payload.size()))
     {
-        return std::nullopt;
+        throw NetworkFailure(
+            context + " a reçu une trame websocket incomplète");
     }
     if (masked)
     {
