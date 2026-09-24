@@ -56,10 +56,16 @@ std::filesystem::path sanitize_path(IRuntime &runtime,
                                     const std::string &signature,
                                     const RuntimeSite &call_site)
 {
-    const std::string path_str = path.generic_string();
-    if (path_str.find("..") != std::string::npos)
+    // A component-wise check: '..' only means "go up a directory" as a whole
+    // path segment. A substring search over the whole text also rejected
+    // ordinary filenames that merely contain two dots, such as "notes..bak"
+    // or "v1..2.txt", while catching nothing a component check would miss.
+    for (const auto &component : path)
     {
-        runtime.raise_runtime_error(call_site, signature + " rejette les chemins contenant '..'");
+        if (component == "..")
+        {
+            runtime.raise_runtime_error(call_site, signature + " rejette les chemins contenant '..'");
+        }
     }
     return path;
 }
