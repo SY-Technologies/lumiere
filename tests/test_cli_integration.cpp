@@ -3651,6 +3651,36 @@ TEST(CliIntegration, SupportsLumiTestContextObjectApi)
     EXPECT_NE(result.stdout_text.find("hors groupe"), std::string::npos);
 }
 
+TEST(CliIntegration, RejectsWritingAdHocStateOntoTheLumiTestContextObject)
+{
+    // The `t` context object is one shared LumiereObject instance, created
+    // once and reused across every group and test in a run (see
+    // register_lumitest_module in lumitest.cpp). If Lumiere let a program
+    // write an arbitrary new field onto it (t.donnees = ...), that field
+    // would leak from one test into every later one, since it is the same
+    // object every time. It cannot: `t` has no class (it is built directly
+    // in native code, only its fixed native methods are bound onto it), and
+    // field assignment requires the field to be declared on the receiver's
+    // class in both engines (TreeWalker::assign_member, VM SET_MEMBER), so
+    // this fails the same way assigning an unknown field on any classless
+    // object would. This test locks that in rather than leaving it an
+    // unverified assumption.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "lumiere_cli_lumitest_context_no_ad_hoc_fields";
+    write_source(
+        root / "context_field_test.lum",
+        "importer LumiTest\n"
+        "LumiTest.test(\"écrit un champ ad hoc\", fonction(t: Universel) {\n"
+        "  t.donnees = 1\n"
+        "})\n");
+
+    const CommandResult result = run_cli("tester " + shell_quote(root.string()), root);
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stdout_text.find("champ introuvable"), std::string::npos);
+}
+
 TEST(CliIntegration, LumiTestFilterSkipsUnmatchedBeforeAll)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_lumitest_filter_hooks";
