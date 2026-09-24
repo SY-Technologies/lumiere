@@ -39,6 +39,11 @@ struct SemanticModuleExports
         std::vector<bool> optional_parameters;
         TypeExpr return_type;
         bool has_explicit_return_type = false;
+        // When set, calls may supply any number of trailing positional
+        // arguments beyond parameter_names, each checked against
+        // variadic_type -- mirrors CallableSignature::variadic below.
+        bool variadic = false;
+        TypeExpr variadic_type;
     };
 
     std::unordered_map<std::string, SemanticTypeKind> types;

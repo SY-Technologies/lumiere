@@ -910,4 +910,32 @@ TEST(SourceInspection, ReturnsNullForUnknownIdentifiers)
               "{\"protocolVersion\":2,\"inspection\":null}");
 }
 
+TEST(AnalysisDiagnostics, AcceptsCheminJoindreWithMoreThanOneSegment)
+{
+    // Chemin.joindre's native implementation loops over an arbitrary number
+    // of Texte segments (see chemin.cpp), but its declared signature used to
+    // list only one positional parameter, so the analyzer rejected any call
+    // beyond a single segment even though the runtime happily supported it.
+    const AnalysisResult result = analyze_source(
+        "importer Chemin.{joindre}\n"
+        "fonction principal() {\n"
+        "  afficher(joindre(\"un\", \"deux\", \"trois\"))\n"
+        "}\n",
+        "main.lum");
+
+    EXPECT_FALSE(result.has_errors());
+}
+
+TEST(AnalysisDiagnostics, RejectsCheminJoindreVariadicSegmentOfWrongType)
+{
+    const AnalysisResult result = analyze_source(
+        "importer Chemin.{joindre}\n"
+        "fonction principal() {\n"
+        "  afficher(joindre(\"un\", 2))\n"
+        "}\n",
+        "main.lum");
+
+    EXPECT_TRUE(result.has_errors());
+}
+
 } // namespace

@@ -1992,6 +1992,39 @@ TEST(InterpreterBuiltinModules, RejectsInvalidCheminArguments)
     EXPECT_NE(error.find("Chemin.joindre"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, RejectsAnEmptyCheminJoindreSegmentInsteadOfLeavingAStrayTrailingSeparator)
+{
+    // A trailing empty segment used to be silently accepted: joindre("a",
+    // "b", "") returned "a/b/" (a stray trailing separator, via
+    // std::filesystem::path::operator/= appending "" as a real component)
+    // instead of being rejected or ignored.
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Chemin.{joindre}\n"
+        "fonction principal() {\n"
+        "  afficher(joindre(\"a\", \"b\", \"\"))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Chemin.joindre n'accepte pas de segment vide"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, ExposesCheminSeparateurAsForwardSlashRegardlessOfPlatform)
+{
+    // Chemin's other outputs are all normalized to forward-slash form (see
+    // path_to_text in chemin.cpp); separateur used to expose the
+    // platform-native separator instead, which is "\" on Windows and
+    // contradicts every other value this module produces.
+    const auto [output, completed] = execute_program(
+        "importer Chemin.{separateur}\n"
+        "fonction principal() {\n"
+        "  afficher(separateur)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "/\n");
+}
+
 TEST(InterpreterBuiltinModules, RejectsANegativeBaseToANonIntegerPower)
 {
     const auto [output, completed, error] = execute_program_with_error(

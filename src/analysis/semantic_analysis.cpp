@@ -392,6 +392,12 @@ private:
         }
         signature.return_type =
             resolve_imported_type(exported.return_type, module_name, exports);
+        signature.variadic = exported.variadic;
+        if (exported.variadic)
+        {
+            signature.variadic_type =
+                resolve_imported_type(exported.variadic_type, module_name, exports);
+        }
         if (module_level)
         {
             m_analysis.model.m_named_signatures.emplace(binding, std::move(signature));
