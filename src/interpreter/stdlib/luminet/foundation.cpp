@@ -3,13 +3,30 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace lumiere
 {
+
+namespace
+{
+    struct AddrInfoRequest
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+        bool abandoned = false;
+        int gai_error = 0;
+        addrinfo *result = nullptr;
+    };
+}
 
 Ref<LumiereObject> make_hidden_typed_object(const std::string &type_name)
 {
@@ -57,6 +74,51 @@ std::string socket_error_text(const std::string &context)
 void close_socket_fd(SocketHandle &fd)
 {
     close_socket_handle(fd);
+}
+
+int getaddrinfo_with_timeout(const char *host, const char *service, const addrinfo *hints, addrinfo **result, int64_t timeout_ms)
+{
+    auto request = std::make_shared<AddrInfoRequest>();
+    const std::string host_copy = host != nullptr ? host : std::string();
+    const bool has_host = host != nullptr;
+    const std::string service_copy = service != nullptr ? service : std::string();
+    const bool has_service = service != nullptr;
+    const addrinfo hints_copy = hints != nullptr ? *hints : addrinfo{};
+    const bool has_hints = hints != nullptr;
+
+    std::thread([request, host_copy, has_host, service_copy, has_service, hints_copy, has_hints]() {
+        addrinfo *resolved = nullptr;
+        const int rc = ::getaddrinfo(has_host ? host_copy.c_str() : nullptr,
+                                     has_service ? service_copy.c_str() : nullptr,
+                                     has_hints ? &hints_copy : nullptr,
+                                     &resolved);
+        std::unique_lock<std::mutex> lock(request->mutex);
+        if (request->abandoned)
+        {
+            lock.unlock();
+            if (resolved != nullptr)
+            {
+                ::freeaddrinfo(resolved);
+            }
+            return;
+        }
+        request->gai_error = rc;
+        request->result = resolved;
+        request->done = true;
+        lock.unlock();
+        request->cv.notify_one();
+    }).detach();
+
+    std::unique_lock<std::mutex> lock(request->mutex);
+    const bool completed = request->cv.wait_for(
+        lock, std::chrono::milliseconds(timeout_ms), [&]() { return request->done; });
+    if (!completed)
+    {
+        request->abandoned = true;
+        return EAI_AGAIN;
+    }
+    *result = request->result;
+    return request->gai_error;
 }
 
 SocketSize socket_send_bytes(SocketHandle fd, const void *data, std::size_t size, int flags)

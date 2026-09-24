@@ -85,7 +85,7 @@ Value make_luminet_adresse_module(const NativeFunctionFactory &make_native_funct
             hints.ai_family = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
             addrinfo *result = nullptr;
-            const int rc = ::getaddrinfo(host_name, nullptr, &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host_name, nullptr, &hints, &result);
             if (rc != 0)
             {
                 return make_address_value("127.0.0.1", 0, make_native_function);
@@ -126,7 +126,7 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
             addrinfo hints{};
             hints.ai_family = AF_UNSPEC;
             addrinfo *result = nullptr;
-            const int rc = ::getaddrinfo(host.c_str(), nullptr, &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), nullptr, &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.DNS.résoudre", gai_strerror(rc));
@@ -160,7 +160,7 @@ Value make_luminet_dns_module(const NativeFunctionFactory &make_native_function)
             addrinfo hints{};
             hints.ai_family = AF_UNSPEC;
             addrinfo *result = nullptr;
-            const int rc = ::getaddrinfo(host.c_str(), nullptr, &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), nullptr, &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.DNS.résoudre_tous", gai_strerror(rc));

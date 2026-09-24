@@ -228,7 +228,7 @@ Value make_tcp_server_value(const Ref<TcpServerState> &state_ref,
 
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(port);
-            const int rc = ::getaddrinfo(host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "ServeurTCP.écouter", gai_strerror(rc));

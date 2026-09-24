@@ -69,7 +69,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
         hints.ai_socktype = SOCK_STREAM;
         addrinfo *result = nullptr;
         const std::string port_text = std::to_string(parsed.port);
-        const int rc = ::getaddrinfo(parsed.host.c_str(), port_text.c_str(), &hints, &result);
+        const int rc = getaddrinfo_with_timeout(parsed.host.c_str(), port_text.c_str(), &hints, &result);
         if (rc != 0)
         {
             raise_network_error(runtime, native_args.site, signature, gai_strerror(rc));
@@ -219,7 +219,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
             hints.ai_socktype = SOCK_STREAM;
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(parsed.port);
-            const int rc = ::getaddrinfo(parsed.host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(parsed.host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.Canal.connecter", gai_strerror(rc));
