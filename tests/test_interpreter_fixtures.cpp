@@ -1991,6 +1991,21 @@ TEST(InterpreterBuiltinModules, RejectsInvalidCheminArguments)
     EXPECT_NE(error.find("Chemin.joindre"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, RejectsANegativeBaseToANonIntegerPower)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  afficher(Maths.puissance(-1.0, 0.5))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find(
+                  "Maths.puissance ne peut pas élever une valeur négative à une puissance non entière"),
+              std::string::npos);
+}
+
 TEST(InterpreterBuiltinModules, RejectsAnActualDotDotPathSegment)
 {
     const auto [output, completed, error] = execute_program_with_error(
