@@ -3788,6 +3788,136 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
     EXPECT_EQ(output, "bonjour\n");
 }
 
+TEST(InterpreterBuiltinModules, RejectsAnOversizedFragmentedWebSocketMessage)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
+    std::promise<int> port_promise;
+    std::future<int> port_future = port_promise.get_future();
+    auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
+        {
+            return "socket";
+        }
+
+        test_set_reuseaddr(server_fd);
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(0);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+        {
+            test_close_socket(server_fd);
+            return "bind";
+        }
+
+        sockaddr_in bound{};
+        socklen_t bound_len = sizeof(bound);
+        ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
+        if (::listen(server_fd, 1) != 0)
+        {
+            test_close_socket(server_fd);
+            return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
+        }
+
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
+        {
+            test_close_socket(server_fd);
+            return "accept";
+        }
+
+        std::string request;
+        char buffer[4096];
+        while (request.find("\r\n\r\n") == std::string::npos)
+        {
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
+            if (received <= 0)
+            {
+                test_close_socket(client_fd);
+                test_close_socket(server_fd);
+                return "recv";
+            }
+            request.append(buffer, buffer + received);
+        }
+
+        const std::string ws_key_prefix = "Sec-WebSocket-Key: ";
+        const std::size_t ws_key_start = request.find(ws_key_prefix);
+        std::string ws_accept;
+        if (ws_key_start != std::string::npos)
+        {
+            const std::size_t ws_key_end = request.find("\r\n", ws_key_start);
+            const std::string ws_key = request.substr(ws_key_start + ws_key_prefix.size(),
+                                                       ws_key_end - ws_key_start - ws_key_prefix.size());
+            ws_accept = lumiere::websocket_accept_key(ws_key);
+        }
+        const std::string response =
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: " + ws_accept + "\r\n"
+            "\r\n";
+        test_send(client_fd, response.data(), response.size(), 0);
+
+        // kMaxWebSocketMessageBytes (canal_runtime.cpp) is 10 MiB. Each frame's
+        // payload is capped at 65535 bytes by the parser, so this sends one
+        // opening text fragment (fin=0) plus enough 0x0 continuation frames
+        // (fin=0) to push the reassembled total past the cap without ever
+        // sending a fin=1 frame -- exactly the "endless small continuation
+        // frames" shape the cap exists to stop.
+        const std::size_t frame_payload_size = 65535;
+        const std::string payload(frame_payload_size, 'a');
+        auto send_frame = [&](unsigned char opcode, bool fin) {
+            unsigned char header[4];
+            header[0] = static_cast<unsigned char>((fin ? 0x80 : 0x00) | opcode);
+            header[1] = 126; // extended 16-bit length follows
+            header[2] = static_cast<unsigned char>((frame_payload_size >> 8) & 0xFF);
+            header[3] = static_cast<unsigned char>(frame_payload_size & 0xFF);
+            test_send(client_fd, header, sizeof(header), 0);
+            test_send(client_fd, payload.data(), payload.size(), 0);
+        };
+
+        send_frame(0x1, false);
+        constexpr int kFramesToExceedCap = 161; // 161 * 65535 > 10 MiB
+        for (int i = 0; i < kFramesToExceedCap; ++i)
+        {
+            send_frame(0x0, false);
+        }
+
+        if (test_wait_until_readable(client_fd, std::chrono::milliseconds(500)))
+        {
+            char discard_buf[256];
+            test_recv(client_fd, discard_buf, sizeof(discard_buf), 0);
+        }
+
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
+        return "ok";
+    });
+
+    const int port = port_future.get();
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "fonction principal() {\n"
+        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
+        "  canal.attendre() ou propager\n"
+        "}\n");
+
+    EXPECT_EQ(future.get(), "ok");
+    EXPECT_FALSE(completed);
+    EXPECT_NE(error.find("trop volumineux"), std::string::npos) << error;
+}
+
 TEST(InterpreterBuiltinModules, SupportsMathsModule)
 {
     const auto [output, completed] = execute_program(
