@@ -6,6 +6,17 @@
 namespace lumiere
 {
 
+namespace
+{
+// Matches kMaxHttpBodyBytes in protocol.cpp: each individual frame is
+// already capped at 65535 bytes by recv_websocket_frame, but a fragmented
+// message (opcode 0x0 continuation frames with fin=false) had no cap on
+// its *total* reassembled size -- a peer sending an endless stream of small
+// continuation frames grew fragment_buffer without bound until the process
+// ran out of memory.
+constexpr std::size_t kMaxWebSocketMessageBytes = 10 * 1024 * 1024;
+}
+
 void run_canal_loop(IRuntime &runtime,
                     const Ref<CanalClientState> &state,
                     bool server_dispatch_mode,
@@ -85,6 +96,22 @@ void run_canal_loop(IRuntime &runtime,
             }
             fragment_opcode = frame->opcode;
             fragment_buffer.insert(fragment_buffer.end(), frame->payload.begin(), frame->payload.end());
+        }
+
+        if (fragment_buffer.size() > kMaxWebSocketMessageBytes)
+        {
+            const NetworkFailure failure("Canal.attendre a reçu un message websocket fragmenté trop volumineux");
+            if (state->on_error.is_fonction())
+            {
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", Value::texte(failure.what())}};
+                runtime.call(state->on_error, NativeArgs{nullptr, &args, site});
+            }
+            if (server_error_callback.is_fonction())
+            {
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", client_value}, RuntimeArgument{"", Value::texte(failure.what())}};
+                runtime.call(server_error_callback, NativeArgs{nullptr, &args, site});
+            }
+            throw failure;
         }
 
         if (!frame->fin)
