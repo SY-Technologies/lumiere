@@ -502,31 +502,16 @@ Value execute_texte_operation(IRuntime &runtime,
     if (operation == "en_entier")
     {
         stdlib_expect_positional(runtime, args, 0, "Texte.en_entier", call_site);
-        try
+        if (const auto value = numeric::parse_integer(text))
         {
-            std::size_t consumed = 0;
-            const long long value = std::stoll(text, &consumed);
-            if (consumed != text.size())
-            {
-                return stdlib_failure(
-                    stdlib_error_value(
-                        "Texte.ErreurConversion",
-                        "en_entier",
-                        "le texte ne représente pas un Entier valide"),
-                    call_site);
-            }
-            return stdlib_success(
-                Value::entier(static_cast<int64_t>(value)));
+            return stdlib_success(Value::entier(*value));
         }
-        catch (const std::exception &)
-        {
-            return stdlib_failure(
-                stdlib_error_value(
-                    "Texte.ErreurConversion",
-                    "en_entier",
-                    "le texte ne représente pas un Entier valide"),
-                call_site);
-        }
+        return stdlib_failure(
+            stdlib_error_value(
+                "Texte.ErreurConversion",
+                "en_entier",
+                "le texte ne représente pas un Entier valide"),
+            call_site);
     }
     if (operation == "en_decimal")
     {
