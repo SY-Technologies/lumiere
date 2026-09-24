@@ -3429,6 +3429,46 @@ TEST(CliIntegration, ReportsLumiTestFailures)
     EXPECT_NE(result.stdout_text.find("ÉCHOUÉ"), std::string::npos);
 }
 
+TEST(CliIntegration, ReportsAFailedAvantToutOnEveryTestInTheGroup)
+{
+    // A failing avant_tout used to mark the group's before-all hooks as
+    // already run before actually running them, so only the first test in
+    // the group reported the real failure; every later test silently ran
+    // with no fixture in place and passed or failed for an unrelated
+    // reason instead.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "lumiere_cli_lumitest_avant_tout_echec";
+    write_source(
+        root / "groupe_test.lum",
+        "importer LumiTest\n"
+        "LumiTest.groupe(\"Config\", fonction() {\n"
+        "  LumiTest.avant_tout(fonction() {\n"
+        "    LumiTest.vérifier_égal(1, 2)\n"
+        "  })\n"
+        "  LumiTest.test(\"premier\", fonction() {\n"
+        "    LumiTest.vérifier_égal(1, 1)\n"
+        "  })\n"
+        "  LumiTest.test(\"second\", fonction() {\n"
+        "    LumiTest.vérifier_égal(1, 1)\n"
+        "  })\n"
+        "})\n");
+
+    const CommandResult result = run_cli("tester " + shell_quote(root.string()), root);
+    std::filesystem::remove_all(root);
+
+    EXPECT_NE(result.exit_code, 0);
+    EXPECT_NE(result.stdout_text.find("Config > premier"), std::string::npos);
+    EXPECT_NE(result.stdout_text.find("Config > second"), std::string::npos);
+    // Both tests report the avant_tout failure itself, not a pass and not
+    // some unrelated error from running without the fixture.
+    const auto first_failure = result.stdout_text.find("vérifier_égal échoué");
+    ASSERT_NE(first_failure, std::string::npos);
+    const auto second_failure =
+        result.stdout_text.find("vérifier_égal échoué", first_failure + 1);
+    EXPECT_NE(second_failure, std::string::npos);
+    EXPECT_NE(result.stdout_text.find("ÉCHOUÉ — 2 échecs"), std::string::npos);
+}
+
 TEST(CliIntegration, RunsLumiTestBeforeAndAfterEachHooks)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_lumitest_hooks";
