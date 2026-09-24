@@ -175,6 +175,35 @@ inline std::optional<std::int64_t> parse_integer_literal(const std::string &text
  * range traps rather than wrapping -- and it is the same principle as printing
  * every digit: the runtime does not quietly substitute a different number.
  */
+/**
+ * @brief Parses an Entier from text, or nothing.
+ *
+ * The whole text must be consumed, and the result must fit in an Entier.
+ * parse_integer_literal above is std::stoll-based, and std::stoll skips
+ * leading whitespace and then reports it as consumed -- "  42" reads back as
+ * 42 the same as "42" -- which is exactly the bug parse_decimal below was
+ * written to avoid on the Décimal side. This uses std::from_chars for the
+ * same reasons: it never skips whitespace, it signals failure by return value
+ * rather than by throwing, and it does not depend on the active C locale.
+ */
+inline std::optional<std::int64_t> parse_integer(const std::string &text)
+{
+    std::string_view body(text);
+    // from_chars does not accept a leading '+', which callers may well pass.
+    if (!body.empty() && body.front() == '+')
+    {
+        body.remove_prefix(1);
+    }
+
+    std::int64_t value = 0;
+    const auto [end, failure] = std::from_chars(body.data(), body.data() + body.size(), value);
+    if (failure != std::errc{} || end != body.data() + body.size())
+    {
+        return std::nullopt;
+    }
+    return value;
+}
+
 inline std::optional<double> parse_decimal(const std::string &text)
 {
     std::string_view body(text);
