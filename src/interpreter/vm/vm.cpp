@@ -1188,7 +1188,24 @@ Value VmRuntimeServices::call(Value callee, const NativeArgs &args)
     }
     if (callee.as_fonction_ptr()->is_native())
     {
-        return callee.as_fonction_ptr()->native_handler(*this, args);
+        // A native handler runs arbitrary C++ (allocating a buffer sized by
+        // caller-controlled input, for instance) with no bound this call site
+        // can see. Left uncaught, std::bad_alloc/std::length_error would
+        // unwind straight past every Lumiere-level error handling construct
+        // as a raw C++ exception and terminate the process instead of
+        // producing a normal, reportable runtime error.
+        try
+        {
+            return callee.as_fonction_ptr()->native_handler(*this, args);
+        }
+        catch (const std::bad_alloc &)
+        {
+            throw VmRuntimeError(messages::memoire_insuffisante(), args.site);
+        }
+        catch (const std::length_error &)
+        {
+            throw VmRuntimeError(messages::taille_hors_limites(), args.site);
+        }
     }
     if (!m_callback_executor)
     {

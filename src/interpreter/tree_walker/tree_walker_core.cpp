@@ -291,7 +291,22 @@ namespace lumiere
 
         if (function->is_native())
         {
-            return function->native_handler(*this, args);
+            // See the matching comment in VmRuntimeServices::call: an
+            // uncaught std::bad_alloc/std::length_error from a native handler
+            // would otherwise unwind past every Lumiere-level error handling
+            // construct as a raw C++ exception and terminate the process.
+            try
+            {
+                return function->native_handler(*this, args);
+            }
+            catch (const std::bad_alloc &)
+            {
+                raise_runtime_error(args.site, messages::memoire_insuffisante());
+            }
+            catch (const std::length_error &)
+            {
+                raise_runtime_error(args.site, messages::taille_hors_limites());
+            }
         }
 
         if (args.arguments == nullptr)

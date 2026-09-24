@@ -5099,6 +5099,23 @@ TEST(InterpreterFunctions, EnforcesFixedListFactoryElementType)
     EXPECT_NE(error.find("Entier"), std::string::npos);
 }
 
+TEST(InterpreterFunctions, RejectsAnUnrepresentableFixedListSizeInsteadOfLeakingACppException)
+{
+    // INT64_MAX elements can never fit in a std::vector<Value> on any real
+    // machine: std::vector::assign throws std::length_error the moment the
+    // request exceeds max_size(), before attempting any allocation, which
+    // makes this deterministic and safe regardless of how much memory the
+    // machine actually has.
+    const auto [output, completed, error] = execute_program_with_error(
+        "fonction principal() {\n"
+        "  soit zeros = ListeFixe.remplir(Entier, 9223372036854775807, 0)\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("la taille demandée dépasse ce que cette opération peut représenter"), std::string::npos) << error;
+}
+
 TEST(InterpreterFunctions, ConvertsFixedListBackToDynamicListWithTypeMetadata)
 {
     const auto [output, completed, error] = execute_program_with_error(

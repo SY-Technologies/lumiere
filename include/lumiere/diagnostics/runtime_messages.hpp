@@ -18,6 +18,16 @@ namespace lumiere::messages
  * member on a list named the member in one and blamed the receiver in the other.
  */
 
+inline std::string memoire_insuffisante()
+{
+    return "mémoire insuffisante pour terminer l'opération";
+}
+
+inline std::string taille_hors_limites()
+{
+    return "la taille demandée dépasse ce que cette opération peut représenter";
+}
+
 inline std::string division_par_zero()
 {
     return "division par zéro";
