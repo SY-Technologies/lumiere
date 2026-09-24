@@ -204,6 +204,18 @@ void register_maths_module(Module &module)
             stdlib_expect_positional(runtime, args, 2, "Maths.puissance", call_site);
             const double base = stdlib_expect_decimal(runtime, args[0].value, "Maths.puissance", call_site);
             const double exponent = stdlib_expect_decimal(runtime, args[1].value, "Maths.puissance", call_site);
+            // A negative base raised to a non-integer real exponent has no
+            // real result (it is complex), unlike every other case here,
+            // which either has one or names infini/non_nombre honestly the
+            // way IEEE already does. Every domain-sensitive function in this
+            // file (racine, racine_n, log*, asin, acos) raises rather than
+            // hands back a silent non_nombre for the one input shape that
+            // is genuinely undefined; puissance did not.
+            if (base < 0.0 && std::isfinite(exponent) && std::trunc(exponent) != exponent)
+            {
+                runtime.raise_runtime_error(call_site,
+                    "Maths.puissance ne peut pas élever une valeur négative à une puissance non entière");
+            }
             return Value::decimal(std::pow(base, exponent));
         });
 
