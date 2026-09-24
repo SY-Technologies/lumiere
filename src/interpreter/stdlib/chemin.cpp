@@ -48,9 +48,15 @@ void register_chemin_module(Module &module)
                 runtime.raise_runtime_error(call_site, "Chemin.joindre attend au moins un segment");
             }
 
+            // std::filesystem::path::operator/= replaces the whole accumulated path
+            // whenever the right-hand segment is itself absolute, so joindre("var",
+            // "lib", "/etc/passwd") would otherwise silently return "/etc/passwd",
+            // dropping "var/lib" without any error. Only the first segment may set
+            // the path's root; every later one must be relative to it.
             std::filesystem::path path;
-            for (const auto &arg : args)
+            for (std::size_t i = 0; i < args.size(); ++i)
             {
+                const auto &arg = args[i];
                 if (!arg.name.empty())
                 {
                     runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas d'arguments nommés");
@@ -59,7 +65,15 @@ void register_chemin_module(Module &module)
                 {
                     runtime.raise_runtime_error(call_site, "Chemin.joindre attend des segments de type Texte");
                 }
-                path /= arg.value.as_texte();
+                const std::filesystem::path segment = arg.value.as_texte();
+                if (i > 0 && is_lumiere_absolute(segment))
+                {
+                    runtime.raise_runtime_error(
+                        call_site,
+                        "Chemin.joindre n'accepte un segment absolu qu'en première position : "
+                        "un segment absolu plus loin effacerait silencieusement ce qui précède");
+                }
+                path /= segment;
             }
 
             return Value::texte(path_to_text(path.lexically_normal()));
