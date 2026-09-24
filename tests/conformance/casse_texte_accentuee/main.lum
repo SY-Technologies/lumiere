@@ -1,0 +1,24 @@
+// `minuscules`/`majuscules` ne parcouraient le texte qu'un octet UTF-8 à la
+// fois : les lettres accentuées (>= 0x80) traversaient std::tolower/toupper
+// sans jamais changer de casse, dans le seul langage dont les diagnostics
+// sont en français. La correction décode chaque caractère et ne convertit
+// que les scripts que la table Unicode couvre (ASCII, Latin-1 Supplement,
+// Latin Extended-A).
+fonction principal() {
+    afficher("ÉCOLE".minuscules())
+    afficher("café".majuscules())
+    afficher("Ça, c'est du français : où, être, œuvre, à Noël".majuscules())
+    afficher("ÇA, C'EST DU FRANÇAIS : OÙ, ÊTRE, ŒUVRE, À NOËL".minuscules())
+
+    // Une lettre déjà dans la bonne casse ne change pas.
+    afficher("école".minuscules())
+    afficher("ÉCOLE".majuscules())
+
+    // Sans mise en correspondance connue (ß n'a pas d'équivalent majuscule
+    // à un seul caractère), la lettre traverse inchangée plutôt que de
+    // changer la longueur du texte.
+    afficher("straße".majuscules())
+
+    // Les chiffres et la ponctuation ne sont pas des lettres.
+    afficher("Île-de-France 2026 !".minuscules())
+}
