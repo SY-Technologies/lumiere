@@ -229,6 +229,19 @@ namespace lumiere
                              const RuntimeSite &site,
                              const std::string &context,
                              const std::string &message);
+    // Same contract as ::getaddrinfo, but bounded: the resolver has no portable
+    // way to cancel an in-flight lookup, so a query that outlives the deadline
+    // keeps running on an abandoned background thread (which frees its own
+    // result once it eventually finishes, never touching *result) while this
+    // returns EAI_AGAIN to the caller immediately. timeout_ms defaults to
+    // kDefaultDnsResolutionTimeoutMs; tests pass a short one directly to
+    // exercise the abandon path deterministically.
+    constexpr int64_t kDefaultDnsResolutionTimeoutMs = 10000;
+    int getaddrinfo_with_timeout(const char *host,
+                                 const char *service,
+                                 const addrinfo *hints,
+                                 addrinfo **result,
+                                 int64_t timeout_ms = kDefaultDnsResolutionTimeoutMs);
     std::string to_lower_ascii(std::string text);
     std::string trim_ascii_copy(std::string text);
     uint32_t sha1_left_rotate(uint32_t value, int count);

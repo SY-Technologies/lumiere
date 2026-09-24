@@ -2954,6 +2954,52 @@ TEST(InterpreterBuiltinModules, RespectsConnectTimeoutInsteadOfHangingUntilTheOs
     EXPECT_NE(error.find("LumiNet.TCP.connecter"), std::string::npos) << error;
 }
 
+TEST(InterpreterBuiltinModules, BoundsDnsResolutionInsteadOfBlockingForever)
+{
+    SKIP_IF_LUMINET_DISABLED();
+
+    // A 0ms deadline can never be met: even the fastest possible run still has
+    // to spin up the background thread and reach the wait, so this reliably
+    // exercises the abandon-and-return-EAI_AGAIN path rather than the
+    // happens-to-finish-in-time path, deterministically and without depending
+    // on any real DNS slowness. Looped, under ASan, to also prove the
+    // abandoned lookup's own result never leaks once it finishes late.
+    bool observed_timeout = false;
+    for (int i = 0; i < 20; ++i)
+    {
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        addrinfo *result = nullptr;
+
+        const auto started = std::chrono::steady_clock::now();
+        const int rc = lumiere::getaddrinfo_with_timeout("localhost", nullptr, &hints, &result, 0);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+
+        EXPECT_LT(elapsed, std::chrono::seconds(2))
+            << "a 0ms deadline must not block on the resolver's own timing";
+
+        if (rc == EAI_AGAIN)
+        {
+            observed_timeout = true;
+        }
+        else
+        {
+            ASSERT_EQ(rc, 0);
+            ASSERT_NE(result, nullptr);
+            ::freeaddrinfo(result);
+        }
+    }
+    EXPECT_TRUE(observed_timeout) << "expected at least one 0ms lookup to be abandoned";
+
+    // The normal, generously-timed path still resolves correctly.
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    addrinfo *result = nullptr;
+    ASSERT_EQ(lumiere::getaddrinfo_with_timeout("localhost", nullptr, &hints, &result), 0);
+    ASSERT_NE(result, nullptr);
+    ::freeaddrinfo(result);
+}
+
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
 {
     SKIP_IF_LUMINET_DISABLED();
