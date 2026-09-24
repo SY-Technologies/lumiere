@@ -620,7 +620,25 @@ void TreeWalker::visit(CallExpr &expr)
                 "ListeFixe.remplir");
 
             auto data = make_ref<ListeFixeData>();
-            data->elements.assign(static_cast<std::size_t>(length), fill_value);
+            // A user-supplied length flows straight into this allocation
+            // with nothing upstream capping it; unlike a native function
+            // call (see call_function below), this special form is handled
+            // inline and reaches this line directly from the expression
+            // evaluator, so it needs its own guard against the same
+            // std::bad_alloc/std::length_error escaping as a raw C++
+            // exception instead of a normal Lumiere runtime error.
+            try
+            {
+                data->elements.assign(static_cast<std::size_t>(length), fill_value);
+            }
+            catch (const std::bad_alloc &)
+            {
+                throw_runtime_error(expr.args[1].site, messages::memoire_insuffisante());
+            }
+            catch (const std::length_error &)
+            {
+                throw_runtime_error(expr.args[1].site, messages::taille_hors_limites());
+            }
             m_result = Value::liste_fixe(std::move(data));
             register_value_annotation(
                 m_result,
@@ -858,11 +876,26 @@ Value TreeWalker::call_function(const Ref<LumiereFunction> &function,
     if (function->is_native())
     {
         const std::vector<RuntimeArgument> runtime_args = evaluate_runtime_arguments(args);
-        m_result = function->native_handler(
-            *this,
-            NativeArgs{function->is_method() ? &function->receiver : nullptr,
-                       &runtime_args,
-                       RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)}});
+        // See the matching comment in VmRuntimeServices::call: an uncaught
+        // std::bad_alloc/std::length_error from a native handler would
+        // otherwise unwind past every Lumiere-level error handling construct
+        // as a raw C++ exception and terminate the process.
+        try
+        {
+            m_result = function->native_handler(
+                *this,
+                NativeArgs{function->is_method() ? &function->receiver : nullptr,
+                           &runtime_args,
+                           RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)}});
+        }
+        catch (const std::bad_alloc &)
+        {
+            throw_runtime_error(call_site, messages::memoire_insuffisante());
+        }
+        catch (const std::length_error &)
+        {
+            throw_runtime_error(call_site, messages::taille_hors_limites());
+        }
         return m_result;
     }
 
