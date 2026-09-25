@@ -1167,6 +1167,14 @@ private:
                 else
                 {
                     m_alias_order.push_back(alias->name.lexeme);
+                    // Type is unknown until resolve_alias resolves the target
+                    // (possibly through other aliases); set_type fills it in
+                    // then, mirroring set_local_type's later-known-type sync.
+                    const SourceSpan span = span_of(alias->name, m_index_source);
+                    const SymbolId id = m_analysis.model.index.declare(
+                        SymbolNamespace::Type, SemanticSymbolKind::TYPE_ALIAS, alias->name.lexeme,
+                        span, span, kModuleScopeId, /*type=*/nullptr, alias->documentation, alias);
+                    m_alias_symbols.emplace(alias->name.lexeme, id);
                 }
             }
         }
@@ -1206,6 +1214,10 @@ private:
         m_alias_stack.pop_back();
         m_resolved_aliases.emplace(name, resolved);
         m_analysis.model.m_type_symbols.emplace(name, resolved);
+        if (const auto symbol = m_alias_symbols.find(name); symbol != m_alias_symbols.end())
+        {
+            m_analysis.model.index.set_type(symbol->second, resolved);
+        }
         return resolved;
     }
 
@@ -1308,26 +1320,32 @@ private:
         }
         if (syntax.kind == TypeExprKind::NAMED)
         {
-            if (SemanticTypeRef alias = resolve_alias(syntax.name, syntax.source))
+            SemanticTypeRef resolved_type = resolve_alias(syntax.name, syntax.source);
+            if (resolved_type == nullptr)
             {
-                return alias;
+                if (const SemanticTypeRef *type = find_type(syntax.name))
+                {
+                    resolved_type = *type;
+                }
             }
-            if (const SemanticTypeRef *type = find_type(syntax.name))
+            if (resolved_type != nullptr)
             {
                 // A type annotation (`soit p: Point`) never goes through
                 // resolve_expression/diagnose_value_read, so it's the one
                 // reference kind record_value_occurrence never sees. Hook
                 // it here instead, at the one place that already resolves
-                // a NAMED type's name to a declaration (or, for a builtin
-                // like Entier, to nothing indexed -- record_occurrence is
-                // simply skipped then, same as any other unindexed name).
+                // a NAMED type's name to a declaration -- an alias or a
+                // class/interface alike, both indexed in SymbolNamespace::
+                // Type -- or, for a builtin like Entier, to nothing indexed
+                // (record_occurrence is simply skipped then, same as any
+                // other unindexed name).
                 if (const Symbol *resolved = m_analysis.model.index.lookup(
                         kModuleScopeId, syntax.name, SymbolNamespace::Type))
                 {
                     m_analysis.model.index.record_occurrence(
                         span_of(syntax.source, m_index_source), resolved->id, /*is_write=*/false);
                 }
-                return *type;
+                return resolved_type;
             }
             diagnose(syntax.source, "LUM-S0003", "type inconnu: '" + syntax.name + "'");
             return m_analysis.model.types.bottom();
@@ -4322,6 +4340,10 @@ private:
     std::unordered_map<std::string, const TypeAliasDeclStmt *> m_aliases;
     std::vector<std::string> m_alias_order;
     std::unordered_map<std::string, SemanticTypeRef> m_resolved_aliases;
+    /** The Type-namespace Symbol declared for each alias at collection
+     *  time, so resolve_alias can fill in its type once resolved (see
+     *  SemanticSymbolKind::TYPE_ALIAS). */
+    std::unordered_map<std::string, SymbolId> m_alias_symbols;
     std::vector<std::string> m_alias_stack;
     std::unordered_set<std::string> m_private_type_names;
     std::unordered_set<std::string> m_error_types;
