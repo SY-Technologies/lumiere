@@ -1,0 +1,30 @@
+importer Temps
+
+fonction executer() -> Résultat[Rien, Temps.ErreurTemps] {
+    soit instant = Temps.analyser_iso8601("2024-12-25T09:30:00Z") ou propager
+    afficher("instant: " + Temps.formater_iso8601(instant))
+
+    soit paris = Temps.fuseau("Europe/Paris") ou propager
+    soit heure_paris = Temps.dans_fuseau(instant, paris)
+    afficher("Noël à Paris: " + heure_paris.jour() + "/" + heure_paris.mois() + "/" + heure_paris.année() +
+             " " + heure_paris.heure() + ":" + heure_paris.minute())
+    afficher("décalage Paris: " + heure_paris.décalage_utc_secondes() + "s")
+
+    soit tokyo = Temps.fuseau("Asia/Tokyo") ou propager
+    soit heure_tokyo = Temps.dans_fuseau(instant, tokyo)
+    afficher("Noël à Tokyo: " + heure_tokyo.jour() + "/" + heure_tokyo.mois() + "/" + heure_tokyo.année() +
+             " " + heure_tokyo.heure() + ":" + heure_tokyo.minute())
+
+    soit repère = Temps.repère()
+    soit durée = Temps.écoulé(repère)
+    afficher("mesure monotone positive: " + (durée.en_millisecondes() >= 0))
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> rien
+        Échec(e) -> afficher("échec: " + e.cause)
+    }
+}

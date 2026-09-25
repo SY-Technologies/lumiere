@@ -534,6 +534,15 @@ native_module_exports(const std::string_view module_name)
             "ErreurTemps",
             SemanticSymbolKind::CLASS);
         exports.error_types.insert("ErreurTemps");
+        exports.types.emplace(
+            "Fuseau",
+            SemanticTypeKind::CLASS);
+        exports.types.emplace(
+            "DateHeure",
+            SemanticTypeKind::CLASS);
+        exports.types.emplace(
+            "RepèreMonotone",
+            SemanticTypeKind::CLASS);
         export_callable(
             exports,
             "analyser",
@@ -583,6 +592,60 @@ native_module_exports(const std::string_view module_name)
                 name,
                 callable({parameter("nombre", "Entier")}, named("Durée")));
         }
+        export_callable(
+            exports,
+            "analyser_iso8601",
+            callable(
+                {parameter("texte", "Texte")},
+                generic(
+                    "Résultat",
+                    {
+                        named("Instant"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "formater_iso8601",
+            callable({parameter("instant", "Instant")}, named("Texte")));
+        export_callable(
+            exports,
+            "fuseau",
+            callable(
+                {parameter("nom", "Texte")},
+                generic(
+                    "Résultat",
+                    {
+                        named("Fuseau"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "fuseau_local",
+            callable(
+                {},
+                generic(
+                    "Résultat",
+                    {
+                        named("Fuseau"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "dans_fuseau",
+            callable(
+                {
+                    parameter("instant", "Instant"),
+                    parameter("fuseau", "Fuseau"),
+                },
+                named("DateHeure")));
+        export_callable(
+            exports,
+            "repère",
+            callable({}, named("RepèreMonotone")));
+        export_callable(
+            exports,
+            "écoulé",
+            callable({parameter("depuis", "RepèreMonotone")}, named("Durée")));
         return exports;
     }
 

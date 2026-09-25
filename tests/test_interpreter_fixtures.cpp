@@ -4931,6 +4931,162 @@ TEST(InterpreterBuiltinModules, RegexRaisesRuntimeErrorsForOutOfRangeGroupAccess
     }
 }
 
+TEST(InterpreterBuiltinModules, TempsSupportsIso8601ParsingAndFormattingRoundTrip)
+{
+    // Mirrors what was manually verified against both engines on the CLI:
+    // Z and numeric-offset inputs that name the same instant parse to the
+    // same Instant, sub-second fractions truncate to milliseconds, and
+    // formater_iso8601's output is always UTC/Z and round-trips exactly.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction executer() -> Résultat[Rien, Temps.ErreurTemps] {\n"
+        "  soit i1 = Temps.analyser_iso8601(\"2024-07-01T12:00:00Z\") ou propager\n"
+        "  afficher(\"formater: \" + Temps.formater_iso8601(i1))\n"
+        "  soit i2 = Temps.analyser_iso8601(\"2024-07-01T14:00:00+02:00\") ou propager\n"
+        "  afficher(\"memes horodatages: \" + (i1.en_horodatage() == i2.en_horodatage()))\n"
+        "  soit i3 = Temps.analyser_iso8601(\"2024-07-01T14:30:00.250+0200\") ou propager\n"
+        "  afficher(\"fraction: \" + Temps.formater_iso8601(i3))\n"
+        "  soit roundtrip = Temps.analyser_iso8601(Temps.formater_iso8601(i3)) ou propager\n"
+        "  afficher(\"aller-retour: \" + (roundtrip.en_horodatage() == i3.en_horodatage()))\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "formater: 2024-07-01T12:00:00.000Z\n"
+        "memes horodatages: vrai\n"
+        "fraction: 2024-07-01T12:30:00.250Z\n"
+        "aller-retour: vrai\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsSupportsNamedTimezoneConversionAcrossDstBoundaries)
+{
+    // Mirrors what was manually verified against both engines on the CLI,
+    // and independently against Python's zoneinfo reading the same host
+    // tzdata: dans_fuseau derives correct calendar fields and UTC offsets in
+    // both a Northern-hemisphere zone (Europe/Paris, CEST in July, CET in
+    // January) and a Southern-hemisphere one (Australia/Sydney, whose DST
+    // months are inverted relative to Paris's).
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction executer() -> Résultat[Rien, Temps.ErreurTemps] {\n"
+        "  soit paris = Temps.fuseau(\"Europe/Paris\") ou propager\n"
+        "  afficher(\"nom: \" + paris.nom())\n"
+        "\n"
+        "  soit été = Temps.analyser_iso8601(\"2024-07-01T12:00:00Z\") ou propager\n"
+        "  soit dh_été = Temps.dans_fuseau(été, paris)\n"
+        "  afficher(\"été: \" + dh_été.année() + \"-\" + dh_été.mois() + \"-\" + dh_été.jour() + \" \" + dh_été.heure() + \":\" + dh_été.minute() + \":\" + dh_été.seconde())\n"
+        "  afficher(\"été décalage: \" + dh_été.décalage_utc_secondes())\n"
+        "  afficher(\"dh.fuseau().nom(): \" + dh_été.fuseau().nom())\n"
+        "  afficher(\"dh.instant(): \" + (dh_été.instant().en_horodatage() == été.en_horodatage()))\n"
+        "\n"
+        "  soit hiver = Temps.analyser_iso8601(\"2024-01-15T12:00:00Z\") ou propager\n"
+        "  soit dh_hiver = Temps.dans_fuseau(hiver, paris)\n"
+        "  afficher(\"hiver décalage: \" + dh_hiver.décalage_utc_secondes())\n"
+        "\n"
+        "  soit sydney = Temps.fuseau(\"Australia/Sydney\") ou propager\n"
+        "  soit sydney_été = Temps.analyser_iso8601(\"2024-01-15T00:00:00Z\") ou propager\n"
+        "  soit dh_sydney_été = Temps.dans_fuseau(sydney_été, sydney)\n"
+        "  afficher(\"sydney janvier décalage: \" + dh_sydney_été.décalage_utc_secondes())\n"
+        "  soit sydney_hiver = Temps.analyser_iso8601(\"2024-07-01T00:00:00Z\") ou propager\n"
+        "  soit dh_sydney_hiver = Temps.dans_fuseau(sydney_hiver, sydney)\n"
+        "  afficher(\"sydney juillet décalage: \" + dh_sydney_hiver.décalage_utc_secondes())\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "nom: Europe/Paris\n"
+        "été: 2024-7-1 14:0:0\n"
+        "été décalage: 7200\n"
+        "dh.fuseau().nom(): Europe/Paris\n"
+        "dh.instant(): vrai\n"
+        "hiver décalage: 3600\n"
+        "sydney janvier décalage: 39600\n"
+        "sydney juillet décalage: 36000\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsRejectsUnknownAndUnsafeTimezoneNamesAndAmbiguousIso8601)
+{
+    // Temps.fuseau must reject both a name that isn't a real IANA zone and
+    // one crafted to escape the zoneinfo directory (path traversal), and
+    // analyser_iso8601 must reject a timestamp with no Z/offset rather than
+    // silently treating it as local time -- all three explicit Échecs, not
+    // runtime errors, since a caller-supplied string is expected to fail
+    // sometimes.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  agir selon Temps.fuseau(\"Pas/UnFuseau\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur fuseau: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.fuseau(\"../../../etc/passwd\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès traversal\")\n"
+        "    Échec(e) -> afficher(\"erreur traversal: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.analyser_iso8601(\"2024-07-01T12:00:00\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès sans fuseau\")\n"
+        "    Échec(e) -> afficher(\"erreur sans fuseau: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.analyser_iso8601(\"2024-13-01T12:00:00Z\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès mois invalide\")\n"
+        "    Échec(e) -> afficher(\"erreur mois: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "erreur fuseau: fuseau horaire introuvable: Pas/UnFuseau\n"
+        "erreur traversal: nom de fuseau horaire invalide: \"../../../etc/passwd\"\n"
+        "erreur sans fuseau: fuseau UTC requis (Z ou décalage numérique)\n"
+        "erreur mois: valeurs de date/heure invalides\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsMonotonicClockMeasuresRealElapsedTimeAndNeverGoesNegative)
+{
+    // repère()/écoulé() use steady_clock, independent of Temps.horodatage's
+    // wall clock. Sleeping ~30ms between the mark and the read must show up
+    // as elapsed time bounded well below a full second (guards against a
+    // unit mixup, e.g. nanoseconds mistaken for milliseconds), and écoulé
+    // must never be negative even for a repère taken this instant.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  soit r1 = Temps.repère()\n"
+        "  Temps.attendre(Temps.millisecondes(30))\n"
+        "  soit d1 = Temps.écoulé(r1)\n"
+        "  afficher(\"au moins 25ms: \" + (d1.en_millisecondes() >= 25))\n"
+        "  afficher(\"moins de 2000ms: \" + (d1.en_millisecondes() < 2000))\n"
+        "  soit r2 = Temps.repère()\n"
+        "  soit d2 = Temps.écoulé(r2)\n"
+        "  afficher(\"jamais negatif: \" + (d2.en_millisecondes() >= 0))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "au moins 25ms: vrai\n"
+        "moins de 2000ms: vrai\n"
+        "jamais negatif: vrai\n");
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
