@@ -341,3 +341,28 @@ persistent service (Stage 4) exists.
    feature (unused-Résultat diagnostics), not a naming/hover concern. This
    design leaves it entirely alone — flagging so it's clear that's a
    deliberate exclusion, not an oversight.
+
+## Addendum (after implementing step 1/2): `SymbolNamespace`
+
+The original `Symbol`/`Scope` design above stored one flat, name-keyed list
+per scope. Wiring `declare_value`/`declare_type` into it surfaced a real gap:
+a `classe Point` declaration calls *both* `declare_type` (registering
+"Point" as a type, for annotations) *and* `declare_value` (registering
+"Point" as a value, for its constructor call `Point()`) — exactly mirroring
+`SemanticModel`'s own `m_type_symbols`/`m_value_symbols` split. A single
+flat per-scope symbol list let the value declaration shadow the type
+declaration for `lookup`, so a query for "Point" the type silently got back
+"Point" the constructor instead, with `type == nullptr`. A binding test
+(`SemanticIndexBinding.RecordsAModuleLevelTypeDeclarationMatchingFindType`)
+caught this immediately, comparing against `find_type` as the design's
+rollout step 2 intended.
+
+Fixed by adding `SymbolNamespace { Value, Type }` to `Symbol`, threaded
+through `declare()` and `lookup()`. This is additive to the types section
+above, not a revision of it: `Scope::symbols` still holds one list, `Symbol`
+just carries which of the compiler's two existing namespaces it belongs to,
+and `lookup(scope, name, space)` filters on it. `occurrence_at` needs no
+change — an occurrence's `SymbolId` already points at the one, specific
+`Symbol` (type or value) its containing analyzer call site resolved against
+`find_type`/`find_value`, so the ambiguity only existed in the *lookup*
+convenience function, not in the record itself.

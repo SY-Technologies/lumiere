@@ -2,6 +2,8 @@
 
 #include "lumiere/analysis/analysis.hpp"
 #include "lumiere/analysis/inspection.hpp"
+#include "lumiere/analysis/semantic_analysis.hpp"
+#include "lumiere/analysis/semantic_index.hpp"
 #include "lumiere/analysis/semantic_type.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 
@@ -41,6 +43,88 @@ TEST(SemanticTypes, AdoptReplacesAlreadyInternedTypes)
 
     next.adopt(previous);
     EXPECT_TRUE(lumiere::same_type(previous_integer, next.builtin("Entier")));
+}
+
+// Binding tests: SemanticModel::index (semantic_index.hpp) is populated
+// alongside the existing find_value/find_type/m_value_symbols bookkeeping
+// (declare_value/declare_type in semantic_analysis.cpp), not instead of it.
+// These pin down that the two agree, since nothing yet reads the index in
+// place of find_value/find_type -- a regression here would otherwise be
+// invisible until something starts relying on the index instead.
+
+TEST(SemanticIndexBinding, RecordsAModuleLevelValueDeclarationMatchingFindValue)
+{
+    const std::string source = "soit x = 5\nfonction f() -> Rien {}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::SemanticSymbol *x = result.model->find_value("x");
+    const lumiere::SemanticSymbol *f = result.model->find_value("f");
+    ASSERT_NE(x, nullptr);
+    ASSERT_NE(f, nullptr);
+
+    const lumiere::Symbol *indexed_x = result.model->index.lookup(lumiere::kModuleScopeId, "x", lumiere::SymbolNamespace::Value);
+    const lumiere::Symbol *indexed_f = result.model->index.lookup(lumiere::kModuleScopeId, "f", lumiere::SymbolNamespace::Value);
+    ASSERT_NE(indexed_x, nullptr);
+    ASSERT_NE(indexed_f, nullptr);
+
+    EXPECT_EQ(indexed_x->kind, x->kind);
+    EXPECT_EQ(indexed_x->name, "x");
+    EXPECT_EQ(indexed_x->declaration_span.start, source.find("x"));
+    EXPECT_EQ(indexed_x->declaration_span.end, source.find("x") + 1);
+
+    EXPECT_EQ(indexed_f->kind, f->kind);
+    EXPECT_EQ(indexed_f->name, "f");
+    EXPECT_EQ(indexed_f->declaration_span.start, source.rfind('f'));
+}
+
+TEST(SemanticIndexBinding, RecordsAModuleLevelTypeDeclarationMatchingFindType)
+{
+    const std::string source = "classe Point {}\ninterface Forme {}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::SemanticTypeRef *point_type = result.model->find_type("Point");
+    const lumiere::SemanticTypeRef *forme_type = result.model->find_type("Forme");
+    ASSERT_NE(point_type, nullptr);
+    ASSERT_NE(forme_type, nullptr);
+
+    const lumiere::Symbol *indexed_point = result.model->index.lookup(lumiere::kModuleScopeId, "Point", lumiere::SymbolNamespace::Type);
+    const lumiere::Symbol *indexed_forme = result.model->index.lookup(lumiere::kModuleScopeId, "Forme", lumiere::SymbolNamespace::Type);
+    ASSERT_NE(indexed_point, nullptr);
+    ASSERT_NE(indexed_forme, nullptr);
+
+    EXPECT_EQ(indexed_point->kind, lumiere::SemanticSymbolKind::CLASS);
+    EXPECT_TRUE(lumiere::same_type(indexed_point->type, *point_type));
+
+    EXPECT_EQ(indexed_forme->kind, lumiere::SemanticSymbolKind::INTERFACE);
+    EXPECT_TRUE(lumiere::same_type(indexed_forme->type, *forme_type));
+}
+
+TEST(SemanticIndexBinding, ADuplicateDeclarationDiagnosesAndLeavesTheFirstSymbolIndexed)
+{
+    // declare_value/declare_type only records into the index after the
+    // existing emplace succeeds -- a name declared twice must still leave
+    // exactly one Symbol behind (the first), not two, and not crash. This is
+    // the index's analogue of the parser-recovery guarantee: a rejected
+    // second declaration is simply absent, the same way m_value_symbols
+    // already only ever gains one entry for it.
+    const std::string source = "soit x = 1\nsoit x = 2\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_TRUE(has_diagnostic(result, "LUM-S0001"));
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::Scope *module_scope = result.model->index.scope(lumiere::kModuleScopeId);
+    ASSERT_NE(module_scope, nullptr);
+    const auto count = std::count_if(
+        module_scope->symbols.begin(), module_scope->symbols.end(),
+        [&](const lumiere::SymbolId id) {
+            const lumiere::Symbol *symbol = result.model->index.symbol(id);
+            return symbol != nullptr && symbol->name == "x";
+        });
+    EXPECT_EQ(count, 1);
 }
 
 TEST(AnalysisDiagnostics, ReportsLexicalErrorWithByteRange)

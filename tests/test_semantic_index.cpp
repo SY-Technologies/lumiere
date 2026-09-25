@@ -11,6 +11,7 @@ using lumiere::SemanticIndex;
 using lumiere::SemanticSymbolKind;
 using lumiere::SourceSpan;
 using lumiere::SymbolId;
+using lumiere::SymbolNamespace;
 
 TEST(SemanticIndex, StartsWithAnEmptyModuleScopeAndNoSymbols)
 {
@@ -25,7 +26,7 @@ TEST(SemanticIndex, StartsWithAnEmptyModuleScopeAndNoSymbols)
     EXPECT_EQ(index.scope(ScopeId{1}), nullptr);
     EXPECT_EQ(index.occurrence_at(lumiere::SourceId{0}, 0), nullptr);
     EXPECT_TRUE(index.occurrences_of(SymbolId{0}).empty());
-    EXPECT_EQ(index.lookup(kModuleScopeId, "inconnu"), nullptr);
+    EXPECT_EQ(index.lookup(kModuleScopeId, "inconnu", SymbolNamespace::Value), nullptr);
 }
 
 TEST(SemanticIndex, InternsEachPathOnceAndReturnsItByPath)
@@ -50,10 +51,11 @@ TEST(SemanticIndex, DeclareRecordsTheSymbolAndAppendsItToItsScope)
     const SourceSpan whole_span{main, 0, 10};
 
     const SymbolId id = index.declare(
-        SemanticSymbolKind::VARIABLE, "x", name_span, whole_span, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "x", name_span, whole_span, kModuleScopeId);
 
     const lumiere::Symbol *symbol = index.symbol(id);
     ASSERT_NE(symbol, nullptr);
+    EXPECT_EQ(symbol->space, SymbolNamespace::Value);
     EXPECT_EQ(symbol->kind, SemanticSymbolKind::VARIABLE);
     EXPECT_EQ(symbol->name, "x");
     EXPECT_EQ(symbol->declaration_span, name_span);
@@ -91,7 +93,7 @@ TEST(SemanticIndex, OccurrenceAtFindsTheOccurrenceWhoseSpanContainsTheOffset)
     const auto other = index.source("Autre.lum");
 
     const SymbolId x = index.declare(
-        SemanticSymbolKind::VARIABLE, "x", {main, 5, 6}, {main, 0, 10}, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "x", {main, 5, 6}, {main, 0, 10}, kModuleScopeId);
     index.record_occurrence({main, 20, 21}, x, /*is_write=*/false);
 
     // Inside the span.
@@ -110,9 +112,9 @@ TEST(SemanticIndex, OccurrencesOfReturnsOnlyThatSymbolsUsesInRecordingOrder)
     const auto main = index.source("main.lum");
 
     const SymbolId x = index.declare(
-        SemanticSymbolKind::VARIABLE, "x", {main, 5, 6}, {main, 0, 10}, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "x", {main, 5, 6}, {main, 0, 10}, kModuleScopeId);
     const SymbolId y = index.declare(
-        SemanticSymbolKind::VARIABLE, "y", {main, 15, 16}, {main, 10, 20}, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "y", {main, 15, 16}, {main, 10, 20}, kModuleScopeId);
 
     index.record_occurrence({main, 30, 31}, x, /*is_write=*/false);
     index.record_occurrence({main, 40, 41}, y, /*is_write=*/false);
@@ -134,32 +136,51 @@ TEST(SemanticIndex, LookupPrefersTheInnermostScopeAndFallsBackToTheParent)
     const auto main = index.source("main.lum");
 
     const SymbolId outer_x = index.declare(
-        SemanticSymbolKind::VARIABLE, "x", {main, 0, 1}, {main, 0, 1}, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "x", {main, 0, 1}, {main, 0, 1}, kModuleScopeId);
     const SymbolId only_in_module = index.declare(
-        SemanticSymbolKind::FUNCTION, "f", {main, 2, 3}, {main, 2, 3}, kModuleScopeId);
+        SymbolNamespace::Value, SemanticSymbolKind::FUNCTION, "f", {main, 2, 3}, {main, 2, 3}, kModuleScopeId);
 
     const ScopeId body = index.push_scope(kModuleScopeId, {main, 4, 20});
     const SymbolId inner_x = index.declare(
-        SemanticSymbolKind::VARIABLE, "x", {main, 6, 7}, {main, 6, 7}, body);
+        SymbolNamespace::Value, SemanticSymbolKind::VARIABLE, "x", {main, 6, 7}, {main, 6, 7}, body);
 
     // Shadowed: the inner scope's own `x` wins over the module's.
-    EXPECT_EQ(index.lookup(body, "x"), index.symbol(inner_x));
-    EXPECT_NE(index.lookup(body, "x"), index.symbol(outer_x));
+    EXPECT_EQ(index.lookup(body, "x", SymbolNamespace::Value), index.symbol(inner_x));
+    EXPECT_NE(index.lookup(body, "x", SymbolNamespace::Value), index.symbol(outer_x));
 
     // Not declared in the inner scope: falls back to the module scope.
-    EXPECT_EQ(index.lookup(body, "f"), index.symbol(only_in_module));
+    EXPECT_EQ(index.lookup(body, "f", SymbolNamespace::Value), index.symbol(only_in_module));
 
     // Declared nowhere: nullopt-like nullptr, not a crash.
-    EXPECT_EQ(index.lookup(body, "inconnu"), nullptr);
+    EXPECT_EQ(index.lookup(body, "inconnu", SymbolNamespace::Value), nullptr);
 
     // From the module scope directly, the inner `x` is invisible.
-    EXPECT_EQ(index.lookup(kModuleScopeId, "x"), index.symbol(outer_x));
+    EXPECT_EQ(index.lookup(kModuleScopeId, "x", SymbolNamespace::Value), index.symbol(outer_x));
 }
 
 TEST(SemanticIndex, LookupOnAnUnknownScopeReturnsNullRatherThanLooping)
 {
     const SemanticIndex index;
-    EXPECT_EQ(index.lookup(ScopeId{99}, "x"), nullptr);
+    EXPECT_EQ(index.lookup(ScopeId{99}, "x", SymbolNamespace::Value), nullptr);
+}
+
+TEST(SemanticIndex, LookupKeepsValueAndTypeNamespacesSeparate)
+{
+    // A class declares its name in both namespaces at once (the type used in
+    // annotations, and the value used to call its constructor) -- see
+    // SymbolNamespace's own comment. lookup() must not let the later
+    // declaration of one namespace shadow the earlier one in the other.
+    SemanticIndex index;
+    const auto main = index.source("main.lum");
+
+    const SymbolId type_symbol = index.declare(
+        SymbolNamespace::Type, SemanticSymbolKind::CLASS, "Point", {main, 0, 5}, {main, 0, 5}, kModuleScopeId);
+    const SymbolId value_symbol = index.declare(
+        SymbolNamespace::Value, SemanticSymbolKind::CLASS, "Point", {main, 0, 5}, {main, 0, 5}, kModuleScopeId);
+
+    EXPECT_NE(type_symbol, value_symbol);
+    EXPECT_EQ(index.lookup(kModuleScopeId, "Point", SymbolNamespace::Type), index.symbol(type_symbol));
+    EXPECT_EQ(index.lookup(kModuleScopeId, "Point", SymbolNamespace::Value), index.symbol(value_symbol));
 }
 
 } // namespace
