@@ -40,6 +40,7 @@ programs=(
     examples/json_demo.lum
     examples/regex_demo.lum
     examples/temps_demo.lum
+    examples/lumidessin_demo.lum
     benchmarks/integer_loop.lum
     benchmarks/typed_list.lum
     benchmarks/dictionary_lookup.lum
