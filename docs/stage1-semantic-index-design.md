@@ -131,17 +131,39 @@ has been checked against the index and confirmed to resolve the same way
 (or better) -- so the deletion itself is the next piece of work, not
 something still blocked on a correctness gap.
 
+A follow-up audit, done deliberately before attempting the deletion rather
+than after (the prior "no remaining gap" claim had already been wrong
+once), walked every case the old heuristics cover and cross-checked it
+against `declaration_at`/`record_interface_member_occurrence`. It found no
+new correctness gap, but did confirm one more of the same shape as the
+class-field one above: `collect_statement`'s `FunctionDeclStmt` branch
+always labels a declaration `"fonction"`, even recursing into a class's
+own members, so a *method's own declaration line* used to hover as
+`"fonction"` rather than `"méthode"` -- only a reference to it ever got
+the right label. `declaration_at` corrects this too, for free (`is_member_
+declaration` doesn't care whether it's called from a declaration site or a
+reference site). The audit also confirmed two things stay equivalently
+*un*-covered by both the old and new paths, so deleting the old one
+doesn't regress them: a class or interface declared locally (nested, not
+at module level) is invisible to `class_declaration`/`interface_
+declaration` (both only ever consult `find_value`, the module-level flat
+table) exactly as it was to `find_type_declaration` (restricted to
+top-level statements by its own doc comment); and a receiver whose static
+type is a union or a generic instantiation was never resolved by either
+path, since both require an exact `CLASS`/`INTERFACE` type kind match.
+
 Regression gate: all 15 pre-existing `SourceInspection` tests pass
-unchanged throughout; 21 new ones cover what the index newly resolves that
+unchanged throughout; 26 new ones cover what the index newly resolves that
 the old heuristics never did (a parameter reference or its own declaration
 site, neither ever indexed by `collect_statements`; a module-level import
 binding's own reads, previously invisible to the index entirely; a member
 accessed through an interface-typed receiver, previously never recorded)
-or resolves more precisely (an inherited field, a type annotation, and a
-type alias reference -- including through a chain of two aliases -- all
-exercised end to end through `inspect_source` rather than only at the
-`SemanticIndexBinding` layer; a loop variable's *real* element type
-instead of a hardcoded one).
+or resolves more precisely (an inherited field, a type annotation, a type
+alias reference through a chain of two aliases, and now every remaining
+declaration kind's own site -- class, interface, method, `pour`-variable,
+match pattern binding -- all exercised end to end through `inspect_source`
+rather than only at the `SemanticIndexBinding` layer; a loop variable's
+*real* element type instead of a hardcoded one).
 
 ## Where we actually start from
 
