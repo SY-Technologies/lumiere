@@ -262,14 +262,130 @@ namespace lumiere
             return error_token("caractère inattendu: '" + std::string(1, c) + "'");
         }
     }
+    // Escapes recognised by both scan_string() and scan_symbol(): \n, \t,
+    // \r, \\, \", \', \0, and \u{XXXXXX} for any Unicode scalar value.
+    // Called with the scanner positioned right after the backslash.
+    bool Tokenizer::decode_escape_sequence(std::string &out, std::string &error_message)
+    {
+        if (m_scanner.is_at_end())
+        {
+            error_message = "échappement invalide — un caractère est attendu après '\\'";
+            return false;
+        }
+        const char c = m_scanner.advance();
+        switch (c)
+        {
+        case 'n':
+            out.push_back('\n');
+            return true;
+        case 't':
+            out.push_back('\t');
+            return true;
+        case 'r':
+            out.push_back('\r');
+            return true;
+        case '\\':
+            out.push_back('\\');
+            return true;
+        case '"':
+            out.push_back('"');
+            return true;
+        case '\'':
+            out.push_back('\'');
+            return true;
+        case '0':
+            out.push_back('\0');
+            return true;
+        case 'u':
+            return decode_unicode_escape(out, error_message);
+        default:
+            error_message = std::string("échappement invalide — '\\") + c + "' n'est pas reconnu";
+            return false;
+        }
+    }
+
+    // \u{XXXXXX} -- 1 to 6 hexadecimal digits naming a Unicode scalar value,
+    // encoded into `out` as UTF-8. Called with the scanner positioned right
+    // after the 'u'.
+    bool Tokenizer::decode_unicode_escape(std::string &out, std::string &error_message)
+    {
+        if (m_scanner.is_at_end() || m_scanner.peek() != '{')
+        {
+            error_message = "échappement invalide — '\\u' attend '{' suivi de chiffres hexadécimaux";
+            return false;
+        }
+        m_scanner.advance(); // consume '{'
+
+        uint32_t code_point = 0;
+        int digit_count = 0;
+        while (!m_scanner.is_at_end() && m_scanner.peek() != '}')
+        {
+            const char digit = m_scanner.peek();
+            int value = 0;
+            if (digit >= '0' && digit <= '9')
+                value = digit - '0';
+            else if (digit >= 'a' && digit <= 'f')
+                value = 10 + (digit - 'a');
+            else if (digit >= 'A' && digit <= 'F')
+                value = 10 + (digit - 'A');
+            else
+            {
+                error_message = "échappement invalide — '\\u{...}' n'accepte que des chiffres hexadécimaux";
+                return false;
+            }
+            if (digit_count == 6)
+            {
+                error_message = "échappement invalide — '\\u{...}' ne peut pas dépasser six chiffres hexadécimaux";
+                return false;
+            }
+            code_point = (code_point << 4) | static_cast<uint32_t>(value);
+            ++digit_count;
+            m_scanner.advance();
+        }
+
+        if (digit_count == 0)
+        {
+            error_message = "échappement invalide — '\\u{}' attend au moins un chiffre hexadécimal";
+            return false;
+        }
+        if (m_scanner.is_at_end())
+        {
+            error_message = "échappement invalide — '}' attendu";
+            return false;
+        }
+        m_scanner.advance(); // consume '}'
+
+        if (code_point > 0x10FFFF || (code_point >= 0xD800 && code_point <= 0xDFFF))
+        {
+            error_message = "échappement invalide — '\\u{...}' dépasse les points de code Unicode valides";
+            return false;
+        }
+
+        out += utf8::encode_character(static_cast<char32_t>(code_point));
+        return true;
+    }
+
     Token Tokenizer::scan_string()
     {
+        std::string decoded;
         while (!m_scanner.is_at_end() && m_scanner.peek() != '"')
         {
-            if (m_scanner.peek() == '\n')
+            const char c = m_scanner.peek();
+            if (c == '\n')
             {
                 m_scanner.mark_line_end();
             }
+            if (c == '\\')
+            {
+                m_scanner.advance(); // consume backslash
+                std::string error_message;
+                if (!decode_escape_sequence(decoded, error_message))
+                {
+                    return error_token(error_message);
+                }
+                continue;
+            }
+            decoded.push_back(c);
             m_scanner.advance();
         }
 
@@ -279,7 +395,9 @@ namespace lumiere
         }
 
         m_scanner.advance(); // consume closing "
-        return make_token(TokenType::TEXTE_LIT);
+        Token token = make_token(TokenType::TEXTE_LIT);
+        token.decoded = std::move(decoded);
+        return token;
     }
     Token Tokenizer::scan_symbol()
     {
@@ -288,14 +406,26 @@ namespace lumiere
             return error_token("symbole non terminé — caractère attendu");
         }
 
-        std::string symbol_bytes;
+        std::string decoded;
         while (!m_scanner.is_at_end() && m_scanner.peek() != '\'')
         {
-            if (m_scanner.peek() == '\n')
+            const char c = m_scanner.peek();
+            if (c == '\n')
             {
                 return error_token("symbole non terminé — \"'\" attendu");
             }
-            symbol_bytes.push_back(m_scanner.advance());
+            if (c == '\\')
+            {
+                m_scanner.advance(); // consume backslash
+                std::string error_message;
+                if (!decode_escape_sequence(decoded, error_message))
+                {
+                    return error_token(error_message);
+                }
+                continue;
+            }
+            decoded.push_back(c);
+            m_scanner.advance();
         }
 
         if (m_scanner.is_at_end() || m_scanner.peek() != '\'')
@@ -303,13 +433,15 @@ namespace lumiere
             return error_token("symbole non terminé — \"'\" attendu");
         }
 
-        if (!utf8::decode_single_character(symbol_bytes).has_value())
+        if (!utf8::decode_single_character(decoded).has_value())
         {
             return error_token("symbole invalide — un seul caractère Unicode est attendu");
         }
 
         m_scanner.advance(); // consume closing '
-        return make_token(TokenType::SYMBOLE_LIT);
+        Token token = make_token(TokenType::SYMBOLE_LIT);
+        token.decoded = std::move(decoded);
+        return token;
     }
     Token Tokenizer::scan_number()
     {

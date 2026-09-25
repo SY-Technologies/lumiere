@@ -89,7 +89,7 @@ A decimal conversion from text rejects anything that is not finite: `"nan"`,
 `"inf"` and their variants fail rather than producing a value that no arithmetic
 in the language can produce.
 
-Escape sequences are supported in text and symbol literals.
+Escape sequences are supported in text and symbol literals: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`, and `\u{XXXXXX}` (1 to 6 hexadecimal digits, any Unicode scalar value). Any other character after a backslash is a lexical error; a literal backslash that must reach a value unchanged (a Windows path, a regex pattern) is written `\\`.
 
 ## 5. Types
 

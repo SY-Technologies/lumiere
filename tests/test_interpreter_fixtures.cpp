@@ -2886,7 +2886,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 
     EXPECT_TRUE(client_completed) << client_error;
     EXPECT_EQ(client_output, "vrai\n");
-    EXPECT_EQ(server_line, "bonjour\\n");
+    EXPECT_EQ(server_line, "bonjour");
 }
 
 TEST(InterpreterBuiltinModules, RejectsAnOversizedLireOctetsRequest)
@@ -4637,7 +4637,7 @@ TEST(InterpreterBuiltinModules, JsonAnalyserDecodesUnicodeEscapesAndRejectsRawCo
         "importer JSON\n"
         "fonction principal() {\n"
         "  soit q = '\"'\n"
-        "  soit texte = \"\" + q + \"A\\u00e9\\ud83d\\ude00\" + q\n"
+        "  soit texte = \"\" + q + \"A\\\\u00e9\\\\ud83d\\\\ude00\" + q\n"
         "  agir selon JSON.analyser(texte) {\n"
         "    Succès(v) -> afficher(v)\n"
         "    Échec(e) -> afficher(\"erreur: \" + e.cause)\n"
@@ -4755,7 +4755,7 @@ TEST(InterpreterBuiltinModules, RegexSupportsAnchorsClassesBoundedRepetitionAlte
         "  afficher(\"alt3: \" + Regex.correspond(m5, \"chat\"))\n"
         "  afficher(\"alt4: \" + Regex.correspond(m5, \"dog\"))\n"
         "\n"
-        "  soit m6 = Regex.analyser(\"\\d+\\s\\w+\") ou propager\n"
+        "  soit m6 = Regex.analyser(\"\\\\d+\\\\s\\\\w+\") ou propager\n"
         "  soit r6 = Regex.chercher(m6, \"xx 42 salut99 yy\")\n"
         "  si r6 != rien { afficher(\"shorthand match: \" + r6.texte()) } sinon { afficher(\"shorthand: aucun\") }\n"
         "\n"
@@ -5648,7 +5648,7 @@ TEST(InterpreterStandardLibrary, SupportsTexteMethods)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "Bonjour Monde\nBONJOUR MONDE\nlumiere\nfaux\nvrai\n3\nvrai\nvrai\nruojnob\nababab\nbonsoir\nbbb\nbonjour monde\n monde!\njour\nmonde!\n3\nb\na\\nb\\nc\n42\n3.14\nvrai\n");
+    EXPECT_EQ(output, "Bonjour Monde\nBONJOUR MONDE\nlumiere\nfaux\nvrai\n3\nvrai\nvrai\nruojnob\nababab\nbonsoir\nbbb\nbonjour monde\n monde!\njour\nmonde!\n3\nb\na|b|c\n42\n3.14\nvrai\n");
 }
 
 TEST(InterpreterStandardLibrary, SupportsTexteModuleHelpers)
@@ -5676,7 +5676,7 @@ TEST(InterpreterStandardLibrary, SupportsTexteModuleHelpers)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "19\nvrai\nvrai\n11\nvrai\nvrai\nBonjour, monde!\nbonjour\nBONJOUR\na|b|c\na\\nb\nbonjour lumiere\nbonjour, monde\n42\n3.14\nvrai\n");
+    EXPECT_EQ(output, "19\nvrai\nvrai\n11\nvrai\nvrai\nBonjour, monde!\nbonjour\nBONJOUR\na|b|c\na|b\nbonjour lumiere\nbonjour, monde\n42\n3.14\nvrai\n");
 }
 
 TEST(InterpreterStandardLibrary, CoversTexteBoundaryCasesComprehensively)

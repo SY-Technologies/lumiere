@@ -71,22 +71,52 @@ namespace lumiere
         /**
          * @brief Scans a double-quoted text literal.
          *
-         * Consumes characters until a closing '"' is found.
-         * Returns an ERREUR token if the string is unterminated.
+         * Consumes characters until a closing '"' is found, decoding escape
+         * sequences (see decode_escape_sequence()) along the way into the
+         * token's `decoded` field. Returns an ERREUR token if the string is
+         * unterminated or contains an invalid escape sequence.
          *
-         * @return A TEXTE_LIT token, or ERREUR if unterminated.
+         * @return A TEXTE_LIT token, or ERREUR if malformed.
          */
         Token scan_string();
 
         /**
          * @brief Scans a single-quoted symbol literal.
          *
-         * Expects exactly one Unicode code point between single quotes.
+         * Expects exactly one Unicode code point between single quotes, once
+         * any escape sequence is decoded into the token's `decoded` field.
          * Returns an ERREUR token if malformed or unterminated.
          *
          * @return A SYMBOLE_LIT token, or ERREUR if malformed.
          */
         Token scan_symbol();
+
+        /**
+         * @brief Decodes one backslash escape sequence for scan_string() /
+         * scan_symbol(), appending its decoded bytes to `out`.
+         *
+         * Called with the scanner positioned just after the backslash.
+         * Recognises \n, \t, \r, \\, \", \', \0, and \u{XXXXXX} (1-6 hex
+         * digits, any Unicode scalar value). Consumes exactly the escape's own
+         * characters, leaving the scanner at the character right after it.
+         *
+         * @param out Destination for the escape's decoded UTF-8 bytes.
+         * @param error_message Set to a French diagnostic on failure.
+         * @return True on success, false if the escape is malformed or unknown.
+         */
+        bool decode_escape_sequence(std::string& out, std::string& error_message);
+
+        /**
+         * @brief Decodes the body of a \u{XXXXXX} escape (the scanner must be
+         * positioned right after the 'u'), appending the code point's UTF-8
+         * encoding to `out`.
+         *
+         * @param out Destination for the decoded UTF-8 bytes.
+         * @param error_message Set to a French diagnostic on failure.
+         * @return True on success, false if malformed, out of range, or a
+         *         surrogate code point.
+         */
+        bool decode_unicode_escape(std::string& out, std::string& error_message);
 
         /**
          * @brief Scans an integer or decimal numeric literal.

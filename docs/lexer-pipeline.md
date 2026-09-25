@@ -52,6 +52,7 @@ Each token stores:
 - `lexeme`
 - `line`
 - `column`
+- `decoded`
 
 Keeping the lexeme is a deliberate memory-for-clarity trade. It supports:
 
@@ -59,7 +60,35 @@ Keeping the lexeme is a deliberate memory-for-clarity trade. It supports:
 - AST printing
 - preserving source spelling for later semantic work
 
+`decoded` is narrower: only `TEXTE_LIT` and `SYMBOLE_LIT` tokens populate it, with
+quotes stripped and escape sequences resolved (see "Escape sequences" below).
+Every other token type leaves it empty and unused. The two execution engines
+build their runtime `Texte`/`Symbole` values from `decoded`, never from
+`lexeme` — `lexeme` stays the raw, still-escaped source slice, kept only for
+diagnostics and round-tripping. This mirrors the project's `lexeme`-for-clarity
+trade-off above: a second string per literal token costs a small, one-time
+allocation in exchange for keeping "what the source said" and "what it means"
+unambiguously separate.
+
 If the implementation later needs lower allocation pressure, token storage is one of the places to revisit, but it is not the right early optimization target for this project.
+
+## Escape sequences
+
+`scan_string()` and `scan_symbol()` (`src/lexer/tokenizer.cpp`) decode
+backslash escapes into `Token::decoded` as they scan, rather than deferring
+to the two execution engines. A malformed escape is therefore a lexer-time
+`ERREUR` token, consistent with how a malformed number literal is already
+rejected here rather than downstream.
+
+Recognised escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`, and
+`\u{XXXXXX}` (1 to 6 hexadecimal digits, any Unicode scalar value, encoded to
+UTF-8 via `utf8::encode_character`). Any other character after a backslash is
+a lexer error, not a silent pass-through — a language string is either what
+its author wrote or a clear diagnostic, never a guess. One consequence worth
+knowing: a literal backslash that must survive unresolved (a Windows path, a
+regular-expression pattern handed to another module) is written `\\` in
+Lumière source, exactly as in most other languages with escape sequences —
+there is no separate "raw string" literal form.
 
 ## `Scanner`
 
@@ -168,12 +197,12 @@ That is probably acceptable for the current language stage, but it should be tre
 
 As the language grows, literals are a common pressure point:
 
-- escapes
 - separators
 - malformed edge cases
 - numeric suffixes if ever introduced
 
-Tokenizer complexity tends to grow here first.
+Escape sequences are implemented (see "Escape sequences" above); the items
+above remain open. Tokenizer complexity tends to grow here first.
 
 ### Error recovery
 

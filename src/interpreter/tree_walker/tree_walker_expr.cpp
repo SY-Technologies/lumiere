@@ -55,12 +55,13 @@ void TreeWalker::visit(LiteralExpr &expr)
         m_result = Value::decimal(numeric::parse_decimal_literal(expr.token.lexeme).value_or(0.0));
         return;
     case TokenType::TEXTE_LIT:
-        m_result = Value::texte(expr.token.lexeme.substr(1, expr.token.lexeme.size() - 2));
+        // decoded is the escape-resolved literal body (see Tokenizer::scan_string);
+        // lexeme is the raw quoted source slice, kept only for diagnostics.
+        m_result = Value::texte(expr.token.decoded);
         return;
     case TokenType::SYMBOLE_LIT:
     {
-        const std::optional<char32_t> symbol_char =
-            utf8::decode_single_character(std::string_view(expr.token.lexeme).substr(1, expr.token.lexeme.size() - 2));
+        const std::optional<char32_t> symbol_char = utf8::decode_single_character(expr.token.decoded);
         if (!symbol_char.has_value())
         {
             throw_runtime_error(expr.token, "symbole invalide");
