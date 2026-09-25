@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lumiere/analysis/semantic_analysis.hpp"
+#include "lumiere/analysis/semantic_symbol_kind.hpp"
 #include "lumiere/analysis/semantic_type.hpp"
 #include "lumiere/analysis/source_id.hpp"
 
@@ -34,10 +34,29 @@ enum class ScopeId : std::uint32_t
 /** The module scope: every top-level declaration's `Symbol::scope`. */
 inline constexpr ScopeId kModuleScopeId{0};
 
+/**
+ * @brief Which of the compiler's two flat namespaces a `Symbol` occupies.
+ *
+ * `SemanticModel` already keeps type names and value names apart
+ * (`m_type_symbols` vs. `m_value_symbols`): a `classe Point` declares
+ * "Point" in *both* -- once as the type used in annotations, once as the
+ * value used to call its constructor, `Point()`. Recording both under one
+ * flat per-scope name list would make the second declaration shadow the
+ * first for `lookup`, so `Symbol` and `lookup` carry this tag the same way
+ * `find_value`/`find_type` are already two separate entry points instead of
+ * one name-keyed lookup.
+ */
+enum class SymbolNamespace
+{
+    Value,
+    Type,
+};
+
 /** One recorded declaration: what it is, where it lives, what it means. */
 struct Symbol
 {
     SymbolId id{0};
+    SymbolNamespace space = SymbolNamespace::Value;
     SemanticSymbolKind kind = SemanticSymbolKind::VARIABLE;
     std::string name;
     /** The declaring token's own span, e.g. just `x` in `soit x = 0`. */
@@ -126,7 +145,8 @@ public:
     }
 
     /** Records one declaration, appending it to `scope`'s symbol list. */
-    [[nodiscard]] SymbolId declare(const SemanticSymbolKind kind,
+    [[nodiscard]] SymbolId declare(const SymbolNamespace space,
+                                   const SemanticSymbolKind kind,
                                    std::string name,
                                    const SourceSpan declaration_span,
                                    const SourceSpan enclosing_span,
@@ -135,7 +155,7 @@ public:
                                    std::string documentation = {})
     {
         const auto id = static_cast<SymbolId>(m_symbols.size());
-        m_symbols.push_back(Symbol{id, kind, std::move(name), declaration_span,
+        m_symbols.push_back(Symbol{id, space, kind, std::move(name), declaration_span,
                                    enclosing_span, std::move(type),
                                    std::move(documentation), scope});
         m_scopes.at(static_cast<std::size_t>(scope)).symbols.push_back(id);
@@ -200,7 +220,9 @@ public:
      * mean in this scope overall", the same granularity `Scope::symbols`
      * already offers, not "as of this exact statement").
      */
-    [[nodiscard]] const Symbol *lookup(ScopeId scope, const std::string_view name) const
+    [[nodiscard]] const Symbol *lookup(ScopeId scope,
+                                       const std::string_view name,
+                                       const SymbolNamespace space) const
     {
         while (true)
         {
@@ -211,7 +233,8 @@ public:
             }
             for (auto found = current->symbols.rbegin(); found != current->symbols.rend(); ++found)
             {
-                if (const Symbol *candidate = symbol(*found); candidate != nullptr && candidate->name == name)
+                if (const Symbol *candidate = symbol(*found);
+                    candidate != nullptr && candidate->space == space && candidate->name == name)
                 {
                     return candidate;
                 }

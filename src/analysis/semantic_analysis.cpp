@@ -48,6 +48,7 @@ public:
                 nullptr,
                 m_analysis.model.types.interface_type(
                     "Erreur")});
+        m_index_source = m_analysis.model.index.source(m_source_path);
         m_error_types.insert("Erreur");
         const SemanticTypeRef decimal = m_analysis.model.types.builtin("Décimal");
         m_analysis.model.m_type_symbols.emplace("Décimal", decimal);
@@ -182,7 +183,15 @@ private:
                 SemanticSymbol{kind, name.lexeme, &declaration, nullptr}).second)
         {
             diagnose(name, "LUM-S0001", "le nom '" + name.lexeme + "' est déjà déclaré dans ce module");
+            return;
         }
+        // The enclosing span is approximated by the name token's own span
+        // until statement nodes carry their own extent (Stmt has no
+        // start/end accessor today, unlike Expr's start_token()) -- see
+        // docs/stage1-semantic-index-design.md's open questions.
+        const SourceSpan span = span_of(name, m_index_source);
+        static_cast<void>(m_analysis.model.index.declare(
+            SymbolNamespace::Value, kind, name.lexeme, span, span, kModuleScopeId));
     }
 
     void declare_type(const Token &name,
@@ -191,10 +200,17 @@ private:
         SemanticTypeRef type = kind == SemanticTypeKind::CLASS
                                    ? m_analysis.model.types.class_type(name.lexeme)
                                    : m_analysis.model.types.interface_type(name.lexeme);
-        if (!m_analysis.model.m_type_symbols.emplace(name.lexeme, std::move(type)).second)
+        if (!m_analysis.model.m_type_symbols.emplace(name.lexeme, type).second)
         {
             diagnose(name, "LUM-S0002", "le type '" + name.lexeme + "' est déjà déclaré");
+            return;
         }
+        const SemanticSymbolKind symbol_kind = kind == SemanticTypeKind::CLASS
+                                                   ? SemanticSymbolKind::CLASS
+                                                   : SemanticSymbolKind::INTERFACE;
+        const SourceSpan span = span_of(name, m_index_source);
+        static_cast<void>(m_analysis.model.index.declare(
+            SymbolNamespace::Type, symbol_kind, name.lexeme, span, span, kModuleScopeId, std::move(type)));
     }
 
     void push_scope()
@@ -4135,6 +4151,7 @@ private:
     }
 
     std::string m_source_path;
+    SourceId m_index_source{0};
     SemanticAnalysis m_analysis;
     std::vector<std::unordered_map<std::string, LocalBinding>> m_scopes;
     std::vector<std::unordered_map<std::string, SemanticTypeRef>> m_type_scopes;

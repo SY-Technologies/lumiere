@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lumiere/analysis/semantic_index.hpp"
+#include "lumiere/analysis/semantic_symbol_kind.hpp"
 #include "lumiere/analysis/semantic_type.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 #include "lumiere/parser/ast.hpp"
@@ -17,16 +19,6 @@ namespace lumiere
 class SemanticAnalyzer;
 struct SemanticAnalysis;
 struct SemanticAnalysisOptions;
-
-enum class SemanticSymbolKind
-{
-    VARIABLE,
-    PARAMETER,
-    FUNCTION,
-    CLASS,
-    INTERFACE,
-    MODULE,
-};
 
 struct SemanticModuleExports
 {
@@ -97,6 +89,15 @@ public:
     [[nodiscard]] const SemanticTypeRef *type_of(const Expr &expression) const;
 
     TypeInterner types;
+
+    /**
+     * @brief Every declaration and resolved occurrence this analysis
+     * recorded, keyed by stable, snapshot-local ids -- see
+     * docs/stage1-semantic-index-design.md. Additive: find_type/find_value/
+     * type_of above are unaffected by anything stored here and keep working
+     * exactly as they always have.
+     */
+    SemanticIndex index;
 
 private:
     friend class SemanticAnalyzer;
