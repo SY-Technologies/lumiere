@@ -50,6 +50,8 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/json.cpp
     src/interpreter/stdlib/regex.cpp
     src/interpreter/stdlib/lumidessin.cpp
+    src/interpreter/stdlib/lumidessin/values.cpp
+    src/interpreter/stdlib/lumidessin/raster.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp

@@ -5241,6 +5241,161 @@ TEST(InterpreterBuiltinModules, LumiDessinRaisesRuntimeErrorsForInvalidDimension
     }
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesClipAndComposite)
+{
+    // dessiner_pixel, tracer_ligne, remplir_rectangle, remplir_cercle and
+    // remplir_polygone all land where geometry says they should and leave
+    // untouched pixels alone; a translucent fill over an opaque background
+    // composites with the exact source-over formula from
+    // docs/stdlib-lumidessin.md's "Compositing" section (verified against
+    // both engines on the CLI before being pinned here); drawing past the
+    // canvas edge is clipped rather than an error.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_pixel(3, 3, LumiDessin.Couleurs.noir)\n"
+        "  soit px = c.lire_pixel(3, 3)\n"
+        "  afficher(\"pixel: \" + px.rouge() + \",\" + px.alpha())\n"
+        "  c.tracer_ligne(-5.0, 5.0, 20.0, 5.0, LumiDessin.Couleurs.rouge, 3.0)\n"
+        "  soit ligne = c.lire_pixel(5, 5)\n"
+        "  afficher(\"ligne: \" + ligne.rouge() + \",\" + ligne.vert() + \",\" + ligne.bleu())\n"
+        "  c.remplir_cercle(8.0, 8.0, 3.0, LumiDessin.Couleurs.vert)\n"
+        "  soit cercle = c.lire_pixel(8, 8)\n"
+        "  afficher(\"cercle: \" + cercle.rouge() + \",\" + cercle.vert() + \",\" + cercle.bleu())\n"
+        "  soit coin = c.lire_pixel(0, 0)\n"
+        "  afficher(\"coin intact: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n"
+        "  soit triangle = [LumiDessin.point(0.0, 0.0), LumiDessin.point(9.0, 0.0), LumiDessin.point(4.0, 9.0)]\n"
+        "  soit c2 = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  c2.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c2.remplir_polygone(triangle, LumiDessin.Couleurs.noir)\n"
+        "  soit dedans = c2.lire_pixel(4, 2)\n"
+        "  soit dehors = c2.lire_pixel(9, 9)\n"
+        "  afficher(\"polygone: \" + dedans.rouge() + \",\" + dehors.rouge())\n"
+        "  soit c3 = LumiDessin.créer_hors_écran(4, 4)\n"
+        "  c3.effacer(LumiDessin.rvb(255, 0, 0))\n"
+        "  c3.remplir_rectangle(0.0, 0.0, 4.0, 4.0, LumiDessin.rvba(0, 0, 255, 128))\n"
+        "  soit fondu = c3.lire_pixel(2, 2)\n"
+        "  afficher(\"fondu: \" + fondu.rouge() + \",\" + fondu.vert() + \",\" + fondu.bleu() + \",\" + fondu.alpha())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "pixel: 0,255\n"
+        "ligne: 255,0,0\n"
+        "cercle: 0,255,0\n"
+        "coin intact: 255,255,255\n"
+        "polygone: 0,255\n"
+        "fondu: 127,0,128,255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinTreatsZeroThicknessAndZeroAreaAsNoOpsAndArcSweepsClockwiseFromTheRight)
+{
+    // A zero-thickness stroke and a zero-area fill both leave the canvas
+    // untouched (symmetric no-ops, not errors) per the Drawing primitives
+    // section; tracer_arc's angle convention is 0 degrees pointing right,
+    // sweeping clockwise (matching direct-drawing's y-down coordinates), and
+    // it stops exactly at its swept endpoints rather than drawing a full ring.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.tracer_ligne(0.0, 0.0, 9.0, 9.0, LumiDessin.Couleurs.noir, 0.0)\n"
+        "  c.remplir_rectangle(0.0, 0.0, 0.0, 5.0, LumiDessin.Couleurs.noir)\n"
+        "  c.remplir_cercle(5.0, 5.0, 0.0, LumiDessin.Couleurs.noir)\n"
+        "  soit intact = c.lire_pixel(5, 5)\n"
+        "  afficher(\"toujours blanc: \" + intact.rouge() + \",\" + intact.vert() + \",\" + intact.bleu())\n"
+        "\n"
+        "  soit arc_c = LumiDessin.créer_hors_écran(40, 40)\n"
+        "  arc_c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  arc_c.tracer_arc(20.0, 20.0, 10.0, 0.0, 90.0, LumiDessin.Couleurs.noir, 2.0)\n"
+        "  soit droite = arc_c.lire_pixel(30, 20)\n"
+        "  soit bas = arc_c.lire_pixel(20, 30)\n"
+        "  soit gauche = arc_c.lire_pixel(10, 20)\n"
+        "  soit haut = arc_c.lire_pixel(20, 10)\n"
+        "  afficher(\"arc droite(0deg): \" + droite.rouge())\n"
+        "  afficher(\"arc bas(90deg): \" + bas.rouge())\n"
+        "  afficher(\"arc gauche(hors sweep): \" + gauche.rouge())\n"
+        "  afficher(\"arc haut(hors sweep): \" + haut.rouge())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "toujours blanc: 255,255,255\n"
+        "arc droite(0deg): 3\n"
+        "arc bas(90deg): 3\n"
+        "arc gauche(hors sweep): 255\n"
+        "arc haut(hors sweep): 255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsForInvalidGeometry)
+{
+    // Negative fill dimensions, negative stroke thickness, a non-finite
+    // coordinate, and too few points for a polyline/polygon are all
+    // programmer errors (direct runtime errors), matching the same
+    // Failure-policy distinction the rest of the module makes.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  c.remplir_rectangle(0.0, 0.0, -1.0, 5.0, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.remplir_rectangle attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  c.tracer_ligne(0.0, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, -1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_ligne attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "importer Maths\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  c.tracer_ligne(Maths.infini, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_ligne attend une valeur numérique finie"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  c.tracer_polyligne([LumiDessin.point(0.0, 0.0)], faux, LumiDessin.Couleurs.noir, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_polyligne attend au moins 2 points"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer LumiDessin\n"
+            "fonction principal() {\n"
+            "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+            "  c.remplir_polygone([LumiDessin.point(0.0, 0.0), LumiDessin.point(1.0, 1.0)], LumiDessin.Couleurs.noir)\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.remplir_polygone attend au moins 3 points"), std::string::npos);
+    }
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
