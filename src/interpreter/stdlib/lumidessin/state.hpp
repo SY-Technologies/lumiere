@@ -11,6 +11,7 @@
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -98,6 +99,12 @@ Value make_erreur_image(const std::string &operation, const std::string &path, c
 // Canevas -- mutable RGBA8 framebuffer
 // ---------------------------------------------------------------------------
 
+// Forward-declared so CanvasState can hold raw, non-owning pointers to the
+// crayons drawing on it (see CrayonState below and docs/stdlib-lumidessin.md's
+// "Native architecture" -- native-to-native ownership must be acyclic, so
+// this direction is never a Ref).
+struct CrayonState;
+
 struct CanvasState : NativeState
 {
     int32_t width = 0;
@@ -105,6 +112,11 @@ struct CanvasState : NativeState
     std::vector<uint8_t> pixels; // RGBA8, row-major, width * height * 4 bytes
     bool open = true;
     bool visible = false;
+    // Raw, non-owning, in creation order -- overlay draw order for the
+    // visible cursor (stage 7). Each CrayonState registers itself here in
+    // its constructor and deregisters in its destructor; see CrayonState's
+    // own comment for why a dangling pointer can never appear in this list.
+    std::vector<CrayonState *> crayons;
 
     void trace_references(RefVisitor &) const override
     {
@@ -130,6 +142,14 @@ void bind_canevas_drawing_methods(const Ref<LumiereObject> &object,
 // the canvas), so every caller -- every SDF primitive, and text.cpp's glyph
 // compositing -- can call it without its own clip test.
 void blend_pixel(CanvasState &canvas, int x, int y, const ColorState &color, double coverage);
+
+// Defined in raster.cpp. Draws one round-capped line segment (a "capsule")
+// of `half_thickness * 2` width, the same primitive Canevas.tracer_ligne
+// uses. Exposed with external linkage, like blend_pixel above, so
+// crayon.cpp can draw a crayon's movement trail without a second stroke
+// implementation.
+void raster_capsule(CanvasState &canvas, double ax, double ay, double bx, double by, double half_thickness,
+                    const ColorState &color);
 
 // ---------------------------------------------------------------------------
 // Dimensions -- immutable value type with plain readable fields (not
@@ -162,5 +182,70 @@ Value load_png_image(IRuntime &runtime,
                      const std::filesystem::path &path,
                      const NativeFunctionFactory &make_native_function,
                      const RuntimeSite &site);
+
+// ---------------------------------------------------------------------------
+// Crayon -- turtle-style cursor bound to one canvas. Defined in crayon.cpp;
+// bind_canevas_crayon_methods() adds crayon() to a freshly constructed
+// canvas object. See docs/stdlib-lumidessin.md's "Crayon API" and "Native
+// architecture" sections for the coordinate mapping and ownership contract
+// this state implements.
+// ---------------------------------------------------------------------------
+
+struct CrayonState : NativeState
+{
+    // CrayonState strongly owns the canvas it draws on: this Ref is what
+    // keeps the canvas alive for as long as any crayon referencing it
+    // exists, even past the canvas's own Lumière value going out of scope.
+    // fermer() is orthogonal -- it clears the framebuffer and the open flag
+    // but does not destroy the CanvasState -- so every method below must
+    // still check expect_canevas_open() itself.
+    explicit CrayonState(Ref<CanvasState> canvas_ref) : canvas(std::move(canvas_ref))
+    {
+        canvas->crayons.push_back(this);
+    }
+
+    ~CrayonState() override
+    {
+        std::vector<CrayonState *> &siblings = canvas->crayons;
+        siblings.erase(std::remove(siblings.begin(), siblings.end(), this), siblings.end());
+    }
+
+    Ref<CanvasState> canvas;
+
+    // Crayon-space state (docs/stdlib-lumidessin.md, "Crayon API"): origin
+    // at the canvas center, +x right, +y up, headings counterclockwise from
+    // 0 degrees pointing right -- the opposite y and rotation sense from
+    // direct canvas drawing, converted to canvas pixels only at draw time.
+    double x = 0.0;
+    double y = 0.0;
+    double heading_deg = 0.0;
+    bool pen_down = true;
+    uint8_t color_r = 0, color_g = 0, color_b = 0, color_a = 255; // starts black
+    double thickness = 1.0;
+    bool visible = true;
+
+    // No Value is ever stored here, so there is nothing for the cycle
+    // collector to trace; canvas is a plain Ref<CanvasState>, not a boxed
+    // Value, so it falls outside trace_references/clear_references
+    // entirely (see values.cpp's comment on why Crayon needs no
+    // native_captures either, for the same reason).
+    void trace_references(RefVisitor &) const override
+    {
+    }
+    void clear_references() override
+    {
+    }
+};
+
+// Unlike the sibling bind_canevas_*_methods functions, this one only adds
+// crayon() -- creating a Crayon needs a strong Ref<CanvasState> (see
+// CrayonState above), which crayon()'s own closure constructs from `state`
+// via Ref<CanvasState>(state) at call time, retaining a live raw pointer
+// the same way every other Canevas method closure already does.
+void bind_canevas_crayon_methods(const Ref<LumiereObject> &object,
+                                 CanvasState *state,
+                                 const NativeFunctionFactory &make_native_function);
+
+Value make_crayon_value(Ref<CanvasState> canvas, const NativeFunctionFactory &make_native_function);
 
 } // namespace lumiere

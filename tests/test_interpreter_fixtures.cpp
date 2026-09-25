@@ -5616,6 +5616,184 @@ TEST(InterpreterBuiltinModules, LumiDessinImageRaisesRuntimeErrorsForInvalidGeom
     }
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinCrayonMovesRotatesAndReportsStateConsistently)
+{
+    // Mirrors what was manually verified byte-identical against both
+    // engines on the CLI: default state, avancer/reculer/tourner_*,
+    // aller_à, recentrer (which also resets heading), lever/baisser,
+    // régler_couleur/épaisseur/cap, montrer/cacher, and heading
+    // normalization for a negative angle.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(100, 100)\n"
+        "  soit t = toile.crayon()\n"
+        "  afficher(\"pos0: \" + t.position().x + \",\" + t.position().y)\n"
+        "  afficher(\"cap0: \" + t.cap())\n"
+        "  afficher(\"baisse0: \" + t.est_baissé())\n"
+        "  afficher(\"visible0: \" + t.est_visible())\n"
+        "  t.avancer(10.0)\n"
+        "  afficher(\"apres avancer: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.tourner_gauche(90.0)\n"
+        "  afficher(\"cap apres gauche90: \" + t.cap())\n"
+        "  t.avancer(5.0)\n"
+        "  afficher(\"apres avancer2: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.tourner_droite(180.0)\n"
+        "  afficher(\"cap apres droite180: \" + t.cap())\n"
+        "  t.reculer(5.0)\n"
+        "  afficher(\"apres reculer x: \" + t.position().x)\n"
+        "  t.aller_à(20.0, -30.0)\n"
+        "  afficher(\"apres aller_a: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.recentrer()\n"
+        "  afficher(\"apres recentrer: \" + t.position().x + \",\" + t.position().y + \" cap=\" + t.cap())\n"
+        "  t.lever()\n"
+        "  afficher(\"baisse apres lever: \" + t.est_baissé())\n"
+        "  t.avancer(50.0)\n"
+        "  afficher(\"apres avancer leve: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.baisser()\n"
+        "  afficher(\"baisse apres baisser: \" + t.est_baissé())\n"
+        "  t.régler_couleur(LumiDessin.couleur(255, 0, 0))\n"
+        "  t.régler_épaisseur(3.0)\n"
+        "  t.régler_cap(45.0)\n"
+        "  afficher(\"cap apres regler_cap: \" + t.cap())\n"
+        "  t.cacher()\n"
+        "  afficher(\"visible apres cacher: \" + t.est_visible())\n"
+        "  t.montrer()\n"
+        "  afficher(\"visible apres montrer: \" + t.est_visible())\n"
+        "  t.régler_cap(-30.0)\n"
+        "  afficher(\"cap negatif normalise: \" + t.cap())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "pos0: 0.0,0.0\n"
+        "cap0: 0.0\n"
+        "baisse0: vrai\n"
+        "visible0: vrai\n"
+        "apres avancer: 10.0,0.0\n"
+        "cap apres gauche90: 90.0\n"
+        "apres avancer2: 10.0,5.0\n"
+        "cap apres droite180: 270.0\n"
+        "apres reculer x: 10.000000000000002\n"
+        "apres aller_a: 20.0,-30.0\n"
+        "apres recentrer: 0.0,0.0 cap=0.0\n"
+        "baisse apres lever: faux\n"
+        "apres avancer leve: 50.0,0.0\n"
+        "baisse apres baisser: vrai\n"
+        "cap apres regler_cap: 45.0\n"
+        "visible apres cacher: faux\n"
+        "visible apres montrer: vrai\n"
+        "cap negatif normalise: 330.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCrayonDrawsOnlyWhenPenIsDownAndIndependentlyOfOtherCrayons)
+{
+    // A crayon's trail is a real capsule stroke on the shared framebuffer
+    // (raster_capsule, the same primitive tracer_ligne uses): its own color
+    // and thickness, only while the pen is down. Two crayons created from
+    // the same canvas move independently -- crayon() docs/stdlib-lumidessin
+    // .md, "Each call creates independent crayon state".
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(20, 20)\n"
+        "  toile.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  soit a = toile.crayon()\n"
+        "  a.avancer(5.0)\n"
+        "  soit trait = toile.lire_pixel(12, 10)\n"
+        "  afficher(\"trait: \" + trait.rouge() + \",\" + trait.vert() + \",\" + trait.bleu())\n"
+        "  soit loin = toile.lire_pixel(2, 2)\n"
+        "  afficher(\"loin: \" + loin.rouge() + \",\" + loin.vert() + \",\" + loin.bleu())\n"
+        "  soit b = toile.crayon()\n"
+        "  b.tourner_gauche(90.0)\n"
+        "  b.avancer(5.0)\n"
+        "  afficher(\"a pos: \" + a.position().x + \",\" + a.position().y)\n"
+        "  afficher(\"b pos y: \" + b.position().y)\n"
+        "  afficher(\"a cap: \" + a.cap() + \" b cap: \" + b.cap())\n"
+        "  soit c = toile.crayon()\n"
+        "  c.lever()\n"
+        "  c.tourner_droite(90.0)\n"
+        "  c.avancer(3.0)\n"
+        "  soit vide_sous_c = toile.lire_pixel(10, 13)\n"
+        "  afficher(\"pixel sous c leve reste blanc: \" + vide_sous_c.rouge() + \",\" + vide_sous_c.vert() + \",\" +\n"
+        "    vide_sous_c.bleu())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "trait: 128,128,128\n"
+        "loin: 255,255,255\n"
+        "a pos: 5.0,0.0\n"
+        "b pos y: 5.0\n"
+        "a cap: 0.0 b cap: 90.0\n"
+        "pixel sous c leve reste blanc: 255,255,255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCrayonRaisesRuntimeErrorsForClosedCanvas)
+{
+    // A crayon operation after its canvas is closed raises a runtime error
+    // at the crayon call site (docs/stdlib-lumidessin.md, "Crayon API"),
+    // including crayon() itself, since it is a Canevas method like any
+    // other that requires an open canvas.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.crayon()\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.crayon ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.avancer(1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.avancer ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.position()\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.position ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        // The crayon itself keeps the canvas alive past fermer() (a strong
+        // Ref<CanvasState>), so this is a documented use-after-close error,
+        // never a use-after-free.
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.régler_couleur(LumiDessin.Couleurs.rouge)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.régler_couleur ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
