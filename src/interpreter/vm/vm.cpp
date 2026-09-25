@@ -2697,9 +2697,24 @@ Value execute_frames(VmExecutionState &execution, FrameStack frames)
                     const LumiereFunction *function = field->second.as_fonction_ptr();
                     if (function->is_native())
                     {
+                        // Populate line/column like every other native-call
+                        // opcode branch (CALL, CALL_GLOBAL) does. Left blank,
+                        // this silently drops the source location whenever a
+                        // native stdlib function is invoked via qualified
+                        // module-member syntax (e.g. "Regex.remplacer(...)"
+                        // as opposed to an imported "remplacer(...)"), so any
+                        // runtime error it raises loses its line/column and
+                        // source snippet on the VM backend, while the tree
+                        // walker keeps them (--tw vs --vm output diverges).
                         RuntimeSite site;
+                        site.source_path = module.source_path;
+                        if (opcode_offset < chunk.locations.size())
+                        {
+                            site.line = static_cast<int>(chunk.locations[opcode_offset].line);
+                            site.column = static_cast<int>(chunk.locations[opcode_offset].column);
+                        }
                         stack.push_back(runtime_services.call(field->second,
-                                                            NativeArgs{nullptr, &args, site}));
+                                                            NativeArgs{nullptr, &args, std::move(site)}));
                         break;
                     }
                     const VmClosureBody *body = vm_closure_body(function->body.get());
