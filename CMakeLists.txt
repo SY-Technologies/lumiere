@@ -18,6 +18,10 @@ option(LUMIERE_BUILD_SHARED  "Build Lumière as a shared library (OFF builds sta
 option(LUMIERE_ENABLE_WARNINGS "Enable strict compiler warnings." ON)
 set(LUMIERE_ENABLE_LUMINET_DEFAULT ON)
 option(LUMIERE_ENABLE_LUMINET "Build LumiNet networking stdlib." ${LUMIERE_ENABLE_LUMINET_DEFAULT})
+set(LUMIERE_ENABLE_LUMIDESSIN_DEFAULT ON)
+option(LUMIERE_ENABLE_LUMIDESSIN "Build the LumiDessin 2D drawing stdlib." ${LUMIERE_ENABLE_LUMIDESSIN_DEFAULT})
+set(LUMIERE_ENABLE_LUMIDESSIN_WINDOW_DEFAULT ON)
+option(LUMIERE_ENABLE_LUMIDESSIN_WINDOW "Build LumiDessin's visible-window backend (requires LUMIERE_ENABLE_LUMIDESSIN)." ${LUMIERE_ENABLE_LUMIDESSIN_WINDOW_DEFAULT})
 
 set(LUMIERE_LIBRARY_SOURCES
     src/analysis/analysis.cpp
@@ -45,6 +49,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/collections.cpp
     src/interpreter/stdlib/json.cpp
     src/interpreter/stdlib/regex.cpp
+    src/interpreter/stdlib/lumidessin.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp
@@ -145,6 +150,8 @@ if(LUMIERE_ENABLE_WARNINGS)
 endif()
 
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMINET=$<BOOL:${LUMIERE_ENABLE_LUMINET}>)
+target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN}>)
+target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN_WINDOW=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN_WINDOW}>)
 
 # -----------------------------
 # CLI executable
