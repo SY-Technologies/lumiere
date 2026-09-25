@@ -415,7 +415,7 @@ where the token starts.
 
 ---
 
-## Task 6 — Resolve a runtime type once
+## Task 6 — Resolve a runtime type once — DONE
 
 **Done on the VM.** Step one removed the element scan; step two gave the VM a
 `VmType` read once per text -- from the module's type table, a field's
@@ -425,14 +425,19 @@ within 3% across a 63- to 201-character path, where it used to move by 117%;
 against CPython it is 2.60x (was 8.3x to 17.5x). See `RUNTIME_HARDENING.md`,
 "Resolving a runtime type once".
 
-The tree walker was not given the same descriptor. It kept step one's
-contract fast path, but its other checks still parse strings, so its
-`commandes` still moves about 8% with path length -- outside noise, unlike
-the VM. The brief asked for one descriptor shared by both engines from
-`src/interpreter/runtime/`; splitting `VmType` free of `VmClassBody`'s cached
-lookups and the VM's index-based module type table to share it turned out to
-be its own task, and the tree walker is the reference engine, not the
-performance target. Left open below.
+**Done on the tree walker too.** The parts of `VmType` that do not depend on
+the VM's module-indexed type table or `VmClassBody`'s per-class field cache
+moved into `include/lumiere/interpreter/runtime/runtime_type.hpp` as
+`RuntimeType`/`parse_runtime_type`/`matches`/`annotate`/`class_satisfies`,
+shared by both engines; the VM's own names are now aliases onto them. The
+tree walker's hand-written string engine is gone, replaced by a
+`RuntimeTypeCache` keyed by text -- the same fix as the VM's step two, plus a
+fast path the VM already had for a generic written directly in source
+(`catalogue: Dictionnaire[Texte, Produit]`) that the tree walker's `TypeExpr`
+matcher never had at all. `commandes` on the tree walker is 2.85x to 3.11x
+faster than the parent commit and now within 1.4% across a 62- to
+203-character path, where it used to move by 10.6%. See
+`RUNTIME_HARDENING.md`, "Resolving a runtime type once", "Third".
 
 ### Why
 
@@ -493,26 +498,17 @@ what is left once that is gone before deciding what else to change.
 
 - `commandes` from a 10-character path and from a 150-character path within
   noise of each other, on both engines. **Met on the VM** (63 vs 201
-  characters, 2.7% apart). **Not met on the tree walker** (8% apart) -- see
-  above.
+  characters, 2.7% apart) and **on the tree walker** (62 vs 203 characters,
+  1.4% apart).
 - `commandes` and `expressions` measured against the parent commit and against
   CPython, recorded in `RUNTIME_HARDENING.md`; the eight probes not regressed.
-  **Met.**
+  **Met** (the tree walker's own probes moved too, several of them faster,
+  none slower -- the missing fast path cost more than `commandes` alone).
 - `matches_type_name`, `split_generic_arguments` and `trim_type_name` gone from
-  the profile of `commandes`. **Met** (gone from the source, not just the
-  profile, on the VM; the tree walker keeps its own copies of the same
-  names).
-
-### What is left
-
-Give the tree walker a type read once the same way, sharing the parts of
-`VmType` that do not depend on the VM's module-indexed type table or
-`VmClassBody`'s per-class field cache -- `parse_vm_type`'s reading (already
-engine-agnostic) is the obvious first piece to lift into
-`src/interpreter/runtime/`; `matches` and `annotate` can likely follow once
-`ListConstraint` and its siblings are read once too. Re-run this task's
-acceptance check afterward: `commandes` from a 10- and a 150-character path
-within noise of each other on the tree walker as well.
+  the profile of `commandes`. **Met on both engines** (gone from the source;
+  the tree walker's own copies of the same names -- and
+  `class_derives_from`/`class_implements_interface` besides -- are deleted,
+  not kept alongside the shared descriptor).
 
 ---
 

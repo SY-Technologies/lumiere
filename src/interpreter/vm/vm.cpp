@@ -14,6 +14,7 @@
 #include "lumiere/parser/utf8.hpp"
 #include "lumiere/interpreter/runtime/numeric.hpp"
 #include "lumiere/diagnostics/runtime_messages.hpp"
+#include "lumiere/interpreter/runtime/runtime_type.hpp"
 #include "lumiere/interpreter/runtime/collection_constraints.hpp"
 #include "lumiere/interpreter/runtime/nominal_type.hpp"
 
@@ -175,460 +176,18 @@ void require_dictionary_key(const Value &key)
     }
 }
 
-std::vector<std::string_view> split_generic_arguments(const std::string_view specification)
-{
-    std::vector<std::string_view> arguments;
-    std::size_t start = 0;
-    std::size_t depth = 0;
-    for (std::size_t i = 0; i < specification.size(); ++i)
-    {
-        if (specification[i] == '[')
-        {
-            ++depth;
-        }
-        else if (specification[i] == ']')
-        {
-            --depth;
-        }
-        else if (specification[i] == ',' && depth == 0)
-        {
-            arguments.push_back(specification.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    arguments.push_back(specification.substr(start));
-    return arguments;
-}
-
-std::string_view trim_type_name(std::string_view name)
-{
-    const std::size_t first = name.find_first_not_of(" \t\r\n");
-    if (first == std::string_view::npos)
-    {
-        return {};
-    }
-    return name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
-}
-
-// A collection carries its contract, and every element it holds was checked
-// against that contract on the way in -- `enforce_declared_type` on insertion,
-// `annotate` when the contract is first set, after a check. A collection
-// whose contract is exactly the type asked about therefore matches it without
-// its elements being looked at. Scanning them instead made passing a 300-entry
-// Dictionnaire[Texte, Produit] as an argument cost 600 checks per call.
-bool same_contract(const std::string &contract, const std::string_view requested)
-{
-    return trim_type_name(contract) == trim_type_name(requested);
-}
-
-/** @brief The builtin scalars, which a value satisfies by its tag alone. */
-enum class TypeShape : std::uint8_t
-{
-    Entier,
-    Decimal,
-    Logique,
-    Symbole,
-    Texte,
-    Rien,
-    Universel,
-};
-
-bool matches_shape(const Value &value, const TypeShape shape)
-{
-    switch (shape)
-    {
-    case TypeShape::Entier:
-        return value.is_entier();
-    // An Entier is accepted where a Décimal is asked for, as it always has been.
-    case TypeShape::Decimal:
-        return value.is_decimal() || value.is_entier();
-    case TypeShape::Logique:
-        return value.is_logique();
-    case TypeShape::Symbole:
-        return value.is_symbole();
-    case TypeShape::Texte:
-        return value.is_texte();
-    case TypeShape::Rien:
-        return value.is_rien();
-    case TypeShape::Universel:
-        return true;
-    }
-    return false;
-}
+using VmType = RuntimeType;
 
 /**
- * @brief A type as the runtime checks it: its text, read once.
- *
- * Types travel into the bytecode as text, and every check used to re-read that
- * text: trim it, scan it for a union bar, find the bracket, split the arguments
- * into a fresh vector, compare the head against a dozen names. For a class the
- * head is the class's identity, which embeds the source path, so the cost of a
- * check grew with the length of the path the program was run from. A VmType is
- * that reading done once; matching one walks the structure and compares a class
- * identity only when there is an object to compare it with.
- *
- * `parse_vm_type` reads text exactly as the string matcher it replaced did,
- * including what it did with text the compiler never produces, so replacing
- * one with the other changes no answer.
+ * @brief The VM's type cache, and its class-satisfaction check: both moved
+ * to `src/interpreter/runtime/runtime_type.hpp` so the tree walker reads a
+ * type once the same way. `VmType`, `VmTypeTable`, `matches`, `annotate` and
+ * `class_satisfies` are aliases onto the shared `RuntimeType`,
+ * `RuntimeTypeCache`, `matches`, `annotate` and `class_satisfies` -- nothing
+ * below this line changes what any of them do.
  */
-struct VmType
-{
-    enum class Kind : std::uint8_t
-    {
-        Scalar,
-        Union,
-        Resultat,
-        Classe,
-        Interface,
-        Liste,
-        ListeFixe,
-        Dictionnaire,
-        Ensemble,
-        Nominal,
-    };
+using VmTypeTable = RuntimeTypeCache;
 
-    Kind kind = Kind::Nominal;
-    TypeShape shape = TypeShape::Universel; // for a Scalar
-    // Exactly the text this type was read from, surrounding spaces included:
-    // it is what a collection's contract records, and what a contract is
-    // compared with.
-    std::string text;
-    // The head, before any '[': for a class or an interface, its identity.
-    std::string name;
-    // Something was written between the brackets: without it, `Liste[]` or
-    // `Liste`, any list matches.
-    bool generic = false;
-    // Written `Tête[...]` ending on its bracket, which is what an annotation
-    // requires before it records anything.
-    bool closed = false;
-    // A ListeFixe's second argument, when it reads as a number.
-    std::optional<std::size_t> length;
-    // The bracketed arguments, or a union's two sides.
-    std::vector<VmType> arguments;
-};
-
-VmType parse_vm_type(const std::string_view text)
-{
-    using Kind = VmType::Kind;
-    VmType type;
-    type.text = text;
-    const std::string_view full = trim_type_name(text);
-    if (const auto bar = find_collection_type_union(full); bar != std::string_view::npos)
-    {
-        type.kind = Kind::Union;
-        type.arguments.push_back(parse_vm_type(full.substr(0, bar)));
-        type.arguments.push_back(parse_vm_type(full.substr(bar + 1)));
-        return type;
-    }
-
-    const std::size_t open = full.find('[');
-    type.name = full.substr(0, open);
-    if (open != std::string_view::npos)
-    {
-        const std::string_view specification = full.substr(open + 1, full.size() - open - 2);
-        type.generic = !specification.empty();
-        type.closed = full.back() == ']';
-        for (const std::string_view argument : split_generic_arguments(specification))
-        {
-            type.arguments.push_back(parse_vm_type(argument));
-        }
-    }
-
-    static const std::pair<std::string_view, TypeShape> scalars[] = {
-        {"Entier", TypeShape::Entier},       {"Décimal", TypeShape::Decimal},
-        {"Decimal", TypeShape::Decimal},     {"Logique", TypeShape::Logique},
-        {"Symbole", TypeShape::Symbole},     {"Texte", TypeShape::Texte},
-        {"Rien", TypeShape::Rien},           {"Universel", TypeShape::Universel},
-    };
-    static const std::pair<std::string_view, Kind> kinds[] = {
-        {"Résultat", Kind::Resultat},     {"Classe", Kind::Classe},
-        {"Interface", Kind::Interface},   {"Liste", Kind::Liste},
-        {"ListeFixe", Kind::ListeFixe},   {"Dictionnaire", Kind::Dictionnaire},
-        {"Ensemble", Kind::Ensemble},
-    };
-    for (const auto &[name, shape] : scalars)
-    {
-        if (type.name == name)
-        {
-            type.kind = Kind::Scalar;
-            type.shape = shape;
-            return type;
-        }
-    }
-    for (const auto &[name, kind] : kinds)
-    {
-        if (type.name == name)
-        {
-            type.kind = kind;
-        }
-    }
-    if (type.kind == Kind::ListeFixe && type.arguments.size() == 2)
-    {
-        try
-        {
-            type.length = static_cast<std::size_t>(std::stoll(type.arguments[1].text));
-        }
-        catch (...)
-        {
-        }
-    }
-    return type;
-}
-
-// Whether an object's class, or one of its ancestors, is @p name or declares
-// the interface @p name.
-bool class_satisfies(const LumiereClass *klass, const std::string &name)
-{
-    for (; klass != nullptr; klass = klass->parent.get())
-    {
-        if ((klass->type_identity.empty() ? klass->name : klass->type_identity) == name ||
-            klass->interfaces.contains(name))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-template <typename Elements>
-bool all_match(const Elements &elements, const VmType &type);
-
-bool matches(const Value &value, const VmType &type)
-{
-    using Kind = VmType::Kind;
-    switch (type.kind)
-    {
-    case Kind::Scalar:
-        return matches_shape(value, type.shape);
-    case Kind::Union:
-        return matches(value, type.arguments[0]) || matches(value, type.arguments[1]);
-    case Kind::Resultat:
-    {
-        if (!value.is_resultat())
-            return false;
-        if (!type.generic)
-            return true;
-        if (type.arguments.size() != 2)
-            return false;
-        const auto result = value.as_resultat();
-        return matches(result->payload, type.arguments[result->success ? 0 : 1]);
-    }
-    case Kind::Classe:
-        return value.is_classe();
-    case Kind::Interface:
-        return value.is_interface();
-    default:
-        break;
-    }
-
-    // Any other name may be a class or an interface the program declared.
-    if (value.is_objet() && class_satisfies(value.as_objet_ptr()->klass.get(), type.name))
-    {
-        return true;
-    }
-
-    switch (type.kind)
-    {
-    case Kind::Liste:
-    {
-        if (!value.is_liste())
-            return false;
-        if (!type.generic)
-            return true;
-        if (type.arguments.size() != 1)
-            return false;
-        const auto list = value.as_liste();
-        if (list->constraint && same_contract(list->constraint->element_type, type.arguments[0].text))
-        {
-            assert(all_match(list->elements, type.arguments[0]));
-            return true;
-        }
-        return all_match(list->elements, type.arguments[0]);
-    }
-    case Kind::ListeFixe:
-    {
-        if (!value.is_liste_fixe())
-            return false;
-        if (!type.generic)
-            return true;
-        if (type.arguments.size() != 2 || !type.length)
-            return false;
-        const auto fixed = value.as_liste_fixe();
-        if (fixed->elements.size() != *type.length)
-            return false;
-        if (fixed->constraint && fixed->constraint->length == *type.length &&
-            same_contract(fixed->constraint->element_type, type.arguments[0].text))
-        {
-            assert(all_match(fixed->elements, type.arguments[0]));
-            return true;
-        }
-        return all_match(fixed->elements, type.arguments[0]);
-    }
-    case Kind::Dictionnaire:
-    {
-        if (!value.is_dictionnaire())
-            return false;
-        if (!type.generic)
-            return true;
-        if (type.arguments.size() != 2)
-            return false;
-        const auto dictionary = value.as_dictionnaire();
-        const auto every_entry_matches = [&] {
-            return std::all_of(dictionary->items().begin(), dictionary->items().end(),
-                               [&](const DictEntry &entry) {
-                                   return matches(entry.first, type.arguments[0]) &&
-                                          matches(entry.second, type.arguments[1]);
-                               });
-        };
-        if (dictionary->constraint &&
-            same_contract(dictionary->constraint->key_type, type.arguments[0].text) &&
-            same_contract(dictionary->constraint->value_type, type.arguments[1].text))
-        {
-            assert(every_entry_matches());
-            return true;
-        }
-        return every_entry_matches();
-    }
-    case Kind::Ensemble:
-    {
-        if (!value.is_ensemble())
-            return false;
-        if (!type.generic)
-            return true;
-        if (type.arguments.size() != 1)
-            return false;
-        const auto set = value.as_ensemble();
-        if (set->constraint && same_contract(set->constraint->element_type, type.arguments[0].text))
-        {
-            assert(all_match(set->items(), type.arguments[0]));
-            return true;
-        }
-        return all_match(set->items(), type.arguments[0]);
-    }
-    default:
-        return false;
-    }
-}
-
-template <typename Elements>
-bool all_match(const Elements &elements, const VmType &type)
-{
-    return std::all_of(elements.begin(), elements.end(),
-                       [&](const Value &element) { return matches(element, type); });
-}
-
-/**
- * @brief Records @p type on a collection, or on a Résultat's payload, that
- * already satisfies it.
- *
- * The contract kept is the argument's text as written, as it always was.
- */
-void annotate(const Value &value, const VmType &type)
-{
-    using Kind = VmType::Kind;
-    if (!value.is_liste() && !value.is_liste_fixe() && !value.is_dictionnaire() && !value.is_ensemble() && !value.is_resultat())
-        return;
-    if (type.kind == Kind::Union)
-    {
-        annotate(value, matches(value, type.arguments[0]) ? type.arguments[0] : type.arguments[1]);
-        return;
-    }
-    if (!type.closed)
-        return;
-    const auto &arguments = type.arguments;
-    const auto incompatible = [] {
-        return VmRuntimeError("annotation de collection incompatible avec le contrat existant");
-    };
-    if (type.kind == Kind::Resultat && value.is_resultat() && arguments.size() == 2)
-    {
-        const auto result = value.as_resultat();
-        annotate(result->payload, arguments[result->success ? 0 : 1]);
-    }
-    // A collection already bound to exactly this contract has nothing to learn
-    // from it: its elements were annotated when the contract was set, and every
-    // one added since was annotated on the way in. Walking them again made a
-    // typed argument cost as much as the collection it named.
-    else if (type.kind == Kind::Liste && value.is_liste() && arguments.size() == 1)
-    {
-        const auto list = value.as_liste();
-        if (list->constraint && same_contract(list->constraint->element_type, arguments[0].text))
-            return;
-        if (!merge_collection_constraint(list->constraint, ListConstraint{arguments[0].text}))
-            throw incompatible();
-        for (const auto &element : list->elements)
-            annotate(element, arguments[0]);
-    }
-    else if (type.kind == Kind::ListeFixe && value.is_liste_fixe() && arguments.size() == 2)
-    {
-        const auto fixed = value.as_liste_fixe();
-        if (fixed->constraint && fixed->constraint->length == fixed->elements.size() &&
-            same_contract(fixed->constraint->element_type, arguments[0].text))
-            return;
-        if (!merge_collection_constraint(fixed->constraint, FixedListConstraint{
-                arguments[0].text, fixed->elements.size()}))
-            throw incompatible();
-        for (const auto &element : fixed->elements)
-            annotate(element, arguments[0]);
-    }
-    else if (type.kind == Kind::Dictionnaire && value.is_dictionnaire() && arguments.size() == 2)
-    {
-        const auto dictionary = value.as_dictionnaire();
-        if (dictionary->constraint && same_contract(dictionary->constraint->key_type, arguments[0].text) &&
-            same_contract(dictionary->constraint->value_type, arguments[1].text))
-            return;
-        if (!merge_collection_constraint(dictionary->constraint, DictConstraint{arguments[0].text, arguments[1].text}))
-            throw incompatible();
-        for (const auto &[key, element] : dictionary->items())
-        {
-            annotate(key, arguments[0]);
-            annotate(element, arguments[1]);
-        }
-    }
-    else if (type.kind == Kind::Ensemble && value.is_ensemble() && arguments.size() == 1)
-    {
-        const auto set = value.as_ensemble();
-        if (set->constraint && same_contract(set->constraint->element_type, arguments[0].text))
-            return;
-        if (!merge_collection_constraint(set->constraint, SetConstraint{arguments[0].text}))
-            throw incompatible();
-        for (const auto &element : set->items())
-            annotate(element, arguments[0]);
-    }
-}
-
-/**
- * @brief Every type text a run has met, each read once.
- *
- * The module's own types are read when the run starts and reached by index.
- * This table is for text that arrives at run time -- a collection's contract, a
- * builtin member's parameter type, a field's type the first time its class is
- * used -- and is looked up by the text. An entry's address never changes, so a
- * cache may keep a pointer to it for the rest of the run.
- */
-class VmTypeTable
-{
-public:
-    const VmType &operator[](const std::string_view text) const
-    {
-        auto found = m_types.find(text);
-        if (found == m_types.end())
-        {
-            found = m_types.emplace(std::string(text), parse_vm_type(text)).first;
-        }
-        return found->second;
-    }
-
-private:
-    struct TextHash
-    {
-        using is_transparent = void;
-        std::size_t operator()(const std::string_view text) const noexcept
-        {
-            return std::hash<std::string_view>{}(text);
-        }
-    };
-    mutable std::unordered_map<std::string, VmType, TextHash, std::equal_to<>> m_types;
-};
 
 class VmRuntimeServices final : public IRuntime
 {
@@ -664,7 +223,8 @@ public:
 
     void annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &) const override
     {
-        annotate(value, types[type_name]);
+        if (!annotate(value, types[type_name]))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
     }
 
     void enforce_declared_type(const Value &value,
@@ -696,7 +256,8 @@ void VmRuntimeServices::enforce_declared_type(const Value &value,
     {
         throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(type_name), value.type_name()));
     }
-    annotate(value, type);
+    if (!annotate(value, type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
 void VmRuntimeServices::enforce_list_element(const Ref<ListeData> &list,
@@ -731,8 +292,8 @@ void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary
                                                              display_runtime_type(constraint->value_type),
                                                              value.type_name()));
     }
-    annotate(key, key_type);
-    annotate(value, value_type);
+    if (!annotate(key, key_type) || !annotate(value, value_type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
 void execute_type_check(std::vector<Value> &stack, const VmType &type)
@@ -754,7 +315,8 @@ void execute_type_assertion(std::vector<Value> &stack,
                                                              display_runtime_type(type.text),
                                                              stack.back().type_name()));
     }
-    annotate(stack.back(), type);
+    if (!annotate(stack.back(), type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
 void execute_add(std::vector<Value> &stack)
@@ -1950,7 +1512,7 @@ std::vector<VmType> read_types(const std::vector<std::string> &texts)
     types.reserve(texts.size());
     for (const std::string &text : texts)
     {
-        types.push_back(parse_vm_type(text));
+        types.push_back(parse_runtime_type(text));
     }
     return types;
 }

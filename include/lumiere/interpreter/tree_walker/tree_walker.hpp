@@ -14,6 +14,7 @@
 #include "lumiere/interpreter/tree_walker/environment.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/runtime/value.hpp"
+#include "lumiere/interpreter/runtime/runtime_type.hpp"
 
 namespace lumiere
 {
@@ -204,6 +205,13 @@ namespace lumiere
         std::string m_current_source_text;
         std::size_t m_incremental_unit = 0;
         LumiTestRuntimeOptions m_lumitest_options;
+
+        // A type is read from its text once and kept for the rest of the run,
+        // keyed by that text -- see runtime_type.hpp. Every entry point ends up
+        // here: a collection's contract, IRuntime's by-name checks, and a
+        // declared annotation (a parameter, a field, a return type) once its
+        // aliases are resolved to text by `resolved_annotation_name`.
+        mutable RuntimeTypeCache m_type_cache;
 
         /**
          * @brief Evaluates an expression and returns its resulting runtime value.
@@ -474,13 +482,6 @@ namespace lumiere
         bool matches_type_name(const Value &value, const Token &type_token) const;
         bool matches_type_name(const Value &value, const TypeExpr &type) const;
 
-        /**
-         * @brief Splits a generic type string into its top-level type arguments.
-         *
-         * For example, this separates the inner parts of `Dictionnaire[Texte, Liste[Entier]]`
-         * without breaking nested generic types apart incorrectly.
-         */
-        std::vector<std::string> split_generic_arguments(const std::string &generic_spec) const;
 
         /**
          * @brief Extracts and stores runtime constraints from a declared type annotation.
@@ -515,18 +516,6 @@ namespace lumiere
                                            const Value &entry_value,
                                            const Token &site,
                                            const std::string &context) const;
-
-        /**
-         * @brief Returns true if the class reaches the named ancestor through its parent chain.
-         */
-        bool class_derives_from(const Ref<LumiereClass> &klass,
-                                const std::string &ancestor_name) const;
-
-        /**
-         * @brief Returns true if the class or one of its ancestors advertises the named interface.
-         */
-        bool class_implements_interface(const Ref<LumiereClass> &klass,
-                                        const std::string &interface_name) const;
 
         /**
          * @brief Checks that a value matches a declared type annotation.
