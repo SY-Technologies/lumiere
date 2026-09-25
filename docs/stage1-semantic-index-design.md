@@ -1,11 +1,14 @@
 # Stage 1 design: the semantic tooling index
 
 Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
-("semantic tooling index") into something implementable. Rollout steps 1
-and 2 are implemented (step 2 now covers local declarations too, not just
-module-level `declare_value`/`declare_type`). Step 3 is implemented for
-`IdentifierExpr` reads and writes; its `MemberAccessExpr` third, and steps
-4-5 (switching `inspect_source` over, deleting the old heuristics), remain.
+("semantic tooling index") into something implementable. Rollout steps 1-3
+are implemented: step 2 covers local declarations too (not just
+module-level `declare_value`/`declare_type`), and step 3 covers
+`IdentifierExpr` reads/writes and `MemberAccessExpr` reads (member *writes*
+-- `objet.champ = valeur` -- aren't resolved by anything today, index or
+not; see the analyzer's own EGAL handling, which only special-cases an
+`IdentifierExpr` target). Steps 4-5 (switching `inspect_source` over to
+`occurrence_at`, deleting the old heuristics it replaces) remain.
 
 ## Where we actually start from
 
