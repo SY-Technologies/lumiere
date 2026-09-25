@@ -1878,6 +1878,91 @@ turned out to be its own piece of work, and the tree walker is the reference
 engine, not what the performance target is measured against. Left for a pass
 that gives the tree walker its own once-read type, sharing what can be
 shared with `VmType` rather than duplicating its parse.
+
+### Third: the tree walker reads it once too, and shares the reading
+
+`VmType`, `parse_vm_type`, `matches`, `annotate`, `class_satisfies` and the
+text-scanning helpers beneath them moved out of the VM's anonymous namespace
+into `include/lumiere/interpreter/runtime/runtime_type.hpp`, renamed
+`RuntimeType` / `parse_runtime_type`, unchanged otherwise: `vm.cpp` now holds
+`using VmType = RuntimeType;` and `using VmTypeTable = RuntimeTypeCache;`,
+and every VM call site is the same call it was. `annotate` returns `bool`
+instead of throwing, so it no longer needs a VM-specific exception to report
+a merge conflict; the four call sites that used to let it throw now check
+the return and raise their engine's own error, with the same wording as
+before.
+
+The tree walker's own `matches_type_name`/`register_value_annotation` --
+the hand-written trim-scan-split-compare engine `tree_walker_types.cpp` had
+kept since before this task -- are gone. Both `Token`- and `TypeExpr`-typed
+entry points now read a `RuntimeTypeCache` keyed by text: the token overload
+by its lexeme directly, the `TypeExpr` overload by `resolved_annotation_name`
+(the same alias resolution `register_value_annotation` already ran on every
+call, now shared by the match too, since a `RuntimeType` is looked up, not
+walked, so there is only one place left to resolve aliases before checking
+one). Text, not the `TypeExpr` node's own address: a return type in particular is
+not always the same declaration read twice -- the call that binds a return
+value resolves it fresh through the closure's own alias scope every time --
+so caching against a node a caller may hold in a reused local variable would
+have cached the wrong answer for the next unrelated call that reused its
+address. Address-keyed caching was tried first and reverted after exactly
+that: a method's return-type check started failing against its own return
+value, because the local `TypeExpr` copy holding the return type sits at the
+same stack address on every call, whichever function is returning.
+
+Sharing the descriptor also surfaced a second, narrower bug, caught by
+`CollectionConstraints.BelongToValuesRatherThanTheAnnotatingRuntime`: a
+`Dictionnaire[Texte, Entier]` contract came back with a leading space, `"
+Entier"`, not `"Entier"`. `parse_runtime_type`'s own `split_generic_arguments`
+does not trim the text either side of a comma; the VM never noticed, because
+`same_contract` already trims on every comparison, but the tree walker used
+to store the trimmed text directly, and this test reads the stored text, not
+a comparison. Fixed by trimming once, in `parse_runtime_type`, rather than
+on every later comparison -- which also means one fewer comparison the VM
+was making unnecessarily.
+
+Sharing it surfaced a third thing, and this one was the point of the task: a
+parameter, field or return type written as a generic collection --
+`catalogue: Dictionnaire[Texte, Produit]`, `commandes`'s own case -- reached
+`matches_type_name(Value, TypeExpr)`'s `Dictionnaire`/`Liste`/`ListeFixe`/`Ensemble`
+branches, which walked every element on every check with no contract fast
+path at all. The Token overload had one, from step one of this task; this
+one, reached from every declared-in-source generic annotation, never did.
+Both now go through the same `matches`, so both have it.
+
+`commandes --tw`, medians of five, this repository's own commit before this
+change against after, `benchmarks/commandes.lum` copied to two paths (62 and
+203 characters, matching the 63/201 of the step-two measurement above so the
+two are comparable):
+
+| source path | before | after |
+| --- | --- | --- |
+| 62 characters | 8.368 s | 2.938 s |
+| 203 characters | 9.256 s | 2.980 s |
+
+2.85x to 3.11x faster, and the path now moves the result by 1.4% where it
+moved it by 10.6%: within noise, matching the VM's own 2.7% from step two.
+The eight probes, `journal` and `expressions`, `--tw`, medians of five:
+`method_calls` 9.522s → 9.459s and `wide_object` 0.403s → 0.403s unchanged
+(neither one checks a declared generic); `integer_loop`, `function_calls`,
+`text_iteration` unchanged within their bands; `text_calls` 0.0164s →
+0.0145s, `typed_list` 0.135s → 0.130s, `dictionary_lookup` 0.0805s →
+0.0722s, `journal` 1.592s → 1.558s and `expressions` 7.157s → 6.489s all
+faster too -- every one of them checks at least one declared generic or
+class-typed argument somewhere in its loop, and the missing fast path cost
+all of them something, not only `commandes`. Nothing regressed.
+
+Full suite passes under Release (530/530) and under
+`-fsanitize=address,undefined` (530/530, `CliIntegration`'s subprocess tests
+included); `scripts/check-leaks` finds nothing on either engine, cycles
+included; `scripts/fuzz` (620 mutations across `syntaxe`, `utf8`,
+`execution` and `nombres`) found nothing.
+
+`split_generic_arguments`, `class_derives_from` and `class_implements_interface`
+are gone from the tree walker, along with the member function that used to
+scan a generic's text by hand -- `class_satisfies`, shared with the VM, is
+what is left. The acceptance this task's brief set is now met on both
+engines.
 ## Reading the type a value already has (Task 7)
 
 ### The gap
