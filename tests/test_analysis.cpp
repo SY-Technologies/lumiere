@@ -1223,6 +1223,75 @@ TEST(SourceInspection, DocumentsAMemberAccessedThroughAnInterfaceTypedParameter)
     EXPECT_EQ(inspection->return_type, "Entier");
 }
 
+TEST(SourceInspection, ResolvesAClassesOwnDeclarationSite)
+{
+    const std::string source = "classe Point {}\n";
+    const auto inspection = inspect_source(source, source.find("Point"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "classe");
+}
+
+TEST(SourceInspection, ResolvesAnInterfacesOwnDeclarationSite)
+{
+    const std::string source = "interface Forme {\n    fonction aire() -> Entier\n}\n";
+    const auto inspection = inspect_source(source, source.find("Forme"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "interface");
+}
+
+TEST(SourceInspection, ResolvesAMethodsOwnDeclarationAsMethodeNotFonction)
+{
+    // The same inconsistency as the class-field test above, on the other
+    // declaration_inspection_from_stmt kind: collect_statement's
+    // FunctionDeclStmt branch always says "fonction", even when it
+    // recurses into a class's own members -- only a *reference* to the
+    // method (member_declaration_inspection, or now the index) ever said
+    // "méthode". declaration_at plus inspection_from_symbol's is_member_
+    // declaration check corrects this at the declaration site too.
+    const std::string source =
+        "classe Point {\n"
+        "    fonction abscisse() -> Entier { retourne 0 }\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.find("abscisse"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "méthode");
+}
+
+TEST(SourceInspection, ResolvesAPourLoopVariablesOwnDeclarationSite)
+{
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    pour chaque x dans [1, 2, 3] {\n"
+        "        afficher(x)\n"
+        "    }\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.find("x dans") );
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "variable de boucle");
+}
+
+TEST(SourceInspection, ResolvesAMatchPatternBindingsOwnDeclarationSite)
+{
+    const std::string source =
+        "classe ErreurTest réalise Erreur {}\n"
+        "fonction source() -> Résultat[Entier, ErreurTest] { retourne Succès(1) }\n"
+        "fonction cible() -> Résultat[Rien, ErreurTest] {\n"
+        "  agir selon source() {\n"
+        "    Succès(v) -> afficher(v)\n"
+        "    Échec(e) -> propager\n"
+        "  }\n"
+        "  retourne Succès(rien)\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.find("(v)") + 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "variable");
+}
+
 TEST(SemanticIndexBinding, DeclarationAtFindsASymbolByItsOwnDeclaringSpan)
 {
     // occurrence_at only ever matches a recorded Occurrence -- a use.
