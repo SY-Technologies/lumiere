@@ -1083,6 +1083,66 @@ native_module_exports(const std::string_view module_name)
         return exports;
     }
 
+    if (module_name == "Regex")
+    {
+        exports.types.emplace("Motif", SemanticTypeKind::CLASS);
+        exports.types.emplace("Correspondance", SemanticTypeKind::CLASS);
+        exports.types.emplace("ErreurRegex", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurRegex", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurRegex");
+
+        const TypeExpr motif = named("Motif");
+        const TypeExpr correspondance = named("Correspondance");
+        const TypeExpr error = named("ErreurRegex");
+        export_callable(
+            exports,
+            "analyser",
+            callable(
+                {parameter("source", "Texte")},
+                generic("Résultat", {motif, error})));
+        export_callable(
+            exports,
+            "correspond",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                named("Logique")));
+        export_callable(
+            exports,
+            "chercher",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                union_type({correspondance, named("Rien")})));
+        export_callable(
+            exports,
+            "trouver_tous",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                generic("Liste", {correspondance})));
+        for (const char *name : {"remplacer", "remplacer_tout"})
+        {
+            export_callable(
+                exports,
+                name,
+                callable(
+                    {
+                        parameter("motif", "Motif"),
+                        parameter("texte", "Texte"),
+                        parameter("remplacement", "Texte"),
+                    },
+                    named("Texte")));
+        }
+        return exports;
+    }
+
     if (module_name == "LumiTest")
     {
         return exports;
