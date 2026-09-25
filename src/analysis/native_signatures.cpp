@@ -1053,6 +1053,36 @@ native_module_exports(const std::string_view module_name)
         return exports;
     }
 
+    if (module_name == "JSON")
+    {
+        exports.types.emplace("ErreurJSON", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurJSON", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurJSON");
+
+        const TypeExpr error = named("ErreurJSON");
+        const auto result = [&](TypeExpr success) {
+            return generic("Résultat", {std::move(success), error});
+        };
+        export_callable(
+            exports,
+            "analyser",
+            callable({parameter("texte", "Texte")}, result(named("Universel"))));
+        export_callable(
+            exports,
+            "encoder",
+            callable({parameter("valeur", "Universel")}, result(named("Texte"))));
+        export_callable(
+            exports,
+            "encoder_indenté",
+            callable(
+                {
+                    parameter("valeur", "Universel"),
+                    parameter("espaces", "Entier"),
+                },
+                result(named("Texte"))));
+        return exports;
+    }
+
     if (module_name == "LumiTest")
     {
         return exports;

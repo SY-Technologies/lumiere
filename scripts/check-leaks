@@ -37,6 +37,7 @@ programs=(
     examples/tri_rapide.lum
     examples/objets.lum
     examples/collections_demo.lum
+    examples/json_demo.lum
     benchmarks/integer_loop.lum
     benchmarks/typed_list.lum
     benchmarks/dictionary_lookup.lum

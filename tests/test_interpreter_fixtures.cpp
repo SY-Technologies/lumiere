@@ -4548,6 +4548,128 @@ TEST(InterpreterBuiltinModules, RejectsSortingNonNombreInCollectionsTrier)
     EXPECT_NE(error.find("Collections.trier ne peut pas trier non_nombre"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, SupportsJsonParsingEncodingAndErrors)
+{
+    // Mirrors what was manually verified against both engines on the CLI
+    // before this test was written. Lumiere text literals have no escape
+    // syntax, so JSON source text containing '"' is built by concatenating
+    // a Symbole quote ('"') in, exactly as a real Lumiere program would have
+    // to.
+    const auto [output, completed] = execute_program(
+        "importer JSON\n"
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  soit q = '\"'\n"
+        "  soit texte = \"{\" + q + \"nom\" + q + \": \" + q + \"Ada\" + q + \", \" + q + \"age\" + q + \": 36, \" + q + \"actif\" + q + \": true, \" + q + \"tags\" + q + \": [1, 2.5, null, \" + q + \"x\" + q + \"]}\"\n"
+        "  soit v = agir selon JSON.analyser(texte) {\n"
+        "    Succès(val) -> val\n"
+        "    Échec(e) -> { afficher(\"echec inattendu: \" + e.cause) rien }\n"
+        "  }\n"
+        "  afficher(\"nom: \" + v[\"nom\"])\n"
+        "  afficher(\"age: \" + v[\"age\"])\n"
+        "  afficher(\"actif: \" + v[\"actif\"])\n"
+        "  afficher(\"tags: \" + v[\"tags\"])\n"
+        "  soit compact = agir selon JSON.encoder(v) {\n"
+        "    Succès(t) -> t\n"
+        "    Échec(e) -> \"echec: \" + e.cause\n"
+        "  }\n"
+        "  afficher(compact)\n"
+        "  soit joli = agir selon JSON.encoder_indenté(v, 2) {\n"
+        "    Succès(t) -> t\n"
+        "    Échec(e) -> \"echec: \" + e.cause\n"
+        "  }\n"
+        "  afficher(joli)\n"
+        "  soit mauvais = \"{\" + q + \"a\" + q + \": 1,}\"\n"
+        "  agir selon JSON.analyser(mauvais) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur: \" + e.cause + \" ligne=\" + e.ligne + \" colonne=\" + e.colonne)\n"
+        "  }\n"
+        "  soit texte_dup = \"{\" + q + \"a\" + q + \": 1, \" + q + \"a\" + q + \": 2}\"\n"
+        "  agir selon JSON.analyser(texte_dup) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur dup: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon JSON.analyser(\"99999999999999999999\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur gros: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon JSON.encoder(Maths.non_nombre) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur non_nombre: \" + e.cause)\n"
+        "  }\n"
+        "  soit cyclique_liste = [1, 2, 3]\n"
+        "  cyclique_liste[0] = cyclique_liste\n"
+        "  agir selon JSON.encoder(cyclique_liste) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur cycle: \" + e.cause + \" chemin=\" + e.chemin)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "nom: Ada\n"
+        "age: 36\n"
+        "actif: vrai\n"
+        "tags: [1, 2.5, rien, x]\n"
+        "{\"nom\":\"Ada\",\"age\":36,\"actif\":true,\"tags\":[1,2.5,null,\"x\"]}\n"
+        "{\n"
+        "  \"nom\": \"Ada\",\n"
+        "  \"age\": 36,\n"
+        "  \"actif\": true,\n"
+        "  \"tags\": [\n"
+        "    1,\n"
+        "    2.5,\n"
+        "    null,\n"
+        "    \"x\"\n"
+        "  ]\n"
+        "}\n"
+        "erreur: clé de chaîne attendue dans un objet JSON ligne=1 colonne=9\n"
+        "erreur dup: clé d'objet dupliquée: \"a\"\n"
+        "erreur gros: nombre entier hors des limites de Entier\n"
+        "erreur non_nombre: infini et non_nombre ne sont pas des nombres JSON\n"
+        "erreur cycle: structure cyclique détectée chemin=$[0]\n");
+}
+
+TEST(InterpreterBuiltinModules, JsonAnalyserDecodesUnicodeEscapesAndRejectsRawControlCharacters)
+{
+    const auto [output, completed] = execute_program(
+        "importer JSON\n"
+        "fonction principal() {\n"
+        "  soit q = '\"'\n"
+        "  soit texte = \"\" + q + \"A\\u00e9\\ud83d\\ude00\" + q\n"
+        "  agir selon JSON.analyser(texte) {\n"
+        "    Succès(v) -> afficher(v)\n"
+        "    Échec(e) -> afficher(\"erreur: \" + e.cause)\n"
+        "  }\n"
+        "  soit avec_controle = \"\" + q + \"a\" + \"\t\" + \"b\" + q\n"
+        "  agir selon JSON.analyser(avec_controle) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur controle: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "Aé😀\n"
+        "erreur controle: caractère de contrôle non échappé dans une chaîne\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsJsonEncoderIndenteOutOfRangeSpaces)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer JSON\n"
+        "fonction principal() {\n"
+        "  afficher(JSON.encoder_indenté(42, 9))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("JSON.encoder_indenté attend un nombre d'espaces entre 0 et 8"), std::string::npos);
+}
+
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
