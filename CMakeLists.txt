@@ -52,6 +52,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/lumidessin.cpp
     src/interpreter/stdlib/lumidessin/values.cpp
     src/interpreter/stdlib/lumidessin/raster.cpp
+    src/interpreter/stdlib/lumidessin/text.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp
@@ -117,6 +118,50 @@ endif()
 include(cmake/EmbedStdlibDocs.cmake)
 
 # -----------------------------
+# LumiDessin: bundled font (docs/stdlib-lumidessin.md, "Platform backend")
+# -----------------------------
+#
+# stb_truetype.h is vendored the same way googletest is (FetchContent,
+# pinned commit). The Inter font ships from upstream as a zip of many
+# weights; FetchContent_MakeAvailable populates the whole archive (no
+# CMakeLists.txt inside it, so this just downloads and extracts -- there is
+# no subproject to configure), and only the one static Regular .ttf inside
+# it is ever read, by the embed step below.
+if(LUMIERE_ENABLE_LUMIDESSIN)
+    include(FetchContent)
+
+    FetchContent_Declare(
+        stb
+        GIT_REPOSITORY https://github.com/nothings/stb.git
+        GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(stb)
+
+    FetchContent_Declare(
+        lumidessin_inter_font
+        URL https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(lumidessin_inter_font)
+
+    set(LUMIDESSIN_FONT_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${LUMIDESSIN_FONT_GEN_DIR}")
+    set(LUMIDESSIN_FONT_SOURCE "${lumidessin_inter_font_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf")
+    set(LUMIDESSIN_FONT_GENERATED "${LUMIDESSIN_FONT_GEN_DIR}/lumidessin_font.generated.hpp")
+
+    execute_process(
+        COMMAND python3 "${PROJECT_SOURCE_DIR}/scripts/embed_binary.py"
+                "${LUMIDESSIN_FONT_SOURCE}" "${LUMIDESSIN_FONT_GENERATED}" "INTER_REGULAR_TTF"
+        RESULT_VARIABLE LUMIDESSIN_FONT_EMBED_RESULT
+    )
+    if(NOT LUMIDESSIN_FONT_EMBED_RESULT EQUAL 0)
+        message(FATAL_ERROR "LumiDessin: failed to embed the bundled font (${LUMIDESSIN_FONT_SOURCE})")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LUMIDESSIN_FONT_SOURCE}")
+endif()
+
+# -----------------------------
 # Library target
 # -----------------------------
 
@@ -142,6 +187,14 @@ target_include_directories(lumiere
         ${PROJECT_SOURCE_DIR}/src/interpreter
         ${STDLIB_DOC_GEN_DIR}
 )
+
+if(LUMIERE_ENABLE_LUMIDESSIN)
+    target_include_directories(lumiere
+        PRIVATE
+            ${stb_SOURCE_DIR}
+            ${LUMIDESSIN_FONT_GEN_DIR}
+    )
+endif()
 
 if(LUMIERE_ENABLE_WARNINGS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

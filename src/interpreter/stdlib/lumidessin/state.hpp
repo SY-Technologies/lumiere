@@ -121,4 +121,26 @@ void bind_canevas_drawing_methods(const Ref<LumiereObject> &object,
                                   CanvasState *state,
                                   const NativeFunctionFactory &make_native_function);
 
+// Defined in raster.cpp. Source-over blend of `color` into the pixel at
+// (x, y), scaled by `coverage` in [0, 1]. Bounds-checked (a no-op outside
+// the canvas), so every caller -- every SDF primitive, and text.cpp's glyph
+// compositing -- can call it without its own clip test.
+void blend_pixel(CanvasState &canvas, int x, int y, const ColorState &color, double coverage);
+
+// ---------------------------------------------------------------------------
+// Dimensions -- immutable value type with plain readable fields (not
+// methods), returned by mesurer_texte().
+// ---------------------------------------------------------------------------
+
+Value make_dimensions_value(int32_t width, int32_t height);
+
+// ---------------------------------------------------------------------------
+// Text -- defined in text.cpp; called once by make_canevas_value() to add
+// dessiner_texte/mesurer_texte to a freshly constructed canvas object.
+// ---------------------------------------------------------------------------
+
+void bind_canevas_text_methods(const Ref<LumiereObject> &object,
+                               CanvasState *state,
+                               const NativeFunctionFactory &make_native_function);
+
 } // namespace lumiere
