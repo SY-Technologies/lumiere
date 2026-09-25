@@ -2,8 +2,10 @@
 
 Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
 ("semantic tooling index") into something implementable. Rollout steps 1
-and 2 (below) are implemented; steps 3-5 (occurrence recording, switching
-inspect_source over, deleting the old heuristics) remain.
+and 2 are implemented (step 2 now covers local declarations too, not just
+module-level `declare_value`/`declare_type`). Step 3 is implemented for
+`IdentifierExpr` reads and writes; its `MemberAccessExpr` third, and steps
+4-5 (switching `inspect_source` over, deleting the old heuristics), remain.
 
 ## Where we actually start from
 

@@ -8,6 +8,7 @@
 #include "lumiere/diagnostics/diagnostic.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -124,6 +125,174 @@ TEST(SemanticIndexBinding, ADuplicateDeclarationDiagnosesAndLeavesTheFirstSymbol
             const lumiere::Symbol *symbol = result.model->index.symbol(id);
             return symbol != nullptr && symbol->name == "x";
         });
+    EXPECT_EQ(count, 1);
+}
+
+// Step 3 of the rollout: local declarations get SymbolIds too (completing
+// what step 2 did for module-level declare_value/declare_type), and every
+// resolved IdentifierExpr read/write records an Occurrence against them.
+// See docs/stage1-semantic-index-design.md's rollout plan.
+
+TEST(SemanticIndexBinding, RecordsLocalParameterAndVariableDeclarationsInANestedScope)
+{
+    const std::string source =
+        "fonction f(x: Entier) -> Rien {\n"
+        "    soit y = x\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    // Locals don't live in the module scope -- they're recorded in whichever
+    // nested Scope push_scope() opened for the function body. Scan every
+    // scope but the module's for them.
+    const lumiere::Symbol *param_x = nullptr;
+    const lumiere::Symbol *local_y = nullptr;
+    for (std::uint32_t raw = 1;
+         const lumiere::Scope *scope = result.model->index.scope(lumiere::ScopeId{raw});
+         ++raw)
+    {
+        for (const lumiere::SymbolId id : scope->symbols)
+        {
+            const lumiere::Symbol *symbol = result.model->index.symbol(id);
+            ASSERT_NE(symbol, nullptr);
+            if (symbol->name == "x")
+            {
+                param_x = symbol;
+            }
+            if (symbol->name == "y")
+            {
+                local_y = symbol;
+            }
+        }
+    }
+    ASSERT_NE(param_x, nullptr);
+    ASSERT_NE(local_y, nullptr);
+    EXPECT_EQ(param_x->kind, lumiere::SemanticSymbolKind::PARAMETER);
+    EXPECT_EQ(local_y->kind, lumiere::SemanticSymbolKind::VARIABLE);
+    EXPECT_NE(param_x->scope, lumiere::kModuleScopeId);
+}
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForALocalVariable)
+{
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    soit x = 1\n"
+        "    soit y = x\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t read_offset = source.rfind('x'); // the `x` in `soit y = x`
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, read_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "x");
+    EXPECT_EQ(resolved->kind, lumiere::SemanticSymbolKind::VARIABLE);
+    // Resolves back to the declaring `x`, not a distinct symbol.
+    EXPECT_EQ(resolved->declaration_span.start, source.find('x'));
+}
+
+TEST(SemanticIndexBinding, RecordsAWriteOccurrenceForAnAssignmentTarget)
+{
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    soit x = 1\n"
+        "    x = 2\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t assign_offset = source.rfind('x'); // the `x` in `x = 2`
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, assign_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_TRUE(occurrence->is_write);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "x");
+}
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAModuleLevelValue)
+{
+    const std::string source = "soit x = 5\nsoit y = x\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t read_offset = source.rfind('x');
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, read_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+    EXPECT_EQ(result.model->index.symbol(occurrence->symbol)->scope, lumiere::kModuleScopeId);
+}
+
+TEST(SemanticIndexBinding, UnresolvedNamesRecordNoOccurrenceButStayWellFormed)
+{
+    // analyze_source only builds a model at all once the parser has zero
+    // diagnostics (analysis.cpp bails before semantic analysis otherwise),
+    // so "recovery" at this layer means a name that fails to *resolve*
+    // (diagnose_value_read's LUM-S0057 path) rather than a reparsed tree.
+    // Recovery rule 2 (docs/stage1-semantic-index-design.md) says such a
+    // read must simply not be recorded, never recorded with a dangling
+    // SymbolId -- checked here by scanning every offset in the source and
+    // confirming occurrence_at is either nullptr or resolves cleanly.
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    soit y = inconnu\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_TRUE(has_diagnostic(result, "LUM-S0057"));
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t unresolved_offset = source.rfind("inconnu");
+    for (std::size_t offset = 0; offset <= source.size(); ++offset)
+    {
+        if (const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, offset))
+        {
+            EXPECT_NE(result.model->index.symbol(occurrence->symbol), nullptr) << "offset " << offset;
+            EXPECT_NE(offset, unresolved_offset) << "an unresolved read must not record an occurrence";
+        }
+    }
+}
+
+TEST(SemanticIndexBinding, ADuplicateLocalDeclarationDiagnosesAndLeavesTheFirstSymbolIndexed)
+{
+    // Same guarantee as the module-level duplicate test above, but for
+    // declare_local's own emplace-then-index sequencing.
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    soit x = 1\n"
+        "    soit x = 2\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_TRUE(has_diagnostic(result, "LUM-S0007"));
+    ASSERT_NE(result.model, nullptr);
+
+    int count = 0;
+    for (std::uint32_t raw = 1;
+         const lumiere::Scope *scope = result.model->index.scope(lumiere::ScopeId{raw});
+         ++raw)
+    {
+        for (const lumiere::SymbolId id : scope->symbols)
+        {
+            const lumiere::Symbol *symbol = result.model->index.symbol(id);
+            ASSERT_NE(symbol, nullptr);
+            if (symbol->name == "x")
+            {
+                ++count;
+            }
+        }
+    }
     EXPECT_EQ(count, 1);
 }
 
