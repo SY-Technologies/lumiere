@@ -663,8 +663,17 @@ private:
             if (const auto found = m_scopes.back().find(name);
                 found != m_scopes.back().end())
             {
-                found->second.type = std::move(type);
+                found->second.type = type;
             }
+        }
+        // declare_local runs before a local's type is known (an
+        // initializer or parameter signature hasn't resolved yet); this is
+        // the index's half of the same after-the-fact update the
+        // LocalBinding above just got.
+        if (const Symbol *symbol = m_analysis.model.index.lookup(
+                current_index_scope(), name, SymbolNamespace::Value))
+        {
+            m_analysis.model.index.set_type(symbol->id, std::move(type));
         }
     }
 
@@ -1305,6 +1314,19 @@ private:
             }
             if (const SemanticTypeRef *type = find_type(syntax.name))
             {
+                // A type annotation (`soit p: Point`) never goes through
+                // resolve_expression/diagnose_value_read, so it's the one
+                // reference kind record_value_occurrence never sees. Hook
+                // it here instead, at the one place that already resolves
+                // a NAMED type's name to a declaration (or, for a builtin
+                // like Entier, to nothing indexed -- record_occurrence is
+                // simply skipped then, same as any other unindexed name).
+                if (const Symbol *resolved = m_analysis.model.index.lookup(
+                        kModuleScopeId, syntax.name, SymbolNamespace::Type))
+                {
+                    m_analysis.model.index.record_occurrence(
+                        span_of(syntax.source, m_index_source), resolved->id, /*is_write=*/false);
+                }
                 return *type;
             }
             diagnose(syntax.source, "LUM-S0003", "type inconnu: '" + syntax.name + "'");
@@ -3754,7 +3776,7 @@ private:
             m_loop_obligation_baselines.push_back(baseline);
             ++m_loop_depth;
             push_scope();
-            declare_local(loop->variable, SemanticSymbolKind::VARIABLE);
+            declare_local(loop->variable, SemanticSymbolKind::LOOP_VARIABLE);
             if (const auto iterable_type =
                     m_analysis.model.m_expression_types.find(loop->iterable.get());
                 iterable_type != m_analysis.model.m_expression_types.end())

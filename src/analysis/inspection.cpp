@@ -1009,6 +1009,29 @@ std::optional<Inspection> inspection_from_symbol(const Symbol &symbol,
                           symbol.name + (type.empty() ? "" : ": " + type),
                           {}, type, symbol.documentation, start_offset, end_offset};
     }
+    if (symbol.kind == SemanticSymbolKind::LOOP_VARIABLE)
+    {
+        // Matches collect_statement's own "variable de boucle" label for a
+        // `pour` binding -- but the real inferred element type (now that
+        // set_local_type threads it into the index too) rather than that
+        // scan's hardcoded "Entier", which was never true for a `pour`
+        // over anything but a range.
+        const std::string type = symbol.type != nullptr ? std::string(symbol.type->name()) : "";
+        return Inspection{symbol.name, "variable de boucle", "variable de boucle " + symbol.name,
+                          {}, type, symbol.documentation, start_offset, end_offset};
+    }
+    if (symbol.kind == SemanticSymbolKind::VARIABLE)
+    {
+        // No declaration Stmt reaches here for a match-pattern binding (an
+        // `agir selon` arm's `Succès(x)`/`Type x` capture) or a local
+        // `importer` binding (bind_imported_value's declare_local call
+        // passes none) -- neither collect_statements covered before, so
+        // this is new coverage rather than a reformat of something tested.
+        const std::string type = symbol.type != nullptr ? std::string(symbol.type->name()) : "";
+        return Inspection{symbol.name, "variable",
+                          "soit " + symbol.name + (type.empty() ? "" : ": " + type),
+                          {}, type, symbol.documentation, start_offset, end_offset};
+    }
     return std::nullopt;
 }
 

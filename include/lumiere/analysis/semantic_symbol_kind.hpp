@@ -19,6 +19,11 @@ enum class SemanticSymbolKind
     CLASS,
     INTERFACE,
     MODULE,
+    /** A `pour` loop's own binding -- kept distinct from VARIABLE because
+     *  it has no backing VarDeclStmt (there's no `soit`/`fixe` in `pour x
+     *  dans ...`), so it needs its own hover formatting
+     *  (inspection.cpp's inspection_from_symbol). */
+    LOOP_VARIABLE,
 };
 
 } // namespace lumiere
