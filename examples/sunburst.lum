@@ -1,0 +1,74 @@
+importer LumiDessin
+importer Collections.{étendue}
+importer Maths.{sin, cos, degres_vers_radians}
+
+fonction executer() -> Résultat[Rien, LumiDessin.ErreurImage] {
+    soit toile = LumiDessin.canevas(700, 700)
+    toile.effacer(LumiDessin.couleur(18, 10, 28))
+
+    soit cx = 350.0
+    soit cy = 350.0
+
+    soit palette = [
+        LumiDessin.couleur(255, 87, 87),
+        LumiDessin.couleur(255, 159, 67),
+        LumiDessin.couleur(255, 224, 102),
+        LumiDessin.couleur(129, 236, 175),
+        LumiDessin.couleur(84, 199, 255),
+        LumiDessin.couleur(178, 132, 255),
+        LumiDessin.couleur(255, 133, 214)
+    ]
+
+    // Rayons du soleil : des lignes du centre vers le bord, longueur
+    // ondulante, couleur qui tourne dans la palette.
+    soit rayons = 72
+    pour chaque i dans étendue(0, rayons, 1) {
+        soit angle = degres_vers_radians(i * 360.0 / rayons)
+        soit longueur = 220.0 + 60.0 * sin(degres_vers_radians(i * 25.0))
+        soit x2 = cx + longueur * cos(angle)
+        soit y2 = cy - longueur * sin(angle)
+        toile.tracer_ligne(cx, cy, x2, y2, palette[i % palette.taille()], 3.0)
+    }
+
+    // Anneaux concentriques : des cercles fins qui structurent le mandala.
+    soit anneaux = 6
+    pour chaque a dans étendue(1, anneaux + 1, 1) {
+        soit rayon = a * 40.0
+        toile.tracer_cercle(cx, cy, rayon, palette[a % palette.taille()], 2.0)
+    }
+
+    // Une couronne de pastilles pleines, espacées régulièrement sur un
+    // cercle, chacune avec un petit contour sombre.
+    soit pastilles = 24
+    soit rayon_couronne = 260.0
+    pour chaque i dans étendue(0, pastilles, 1) {
+        soit angle = degres_vers_radians(i * 360.0 / pastilles)
+        soit x = cx + rayon_couronne * cos(angle)
+        soit y = cy - rayon_couronne * sin(angle)
+        soit couleur = palette[i % palette.taille()]
+        toile.remplir_cercle(x, y, 14.0, couleur)
+        toile.tracer_cercle(x, y, 14.0, LumiDessin.couleur(18, 10, 28), 2.0)
+    }
+
+    // Arcs décoratifs entre les anneaux, à mi-rayon.
+    soit arcs = 12
+    pour chaque i dans étendue(0, arcs, 1) {
+        soit debut = i * 360.0 / arcs
+        toile.tracer_arc(cx, cy, 150.0, debut, 20.0, palette[(i + 3) % palette.taille()], 5.0)
+    }
+
+    // Coeur lumineux au centre.
+    toile.remplir_cercle(cx, cy, 34.0, LumiDessin.couleur(255, 244, 214))
+    toile.tracer_cercle(cx, cy, 34.0, LumiDessin.couleur(255, 159, 67), 4.0)
+
+    toile.enregistrer_png("gallery/sunburst_mosaic.png") ou propager
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> afficher("sunburst enregistré")
+        Échec(e) -> afficher("erreur: " + e.cause)
+    }
+}
