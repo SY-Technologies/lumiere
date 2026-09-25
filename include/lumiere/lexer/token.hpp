@@ -117,6 +117,13 @@ namespace lumiere
         uint32_t column;
         std::size_t start_offset;
         std::size_t end_offset;
+        // For TEXTE_LIT and SYMBOLE_LIT only: the literal's body with quotes
+        // stripped and escape sequences resolved (see Tokenizer::scan_string /
+        // scan_symbol). `lexeme` stays the raw source slice, quotes included,
+        // for diagnostics and round-tripping; `decoded` is what the two
+        // execution engines turn into a runtime Value. Empty and unused for
+        // every other token type.
+        std::string decoded;
 
         Token(TokenType type,
               std::string lexeme,

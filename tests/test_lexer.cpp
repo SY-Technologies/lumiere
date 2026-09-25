@@ -289,6 +289,83 @@ TEST(LexerLiterals, ReportsUnterminatedSymbolLiteral)
     EXPECT_EQ(tokens[1].type, TokenType::FIN_FICHIER);
 }
 
+TEST(LexerLiterals, DecodesStandardEscapeSequencesInTextLiterals)
+{
+    const std::vector<Token> tokens = lex(R"("a\nb\tc\rd\\e\"f\'g\0h")");
+
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::TEXTE_LIT);
+    // lexeme stays the raw, still-escaped source slice...
+    EXPECT_EQ(tokens[0].lexeme, R"("a\nb\tc\rd\\e\"f\'g\0h")");
+    // ...decoded is what a runtime Texte is built from.
+    EXPECT_EQ(tokens[0].decoded, std::string("a\nb\tc\rd\\e\"f'g\0h", 15));
+    EXPECT_EQ(tokens[1].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerLiterals, DecodesUnicodeEscapesInTextLiterals)
+{
+    const std::vector<Token> tokens = lex(R"("caf\u{e9} \u{1F600}")");
+
+    ASSERT_EQ(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::TEXTE_LIT);
+    EXPECT_EQ(tokens[0].decoded, "café 😀");
+    EXPECT_EQ(tokens[1].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerLiterals, DecodesEscapeSequencesInSymbolLiterals)
+{
+    const std::vector<Token> tokens = lex(R"('\n' '\'' '\u{e9}')");
+
+    ASSERT_EQ(tokens.size(), 4u);
+    EXPECT_EQ(tokens[0].type, TokenType::SYMBOLE_LIT);
+    EXPECT_EQ(tokens[0].decoded, "\n");
+    EXPECT_EQ(tokens[1].type, TokenType::SYMBOLE_LIT);
+    EXPECT_EQ(tokens[1].decoded, "'");
+    EXPECT_EQ(tokens[2].type, TokenType::SYMBOLE_LIT);
+    EXPECT_EQ(tokens[2].decoded, "é");
+    EXPECT_EQ(tokens[3].type, TokenType::FIN_FICHIER);
+}
+
+TEST(LexerLiterals, RejectsUnknownEscapeSequenceInTextLiterals)
+{
+    const std::vector<Token> tokens = lex(R"("a\zb")");
+
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::ERREUR);
+    EXPECT_NE(tokens[0].lexeme.find("échappement invalide"), std::string::npos);
+}
+
+TEST(LexerLiterals, RejectsUnicodeEscapeMissingBraces)
+{
+    const std::vector<Token> tokens = lex(R"("\u00e9")");
+
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::ERREUR);
+    EXPECT_NE(tokens[0].lexeme.find("échappement invalide"), std::string::npos);
+}
+
+TEST(LexerLiterals, RejectsUnicodeEscapeOutsideValidCodePointRange)
+{
+    const std::vector<Token> too_large = lex(R"("\u{110000}")");
+    ASSERT_GE(too_large.size(), 2u);
+    EXPECT_EQ(too_large[0].type, TokenType::ERREUR);
+    EXPECT_NE(too_large[0].lexeme.find("échappement invalide"), std::string::npos);
+
+    const std::vector<Token> surrogate = lex(R"("\u{d800}")");
+    ASSERT_GE(surrogate.size(), 2u);
+    EXPECT_EQ(surrogate[0].type, TokenType::ERREUR);
+    EXPECT_NE(surrogate[0].lexeme.find("échappement invalide"), std::string::npos);
+}
+
+TEST(LexerLiterals, RejectsEscapeAtEndOfUnterminatedTextLiteral)
+{
+    const std::vector<Token> tokens = lex("\"a\\");
+
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens[0].type, TokenType::ERREUR);
+    EXPECT_NE(tokens[0].lexeme.find("échappement invalide"), std::string::npos);
+}
+
 TEST(LexerIdentifiers, SupportsAccentedIdentifiersAndKeywords)
 {
     const std::vector<Token> tokens = lex("réalise café");

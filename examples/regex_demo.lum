@@ -2,7 +2,7 @@ importer Regex
 
 fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {
     soit motif_mot = Regex.analyser("[A-Za-zÀ-ÿ]+") ou propager
-    soit motif_date = Regex.analyser("(\d{4})-(\d{2})-(\d{2})") ou propager
+    soit motif_date = Regex.analyser("(\\d{4})-(\\d{2})-(\\d{2})") ou propager
 
     afficher("correspond 'bonjour': " + Regex.correspond(motif_mot, "bonjour"))
     afficher("correspond '2024': " + Regex.correspond(motif_mot, "2024"))

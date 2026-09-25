@@ -78,11 +78,12 @@ Value literal_value(const Token &token)
         // this could fail on.
         return Value::decimal(numeric::parse_decimal_literal(token.lexeme).value_or(0.0));
     case TokenType::TEXTE_LIT:
-        return Value::texte(token.lexeme.substr(1, token.lexeme.size() - 2));
+        // decoded is the escape-resolved literal body (see Tokenizer::scan_string);
+        // lexeme is the raw quoted source slice, kept only for diagnostics.
+        return Value::texte(token.decoded);
     case TokenType::SYMBOLE_LIT:
     {
-        const std::optional<char32_t> character =
-            utf8::decode_single_character(std::string_view(token.lexeme).substr(1, token.lexeme.size() - 2));
+        const std::optional<char32_t> character = utf8::decode_single_character(token.decoded);
         if (!character.has_value())
         {
             throw VmCompileError("VM: symbole invalide");
