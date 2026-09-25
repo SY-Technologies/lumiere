@@ -49,6 +49,25 @@ void register_lumidessin_module(Module &module)
             return canvas;
         });
 
+    stdlib_bind_public_function(
+        module,
+        make_native_function,
+        "fenêtre",
+        [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            const auto &args = *native_args.arguments;
+            stdlib_expect_positional(runtime, args, 3, "LumiDessin.fenêtre", native_args.site);
+            const int64_t width =
+                stdlib_expect_integer(runtime, args[0].value, "LumiDessin.fenêtre", native_args.site);
+            const int64_t height =
+                stdlib_expect_integer(runtime, args[1].value, "LumiDessin.fenêtre", native_args.site);
+            const std::string title =
+                stdlib_expect_text(runtime, args[2].value, "LumiDessin.fenêtre", native_args.site);
+            validate_canvas_dimensions(runtime, width, height, "LumiDessin.fenêtre", native_args.site);
+            return make_fenetre_value(
+                runtime, static_cast<int32_t>(width), static_cast<int32_t>(height), title, make_native_function,
+                native_args.site);
+        });
+
     // ---- Images -------------------------------------------------------
 
     stdlib_bind_public_function(

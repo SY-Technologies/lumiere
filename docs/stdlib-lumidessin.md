@@ -8,8 +8,11 @@ policy, and acceptance tests — the whole module, not a staged first cut. There
 is no planned "v2": what isn't in this contract is out of scope for the
 module, on its own merits, not deferred.
 
-The implementation does not exist yet. A behavior described here is a target,
-not a claim about the current runtime.
+The implementation now matches this contract through stage 8 of
+"Implementation order" below: every public symbol is implemented and tested
+under both execution engines, on Linux. Stage 9's cross-platform (macOS,
+Windows) window smoke tests have not been run from this environment; see
+that stage's notes for what is and is not yet verified.
 
 ## Design review — 2026-09-24
 
@@ -1025,17 +1028,42 @@ Definition of done, and nothing is usable or shippable at an earlier stage.
 Each stage ends with tests and works under both execution engines.
 
 1. Register the module, native nominal types, semantic signatures, and build
-   options.
+   options. -- DONE
 2. Implement colors, points, checked dimensions, off-screen canvas lifetime,
-   clear, pixel read/write, capture, and alpha composition.
+   clear, pixel read/write, capture, and alpha composition. -- DONE
 3. Implement clipped lines, rectangles, circles, ellipses, arcs, polylines,
-   and polygons.
-4. Implement the bundled font, text measurement, and text drawing.
-5. Implement PNG loading, image drawing, and atomic PNG export.
-6. Implement `Crayon` over the completed canvas primitives.
-7. Add the SDL3 visible backend, presentation, frame pacing, and close handling.
-8. Add keyboard, text, mouse, and wheel snapshots.
-9. Complete cross-platform, sanitizer, leak, documentation, and example checks.
+   and polygons. -- DONE
+4. Implement the bundled font, text measurement, and text drawing. -- DONE
+5. Implement PNG loading, image drawing, and atomic PNG export. -- DONE
+6. Implement `Crayon` over the completed canvas primitives. -- DONE
+7. Add the SDL3 visible backend, presentation, frame pacing, and close
+   handling. -- DONE. `fenêtre`, `régler_cadence`,
+   `prochaine_image`, `écart_image`, `présenter`, and
+   `attendre_fermeture` are implemented in `window.cpp`, the module's only
+   translation unit that includes an SDL3 header (pImpl'd behind
+   `PlatformWindow` in `state.hpp`, so nothing else in the module or its
+   public headers depends on SDL). Frame-deadline arithmetic
+   (`compute_frame_wait`) is a pure function, unit-tested without a real
+   clock or sleep; window creation, presentation, and both the
+   Lumière-side (`fermer()`) and native (an injected `SDL_EVENT_QUIT`)
+   close paths are exercised under SDL's dummy video driver in ordinary
+   headless CI (`tests/test_interpreter_fixtures.cpp`'s `LumiDessinFenetre*`
+   tests). `LUMIERE_ENABLE_LUMIDESSIN_WINDOW=OFF` still builds and raises the
+   documented availability error from `fenêtre()`.
+8. Add keyboard, text, mouse, and wheel snapshots. -- DONE, in `input.cpp`
+   (reads only the plain `InputSnapshot` in `state.hpp`; `window.cpp`'s event
+   pump is the only place a platform code becomes one of the canonical
+   French names). Off-screen canvases return the documented neutral state
+   without raising; unknown key/button names raise.
+9. Complete cross-platform, sanitizer, leak, documentation, and example
+   checks. -- Linux only so far: AddressSanitizer/UndefinedBehaviorSanitizer
+   pass with no defect (including a 25-cycle window open/close/crayon
+   stress run and a forced already-open error path), and
+   `scripts/conformance`/`scripts/fuzz` are clean against both engines.
+   `examples/lumidessin_window_demo.lum` is the module's one interactive,
+   non-headless example. macOS and Windows window smoke tests are not yet
+   run from this environment -- left for a machine that can build and
+   exercise those backends.
 
 Window work comes late on purpose. Most semantics can be made correct and fully
 testable before platform event loops enter the system.

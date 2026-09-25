@@ -27,6 +27,11 @@
 #include <vector>
 
 #include "luminet_shared.hpp"
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+// Only the LumiDessin window smoke tests need this -- see their own
+// comments for why the test process itself pushes a real SDL event.
+#include <SDL3/SDL.h>
+#endif
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -5793,6 +5798,206 @@ TEST(InterpreterBuiltinModules, LumiDessinCrayonRaisesRuntimeErrorsForClosedCanv
     }
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinCanevasFrameMethodsPaceAndReportElapsedTime)
+{
+    // Off-screen frame lifecycle (docs/stdlib-lumidessin.md, "Frame
+    // lifecycle"): régler_cadence takes effect, présenter is a
+    // valid no-op without a window, and écart_image is zero on the
+    // first call and nonnegative thereafter -- exercised for real, at 240
+    // fps (the shortest legal interval, so the real sleep this performs
+    // stays small), since an off-screen canvas's cadence timing is a real
+    // sleep by design (docs/stdlib-lumidessin.md, "Frame lifecycle": "For
+    // an open off-screen canvas, prochaine_image performs cadence timing").
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(4, 4)\n"
+        "  toile.régler_cadence(240)\n"
+        "  soit premiere = toile.prochaine_image()\n"
+        "  afficher(\"premiere: \" + premiere)\n"
+        "  afficher(\"ecart1: \" + toile.écart_image())\n"
+        "  soit deuxieme = toile.prochaine_image()\n"
+        "  afficher(\"deuxieme: \" + deuxieme)\n"
+        "  afficher(\"ecart2 non negatif: \" + (toile.écart_image() >= 0.0))\n"
+        "  toile.présenter()\n"
+        "  afficher(\"presente sans fenetre: ok\")\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "premiere: vrai\n"
+        "ecart1: 0.0\n"
+        "deuxieme: vrai\n"
+        "ecart2 non negatif: vrai\n"
+        "presente sans fenetre: ok\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasRejectsCadenceOutsideOneToTwoHundredForty)
+{
+    for (const char *bad : {"0", "241", "-1"})
+    {
+        const std::string source = std::string("importer LumiDessin\n"
+                                                "fonction principal() {\n"
+                                                "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                                "  toile.régler_cadence(") +
+                                    bad + ")\n}\n";
+        const auto [output, completed, error] = execute_program_with_error(source);
+        EXPECT_FALSE(completed) << bad;
+        EXPECT_TRUE(output.empty()) << bad;
+        EXPECT_NE(error.find("Canevas.régler_cadence attend une cadence entre 1 et 240"), std::string::npos)
+            << bad << ": " << error;
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasAttendreFermetureRaisesOffScreen)
+{
+    // docs/stdlib-lumidessin.md, "Frame lifecycle": "Calling it on an
+    // off-screen canvas is a runtime error."
+    const auto [output, completed, error] =
+        execute_program_with_error("importer LumiDessin\n"
+                                   "fonction principal() {\n"
+                                   "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                   "  toile.attendre_fermeture()\n"
+                                   "}\n");
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Canevas.attendre_fermeture attend un canevas visible"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasInputMethodsAreNeutralOffScreen)
+{
+    // docs/stdlib-lumidessin.md, "Input": "Input methods on an off-screen
+    // canvas return neutral state. They do not raise."
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(4, 4)\n"
+        "  afficher(\"touche: \" + toile.touche_enfoncée(\"a\"))\n"
+        "  afficher(\"pressee: \" + toile.touche_pressée(\"espace\"))\n"
+        "  afficher(\"relachee: \" + toile.touche_relâchée(\"entrée\"))\n"
+        "  afficher(\"texte: [\" + toile.texte_saisi() + \"]\")\n"
+        "  afficher(\"souris: \" + toile.position_souris().x + \",\" + toile.position_souris().y)\n"
+        "  afficher(\"presente: \" + toile.souris_présente())\n"
+        "  afficher(\"bouton: \" + toile.bouton_enfoncé(\"gauche\"))\n"
+        "  afficher(\"defilement: \" + toile.défilement().x + \",\" + toile.défilement().y)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "touche: faux\n"
+        "pressee: faux\n"
+        "relachee: faux\n"
+        "texte: []\n"
+        "souris: 0.0,0.0\n"
+        "presente: faux\n"
+        "bouton: faux\n"
+        "defilement: 0.0,0.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasInputRejectsUnknownNames)
+{
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                       "  toile.touche_enfoncée(\"xyz\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.touche_enfoncée ne reconnaît pas le nom de touche"), std::string::npos) << error;
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                       "  toile.bouton_enfoncé(\"haut\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.bouton_enfoncé ne reconnaît pas le nom de bouton"), std::string::npos) << error;
+    }
+}
+
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreOpensPresentsAndClosesUnderTheDummyDriver)
+{
+    // Bounded visible-window smoke test (docs/stdlib-lumidessin.md,
+    // "Platform tests": "creates, presents, injects or receives a close
+    // event, and exits"). SDL's dummy video driver needs no real display,
+    // so this runs in ordinary headless CI; it is only compiled when
+    // window support is built in. setenv's third argument is 0 so a CI
+    // environment that already set SDL_VIDEODRIVER is respected.
+    setenv("SDL_VIDEODRIVER", "dummy", 0);
+
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit f = LumiDessin.fenêtre(64, 48, \"Test\")\n"
+        "  afficher(\"visible: \" + f.est_visible())\n"
+        "  f.effacer(LumiDessin.Couleurs.rouge)\n"
+        "  f.présenter()\n"
+        "  soit suite = f.prochaine_image()\n"
+        "  afficher(\"suite: \" + suite)\n"
+        "  f.fermer()\n"
+        "  afficher(\"ouvert apres fermer: \" + f.est_ouvert())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "visible: vrai\nsuite: vrai\nouvert apres fermer: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreRaisesWhenAlreadyOpen)
+{
+    setenv("SDL_VIDEODRIVER", "dummy", 0);
+
+    const auto [output, completed, error] =
+        execute_program_with_error("importer LumiDessin\n"
+                                   "fonction principal() {\n"
+                                   "  soit a = LumiDessin.fenêtre(32, 32, \"A\")\n"
+                                   "  soit b = LumiDessin.fenêtre(32, 32, \"B\")\n"
+                                   "}\n");
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("LumiDessin.fenêtre : une fenêtre visible est déjà ouverte"), std::string::npos) << error;
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreRespondsToAnInjectedCloseEvent)
+{
+    // The real SDL close path: a genuine SDL_EVENT_QUIT is pushed onto
+    // SDL's own event queue from a separate thread while the interpreter
+    // thread blocks inside attendre_fermeture()'s event pump, exercising
+    // the "injects or receives a close event" half of the platform smoke
+    // test the doc describes, rather than only the fermer()-from-Lumière
+    // path the previous test covers.
+    setenv("SDL_VIDEODRIVER", "dummy", 0);
+    ASSERT_TRUE(SDL_InitSubSystem(SDL_INIT_VIDEO));
+
+    std::thread closer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
+    });
+
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit f = LumiDessin.fenêtre(64, 48, \"Test\")\n"
+        "  f.attendre_fermeture()\n"
+        "  afficher(\"ouvert apres attendre_fermeture: \" + f.est_ouvert())\n"
+        "}\n");
+
+    closer.join();
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "ouvert apres attendre_fermeture: faux\n");
+}
+
+#endif // LUMIERE_ENABLE_LUMIDESSIN_WINDOW
 
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
