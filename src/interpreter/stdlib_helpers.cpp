@@ -250,6 +250,10 @@ bool register_builtin_module(Module &module,
     {
         register_collections_module(module);
     }
+    else if (module.name == "JSON")
+    {
+        register_json_module(module);
+    }
     else if (module.name == "LumiTest")
         register_lumitest_module(module,
                                  lumitest_state != nullptr
