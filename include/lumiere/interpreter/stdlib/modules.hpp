@@ -24,6 +24,7 @@ void register_aleatoire_module(Module &module);
 void register_luminet_module(Module &module);
 void register_collections_module(Module &module);
 void register_json_module(Module &module);
+void register_regex_module(Module &module);
 Value execute_texte_member(IRuntime &runtime,
                            const Value &receiver,
                            std::string_view member_name,

@@ -1,0 +1,33 @@
+importer Regex
+
+fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {
+    soit motif_mot = Regex.analyser("[A-Za-zÀ-ÿ]+") ou propager
+    soit motif_date = Regex.analyser("(\d{4})-(\d{2})-(\d{2})") ou propager
+
+    afficher("correspond 'bonjour': " + Regex.correspond(motif_mot, "bonjour"))
+    afficher("correspond '2024': " + Regex.correspond(motif_mot, "2024"))
+
+    soit texte = "Journal: le 2024-05-12 puis le 2024-11-03, événement à Genève."
+    soit dates = Regex.trouver_tous(motif_date, texte)
+    afficher("dates trouvées: " + dates.taille())
+    pour chaque d dans dates {
+        afficher("  " + d.texte() + " -> année=" + d.groupe(1) + " mois=" + d.groupe(2) + " jour=" + d.groupe(3))
+    }
+
+    soit premier_mot = Regex.chercher(motif_mot, texte)
+    si premier_mot != rien {
+        afficher("premier mot: " + premier_mot.texte())
+    }
+
+    afficher(Regex.remplacer(motif_date, texte, "[$1/$2/$3]"))
+    afficher(Regex.remplacer_tout(motif_date, texte, "[$1/$2/$3]"))
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> rien
+        Échec(e) -> afficher("échec: " + e.cause)
+    }
+}

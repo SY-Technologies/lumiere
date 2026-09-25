@@ -4670,6 +4670,267 @@ TEST(InterpreterBuiltinModules, RejectsJsonEncoderIndenteOutOfRangeSpaces)
 }
 
 
+TEST(InterpreterBuiltinModules, RegexSupportsAnalyserCorrespondChercherTrouverTousAndRemplacer)
+{
+    // Mirrors what was manually verified against both engines on the CLI
+    // before this test was written (a(b+)c against several inputs).
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction principal() {\n"
+        "  soit motif = agir selon Regex.analyser(\"a(b+)c\") {\n"
+        "    Succès(m) -> m\n"
+        "    Échec(e) -> { afficher(\"echec analyser: \" + e.cause) rien }\n"
+        "  }\n"
+        "  afficher(\"correspond abc: \" + Regex.correspond(motif, \"abc\"))\n"
+        "  afficher(\"correspond abbbc: \" + Regex.correspond(motif, \"abbbc\"))\n"
+        "  afficher(\"correspond xabcx: \" + Regex.correspond(motif, \"xabcx\"))\n"
+        "  soit trouve = Regex.chercher(motif, \"xxabbcyy\")\n"
+        "  si trouve != rien {\n"
+        "    afficher(\"texte: \" + trouve.texte())\n"
+        "    afficher(\"début: \" + trouve.début())\n"
+        "    afficher(\"fin: \" + trouve.fin())\n"
+        "    afficher(\"groupe1: \" + trouve.groupe(1))\n"
+        "    afficher(\"groupes: \" + trouve.groupes())\n"
+        "  } sinon {\n"
+        "    afficher(\"pas trouvé\")\n"
+        "  }\n"
+        "  soit sans_match = Regex.chercher(motif, \"zzz\")\n"
+        "  afficher(\"sans_match est rien: \" + (sans_match == rien))\n"
+        "  soit tous = Regex.trouver_tous(motif, \"ac abc abbc\")\n"
+        "  afficher(\"nombre de correspondances: \" + tous.taille())\n"
+        "  pour chaque m dans tous {\n"
+        "    afficher(\"  match: \" + m.texte())\n"
+        "  }\n"
+        "  afficher(Regex.remplacer(motif, \"abc et abbc\", \"[$1]\"))\n"
+        "  afficher(Regex.remplacer_tout(motif, \"abc et abbc\", \"[$1]\"))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "correspond abc: vrai\n"
+        "correspond abbbc: vrai\n"
+        "correspond xabcx: faux\n"
+        "texte: abbc\n"
+        "début: 2\n"
+        "fin: 6\n"
+        "groupe1: bb\n"
+        "groupes: [bb]\n"
+        "sans_match est rien: vrai\n"
+        "nombre de correspondances: 2\n"
+        "  match: abc\n"
+        "  match: abbc\n"
+        "[b] et abbc\n"
+        "[b] et [bb]\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexSupportsAnchorsClassesBoundedRepetitionAlternationAndShorthand)
+{
+    // Mirrors what was manually verified against both engines on the CLI:
+    // ^/$ anchors, [a-c] ranges, [^0-9] negation, {m,n} bounded repetition
+    // (greedy), alternation, ASCII \d\s\w shorthand classes, malformed
+    // patterns, and a non-ASCII (Unicode scalar) literal match.
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit m1 = Regex.analyser(\"^abc$\") ou propager\n"
+        "  afficher(\"anchors abc: \" + Regex.correspond(m1, \"abc\"))\n"
+        "  afficher(\"anchors xabc: \" + Regex.correspond(m1, \"xabc\"))\n"
+        "\n"
+        "  soit m2 = Regex.analyser(\"[a-c]+\") ou propager\n"
+        "  soit r2 = Regex.chercher(m2, \"zzabccbaZZ\")\n"
+        "  si r2 != rien { afficher(\"class match: \" + r2.texte()) } sinon { afficher(\"class: aucun\") }\n"
+        "\n"
+        "  soit m3 = Regex.analyser(\"[^0-9]+\") ou propager\n"
+        "  soit r3 = Regex.chercher(m3, \"123abc456\")\n"
+        "  si r3 != rien { afficher(\"neg class match: \" + r3.texte()) } sinon { afficher(\"neg class: aucun\") }\n"
+        "\n"
+        "  soit m4 = Regex.analyser(\"a{2,3}\") ou propager\n"
+        "  soit r4 = Regex.chercher(m4, \"aaaaa\")\n"
+        "  si r4 != rien { afficher(\"bounded match: \" + r4.texte()) } sinon { afficher(\"bounded: aucun\") }\n"
+        "\n"
+        "  soit m5 = Regex.analyser(\"colou?r|chat\") ou propager\n"
+        "  afficher(\"alt1: \" + Regex.correspond(m5, \"color\"))\n"
+        "  afficher(\"alt2: \" + Regex.correspond(m5, \"colour\"))\n"
+        "  afficher(\"alt3: \" + Regex.correspond(m5, \"chat\"))\n"
+        "  afficher(\"alt4: \" + Regex.correspond(m5, \"dog\"))\n"
+        "\n"
+        "  soit m6 = Regex.analyser(\"\\d+\\s\\w+\") ou propager\n"
+        "  soit r6 = Regex.chercher(m6, \"xx 42 salut99 yy\")\n"
+        "  si r6 != rien { afficher(\"shorthand match: \" + r6.texte()) } sinon { afficher(\"shorthand: aucun\") }\n"
+        "\n"
+        "  agir selon Regex.analyser(\"a(b\") { Succès(_) -> afficher(\"inattendu succès\") Échec(e) -> afficher(\"erreur motif: \" + e.cause) }\n"
+        "  agir selon Regex.analyser(\"a**\") { Succès(_) -> afficher(\"inattendu succès\") Échec(e) -> afficher(\"erreur motif2: \" + e.cause) }\n"
+        "\n"
+        "  soit m8 = Regex.analyser(\"é+\") ou propager\n"
+        "  soit r8 = Regex.chercher(m8, \"cafés très bééé chic\")\n"
+        "  si r8 != rien { afficher(\"unicode match: \" + r8.texte() + \" début=\" + r8.début() + \" fin=\" + r8.fin()) } sinon { afficher(\"unicode: aucun\") }\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec executer: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "anchors abc: vrai\n"
+        "anchors xabc: faux\n"
+        "class match: abccba\n"
+        "neg class match: abc\n"
+        "bounded match: aaa\n"
+        "alt1: vrai\n"
+        "alt2: vrai\n"
+        "alt3: vrai\n"
+        "alt4: faux\n"
+        "shorthand match: 42 salut99\n"
+        "erreur motif: parenthèse fermante ')' attendue\n"
+        "erreur motif2: quantificateur sans opérande\n"
+        "unicode match: é début=3 fin=4\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexTrouverTousHandlesEmptyMatchesAcrossMultipleRunCalls)
+{
+    // Regression test for a bug found during manual verification: the NFA
+    // simulation's per-step instruction-dedup generation counter used to be
+    // local to RegexMatcher::run(), reset to 0 on every call, while the
+    // dedup marks array (m_visited) is a member that persists across calls.
+    // trouver_tous() constructs one RegexMatcher and calls run() repeatedly
+    // to scan forward, so the second call's fresh generation 0 collided with
+    // marks the first call had already left behind, and add_thread()
+    // wrongly treated the start instruction as "already visited this step",
+    // silently finding nothing after the first match. Fixed by making the
+    // generation counter a persistent member (m_gen). "a*" against "bab"
+    // must find all four matches: "", "a", "", "".
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit motif = Regex.analyser(\"a*\") ou propager\n"
+        "  soit tous = Regex.trouver_tous(motif, \"bab\")\n"
+        "  afficher(\"empty-match count: \" + tous.taille())\n"
+        "  pour chaque m dans tous { afficher(\"  [\" + m.texte() + \"] \" + m.début() + \"-\" + m.fin()) }\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "empty-match count: 4\n"
+        "  [] 0-0\n"
+        "  [a] 1-2\n"
+        "  [] 2-2\n"
+        "  [] 3-3\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexSupportsCaptureGroupAccessAndNonParticipatingGroupsAndEmptyPattern)
+{
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit m1 = Regex.analyser(\"(a)(b)(c)\") ou propager\n"
+        "  soit r1 = Regex.chercher(m1, \"xabcx\")\n"
+        "  si r1 != rien {\n"
+        "    afficher(\"g0: \" + r1.groupe(0))\n"
+        "    afficher(\"g1: \" + r1.groupe(1))\n"
+        "    afficher(\"g2: \" + r1.groupe(2))\n"
+        "    afficher(\"g3: \" + r1.groupe(3))\n"
+        "    afficher(\"groupes: \" + r1.groupes())\n"
+        "  }\n"
+        "\n"
+        "  soit m2 = Regex.analyser(\"(a)|(b)\") ou propager\n"
+        "  soit r2 = Regex.chercher(m2, \"b\")\n"
+        "  si r2 != rien {\n"
+        "    afficher(\"g1 non participant: \" + r2.groupe(1))\n"
+        "    afficher(\"g2 participant: \" + r2.groupe(2))\n"
+        "  }\n"
+        "\n"
+        "  soit m3 = Regex.analyser(\"\") ou propager\n"
+        "  afficher(\"motif vide correspond vide: \" + Regex.correspond(m3, \"\"))\n"
+        "  afficher(\"motif vide correspond a: \" + Regex.correspond(m3, \"a\"))\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "g0: abc\n"
+        "g1: a\n"
+        "g2: b\n"
+        "g3: c\n"
+        "groupes: [a, b, c]\n"
+        "g1 non participant: rien\n"
+        "g2 participant: b\n"
+        "motif vide correspond vide: vrai\n"
+        "motif vide correspond a: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexRaisesRuntimeErrorsForOutOfRangeGroupAccess)
+{
+    // Correspondance.groupe(N) and remplacer's "$N" placeholders both treat
+    // an out-of-range capture-group number as a caller contract violation
+    // (a direct runtime error), not a Résultat failure — mirroring how the
+    // rest of the stdlib distinguishes programmer errors from expected
+    // failure modes. This also exercises the CALL_MEMBER-on-native-function
+    // path on both backends, whose call-site tracking (source path,
+    // line/column) was fixed alongside this module.
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer Regex\n"
+            "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+            "  soit motif = Regex.analyser(\"(a)(b)\") ou propager\n"
+            "  soit r = Regex.chercher(motif, \"ab\")\n"
+            "  si r != rien {\n"
+            "    afficher(r.groupe(5))\n"
+            "  }\n"
+            "  retourne Succès(rien)\n"
+            "}\n"
+            "fonction principal() {\n"
+            "  agir selon executer() {\n"
+            "    Succès(_) -> rien\n"
+            "    Échec(e) -> afficher(e.cause)\n"
+            "  }\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Correspondance.groupe: numéro de groupe invalide"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer Regex\n"
+            "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+            "  soit motif = Regex.analyser(\"(a)\") ou propager\n"
+            "  afficher(Regex.remplacer(motif, \"abc\", \"[$5]\"))\n"
+            "  retourne Succès(rien)\n"
+            "}\n"
+            "fonction principal() {\n"
+            "  agir selon executer() {\n"
+            "    Succès(_) -> rien\n"
+            "    Échec(e) -> afficher(e.cause)\n"
+            "  }\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Regex.remplacer: numéro de groupe invalide dans le remplacement: $5"), std::string::npos);
+    }
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
