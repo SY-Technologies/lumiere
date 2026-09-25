@@ -2,8 +2,11 @@
 
 Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
 ("semantic tooling index") into something implementable. Rollout steps 1-4
-are implemented, with no remaining coverage gap blocking step 5 (see
-below): step 2 covers local declarations too (not just
+are implemented and, as of the two prerequisites below (declaration-site
+lookup, interface member indexing), step 5's deletion has no known
+correctness gap left blocking it -- see below for how that claim was
+tested, since an earlier version of this doc made it prematurely: step 2
+covers local declarations too (not just
 module-level `declare_value`/`declare_type`), step 3 covers
 `IdentifierExpr` reads/writes and `MemberAccessExpr` reads (member *writes*
 -- `objet.champ = valeur` -- aren't resolved by anything today, index or
@@ -82,21 +85,61 @@ not just `absolu`) now resolve to a real indexed Symbol instead of nothing,
 via the same `diagnose_value_read`/`record_value_occurrence` path every
 other identifier already went through.
 
-With this, every declare_value/declare_local/declare_type call site the
-analyzer has feeds the index, and step 5 (deleting
-`member_declaration_inspection`, `find_type_declaration`,
-`find_class_member_statement`, `find_interface_member_statement`, and the
-`collect_statements` scan) has no remaining coverage gap blocking it --
-that deletion just hasn't been attempted yet.
+With this, every `declare_value`/`declare_local`/`declare_type` call site
+the analyzer has feeds the index -- but attempting the actual step 5
+deletion surfaced two gaps that "every declaration site feeds the index"
+doesn't cover, because they're not about *declaring* into the index at
+all:
+
+- **No hover ever worked on a declaration's own name through the index.**
+  `occurrence_at` only ever finds a *reference* -- `declare` never calls
+  `record_occurrence` for the token it's declaring. `member_declaration_
+  inspection`/`collect_statements` are what currently answer "hover the
+  `doubler` in `fonction doubler(...)` itself", not just its call sites,
+  and `DescribesFunctionDeclarationsAndReferences` pins exactly this (it
+  hovers both the declaration and a reference and expects the same
+  answer). Deleting `collect_statements` outright would have silently
+  broken every declaration-site hover in the language. Fixed by a new
+  `SemanticIndex::declaration_at(document, byte_offset)` -- `occurrence_
+  at`'s complement, scanning `Symbol::declaration_span` instead of
+  `Occurrence::span` -- wired into `inspect_source` right after the
+  `occurrence_at` check, using the same `inspection_from_symbol`
+  formatting either way. This is a net *improvement*, not just parity:
+  parameters and pattern bindings (never in `collect_statements` at all)
+  and a class field's own declaration (`collect_statement`'s `VarDeclStmt`
+  branch always says `"variable"`, even inside a class -- only a
+  *reference* to the field ever said `"champ"`) now hover correctly at
+  their declaration site too.
+- **Interface-typed member access was never indexed.** `record_member_
+  occurrence`'s three call sites (`ici`, `parent`, the general receiver
+  path) all resolved the receiver's declaration through `class_
+  declaration` -- a plain `ClassDeclStmt*`. A receiver typed as an
+  *interface* made that return null, so `member_type`/`record_member_
+  occurrence` never ran, and `find_interface_member_statement` (the old
+  heuristic) was the only thing that ever answered a hover through one --
+  still load-bearing, not dead fallback. Fixed by `record_interface_
+  member_occurrence`, the same shape as `record_member_occurrence` but
+  built on `find_interface_method` (already used by `callable_signature`
+  for call resolution, now reused here too), wired into `inferred_type`'s
+  `MemberAccessExpr` branch right after the class check.
+
+Both are prerequisites, not step 5 itself: `member_declaration_
+inspection`, `find_type_declaration`, `find_class_member_statement`,
+`find_interface_member_statement`, and the `collect_statements` scan are
+all still present. With these two landed, though, every case they cover
+has been checked against the index and confirmed to resolve the same way
+(or better) -- so the deletion itself is the next piece of work, not
+something still blocked on a correctness gap.
 
 Regression gate: all 15 pre-existing `SourceInspection` tests pass
-unchanged throughout; 13 new ones cover what the index newly resolves that
-the old heuristics never did (a parameter reference, previously not
-indexed by `collect_statements` at all; a module-level import binding's
-own reads, previously invisible to the index entirely) or resolves more
-precisely (an inherited field, a type annotation, and a type alias
-reference -- including through a chain of two aliases -- all exercised end
-to end through `inspect_source` rather than only at the
+unchanged throughout; 21 new ones cover what the index newly resolves that
+the old heuristics never did (a parameter reference or its own declaration
+site, neither ever indexed by `collect_statements`; a module-level import
+binding's own reads, previously invisible to the index entirely; a member
+accessed through an interface-typed receiver, previously never recorded)
+or resolves more precisely (an inherited field, a type annotation, and a
+type alias reference -- including through a chain of two aliases -- all
+exercised end to end through `inspect_source` rather than only at the
 `SemanticIndexBinding` layer; a loop variable's *real* element type
 instead of a hardcoded one).
 

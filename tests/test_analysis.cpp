@@ -1109,6 +1109,182 @@ TEST(SemanticIndexBinding, RecordsADeclarationForASelectivelyImportedFunctionBin
     ASSERT_NE(binding_symbol, nullptr);
 }
 
+TEST(SourceInspection, ResolvesAFunctionDeclarationsOwnNameThroughTheIndex)
+{
+    // occurrence_at only ever finds a *reference*, never the declaring
+    // token itself -- DescribesFunctionDeclarationsAndReferences (below)
+    // already pins that hovering the declaration site works, but until now
+    // it could only have worked through the collect_statements fallback.
+    // This is the same assertion, aimed specifically at declaration_at so
+    // step 5 can actually delete that fallback without losing this case.
+    const std::string source =
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
+    const auto inspection = inspect_source(source, source.find("doubler"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "fonction");
+    EXPECT_EQ(inspection->signature, "fonction doubler(valeur: Entier) -> Entier");
+}
+
+TEST(SourceInspection, ResolvesAClassFieldsOwnDeclarationAsChampNotVariable)
+{
+    // collect_statement's VarDeclStmt branch always labels "variable",
+    // even when it recurses into a class's own members -- so today the
+    // *only* thing that ever labels a class field "champ" is a reference
+    // to it (member_declaration_inspection / the index's record_member_
+    // occurrence path). declaration_at now covers the field's own name too,
+    // and is_member_declaration inside inspection_from_symbol applies here
+    // exactly as it does for a reference, so this actually corrects a
+    // pre-existing inconsistency rather than just matching old behaviour.
+    const std::string source =
+        "classe Point {\n"
+        "    /** L'abscisse. */\n"
+        "    x: Entier\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.find("x:"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "champ");
+    EXPECT_EQ(inspection->documentation, "L'abscisse.");
+}
+
+TEST(SourceInspection, ResolvesAParametersOwnDeclarationSite)
+{
+    // Parameters have no backing declaration Stmt, so declaration_at finds
+    // them by declaration_span alone (declare_local's span argument is the
+    // parameter name's own token) -- collect_statement never covered
+    // parameters at all, declaration site or not, so this is new coverage
+    // step 5 gets "for free", not a case it has to preserve.
+    const std::string source =
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
+    const auto inspection = inspect_source(source, source.find("valeur"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "paramètre");
+    EXPECT_EQ(inspection->return_type, "Entier");
+}
+
+TEST(SourceInspection, ResolvesATypeAliasesOwnDeclarationSite)
+{
+    const std::string source = "type Nombre = Entier\n";
+    const auto inspection = inspect_source(source, source.find("Nombre"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "alias de type");
+    EXPECT_EQ(inspection->return_type, "Entier");
+}
+
+TEST(SourceInspection, ModuleLevelImportBindingsHaveNoHoverYet)
+{
+    // Not a gap this prerequisite work has to close: imported_value_
+    // inspection only ever covers a *selective* import's members
+    // ("importer Module.{x}"), never a bare module alias, and
+    // inspection_from_symbol has no ImportStmt branch either -- so hovering
+    // "Maths" itself (declaration or reference) has simply never resolved
+    // to anything, before or after declaration_at existed.
+    // RecordsAReadOccurrenceForAModuleLevelImportBinding already proves the
+    // index itself now has this symbol and its references recorded; this
+    // just pins that inspect_source's hover formatting is a separate,
+    // still-open gap, so a future change doesn't mistake the silent
+    // std::nullopt here for a regression.
+    const std::string source = "importer Maths\n";
+    const auto declaration = inspect_source(source, source.find("Maths"));
+    EXPECT_FALSE(declaration.has_value());
+}
+
+TEST(SourceInspection, DocumentsAMemberAccessedThroughAnInterfaceTypedParameter)
+{
+    // record_member_occurrence only ever resolved a receiver through
+    // class_declaration (a plain ClassDeclStmt*); a receiver typed as an
+    // *interface* -- the one case find_interface_member_statement (the old
+    // AST heuristic) still had to cover -- never recorded an occurrence at
+    // all before record_interface_member_occurrence. Confirm the reference
+    // through the interface-typed parameter `forme` now resolves to the
+    // interface's own method declaration, "méthode" and all, same as a
+    // class member reference would.
+    const std::string source =
+        "interface Forme {\n"
+        "    fonction aire() -> Entier\n"
+        "}\n"
+        "classe Carré réalise Forme {\n"
+        "    côté: Entier\n"
+        "    fonction aire() -> Entier {\n"
+        "        retourne ici.côté * ici.côté\n"
+        "    }\n"
+        "}\n"
+        "fonction decrire(forme: Forme) -> Entier {\n"
+        "    retourne forme.aire()\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.rfind("aire"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "aire");
+    EXPECT_EQ(inspection->kind, "méthode");
+    EXPECT_EQ(inspection->return_type, "Entier");
+}
+
+TEST(SemanticIndexBinding, DeclarationAtFindsASymbolByItsOwnDeclaringSpan)
+{
+    // occurrence_at only ever matches a recorded Occurrence -- a use.
+    // declaration_at is the complement: a byte inside the declaring token
+    // itself, which never has an Occurrence recorded against it (declare
+    // never calls record_occurrence). Confirm the two don't overlap and
+    // each answers only its own case.
+    const std::string source = "soit x = 5\nsoit y = x\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t declaration_offset = source.find('x');
+    const std::size_t reference_offset = source.rfind('x');
+
+    const lumiere::Symbol *declared = result.model->index.declaration_at(main, declaration_offset);
+    ASSERT_NE(declared, nullptr);
+    EXPECT_EQ(declared->name, "x");
+    EXPECT_EQ(result.model->index.occurrence_at(main, declaration_offset), nullptr);
+
+    const lumiere::Occurrence *referenced = result.model->index.occurrence_at(main, reference_offset);
+    ASSERT_NE(referenced, nullptr);
+    EXPECT_EQ(referenced->symbol, declared->id);
+    EXPECT_EQ(result.model->index.declaration_at(main, reference_offset), nullptr);
+}
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAnInterfaceTypedMemberAccess)
+{
+    const std::string source =
+        "interface Forme {\n"
+        "    fonction aire() -> Entier\n"
+        "}\n"
+        "classe Carré réalise Forme {\n"
+        "    côté: Entier\n"
+        "    fonction aire() -> Entier {\n"
+        "        retourne ici.côté * ici.côté\n"
+        "    }\n"
+        "}\n"
+        "fonction decrire(forme: Forme) -> Entier {\n"
+        "    retourne forme.aire()\n"
+        "}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    // The interface's own method, not the class's implementation of it --
+    // record_interface_member_occurrence resolves against Forme.aire, the
+    // declaration find_interface_method actually returns for a
+    // Forme-typed receiver.
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t reference_offset = source.rfind("aire");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, reference_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "aire");
+    EXPECT_EQ(resolved->declaration_span.start, source.find("aire"));
+}
+
 TEST(SourceInspection, ResolvesQualifiedModuleDocumentationWithoutNameCollisions)
 {
     const std::string maths =

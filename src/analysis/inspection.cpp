@@ -1182,6 +1182,24 @@ std::optional<Inspection> inspect_source(const std::string &source,
         }
     }
 
+    // occurrence_at only ever finds a *reference*; a hover on a
+    // declaration's own name (the `doubler` in `fonction doubler(...)`
+    // itself, not a call to it) needs declaration_at instead -- the two
+    // together are what let the declarations scan below actually become
+    // deletable, once every kind it covers is confirmed to resolve here
+    // too.
+    if (const Symbol *declared =
+            analysis.model->index.declaration_at(SourceId{0}, selected->start_offset);
+        declared != nullptr)
+    {
+        if (std::optional<Inspection> indexed = inspection_from_symbol(
+                *declared, analysis.statements, selected->start_offset, selected->end_offset);
+            indexed.has_value())
+        {
+            return indexed;
+        }
+    }
+
     std::vector<Declaration> declarations;
     collect_statements(analysis.statements, declarations);
 
