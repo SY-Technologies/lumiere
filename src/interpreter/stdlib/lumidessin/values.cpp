@@ -291,9 +291,13 @@ Value make_canevas_value(int32_t width, int32_t height, bool visible, const Nati
     // exactly as long as this object does, because the closure holding it
     // lives inside this same object's `fields` map -- there is no window in
     // which the closure outlives the state it points to, so no
-    // native_captures entry is needed here (contrast Crayon, in a later
-    // stage, whose methods reach a *different* object's state and do need
-    // one).
+    // native_captures entry is needed here. Crayon's own methods (see
+    // crayon.cpp) follow the identical reasoning even though they also
+    // reach a *different* object's state (the canvas, through
+    // CrayonState::canvas): that reference is a strong Ref<CanvasState>
+    // owned by CrayonState itself, not a second raw pointer, so it stays
+    // alive independently of anything a closure would otherwise need to
+    // pin down with native_captures.
     object->fields["largeur"] = Value::fonction(make_native_function(
         [raw_state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "Canevas.largeur", native_args.site);
@@ -373,6 +377,7 @@ Value make_canevas_value(int32_t width, int32_t height, bool visible, const Nati
     bind_canevas_drawing_methods(object, raw_state, make_native_function);
     bind_canevas_text_methods(object, raw_state, make_native_function);
     bind_canevas_image_methods(object, raw_state, make_native_function);
+    bind_canevas_crayon_methods(object, raw_state, make_native_function);
 
     return Value::objet(std::move(object));
 }

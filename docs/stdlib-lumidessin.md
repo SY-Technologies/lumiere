@@ -711,6 +711,10 @@ teaching while leaving the direct API in ordinary image coordinates.
 `avancer(-d)`. Movement draws one line with the current style when the pen is
 lowered. `aller_à` and `recentrer` also draw when lowered. Angles and distances
 must be finite. Reported headings are normalized to `0 <= cap < 360`.
+`recentrer` resets both position and heading -- (0, 0) and 0 degrees -- the
+same "home" semantics as the Turtle/Logo traditions this API follows;
+`régler_cap`/`tourner_gauche`/`tourner_droite` are the only way to change
+heading without also moving.
 
 The visible crayon cursor is an overlay drawn only when presenting a visible
 canvas. It is not written into the framebuffer and therefore does not appear in

@@ -54,6 +54,26 @@ fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
     rendu.dessiner_image_nette(vignette, 64.0, 24.0, 32.0, 24.0, 0.5)
     afficher("rendu: " + rendu.largeur() + "x" + rendu.hauteur())
 
+    soit t = toile.crayon()
+    t.régler_couleur(LumiDessin.Couleurs.magenta)
+    t.régler_épaisseur(2.0)
+    t.avancer(10.0)
+    t.tourner_gauche(120.0)
+    t.avancer(10.0)
+    t.tourner_gauche(120.0)
+    t.avancer(10.0)
+    afficher("crayon apres triangle: " + t.position().x + "," + t.position().y + " cap=" + t.cap())
+    t.lever()
+    t.aller_à(0.0, 0.0)
+    t.baisser()
+    afficher("crayon leve puis baisse: baisse=" + t.est_baissé() + " visible=" + t.est_visible())
+
+    soit second = toile.crayon()
+    second.tourner_droite(45.0)
+    second.avancer(8.0)
+    afficher("second crayon: " + second.position().x + "," + second.position().y + " (t inchangé: " +
+        t.position().x + "," + t.position().y + ")")
+
     retourne Succès(rien)
 }
 

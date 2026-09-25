@@ -164,6 +164,13 @@ double capsule_sdf(double px, double py, double ax, double ay, double bx, double
     return point_segment_distance(px, py, ax, ay, bx, by) - half_thickness;
 }
 
+} // namespace
+
+// Exposed with external linkage (unlike the rest of this anonymous
+// namespace) so crayon.cpp can draw a crayon's movement trail with the same
+// stroke primitive Canevas.tracer_ligne uses, rather than a second
+// implementation. Declared in state.hpp alongside blend_pixel, which is
+// exposed the same way for the same reason.
 void raster_capsule(CanvasState &canvas, double ax, double ay, double bx, double by, double half_thickness,
                     const ColorState &color)
 {
@@ -176,6 +183,9 @@ void raster_capsule(CanvasState &canvas, double ax, double ay, double bx, double
         color,
         [=](double px, double py) { return capsule_sdf(px, py, ax, ay, bx, by, half_thickness); });
 }
+
+namespace
+{
 
 // A closed or open polyline's stroke is the union of a capsule per segment:
 // each capsule's own round caps meet exactly at shared vertices, which is
