@@ -23,6 +23,8 @@ These notes are intentionally small. Each file focuses on one area so that the d
 - [Temps Stdlib](./stdlib-temps.md)
 - [Aléatoire Stdlib](./stdlib-aleatoire.md)
 - [LumiNet Stdlib](./stdlib-luminet.md)
+- [LumiDessin Design](./stdlib-lumidessin.md)
+- [Foundational Standard Library Design](./stdlib-foundations.md)
 - [Value and Runtime Data](./value-and-runtime-data.md)
 - [Lexer Pipeline](./lexer-pipeline.md)
 - [Parser and AST](./parser-and-ast.md)
