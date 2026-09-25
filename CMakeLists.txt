@@ -42,6 +42,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/aleatoire.cpp
     src/interpreter/stdlib/lumitest.cpp
     src/interpreter/stdlib/luminet.cpp
+    src/interpreter/stdlib/collections.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp
