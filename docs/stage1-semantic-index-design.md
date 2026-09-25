@@ -2,7 +2,8 @@
 
 Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
 ("semantic tooling index") into something implementable. Rollout steps 1-4
-are implemented: step 2 covers local declarations too (not just
+are implemented, with no remaining coverage gap blocking step 5 (see
+below): step 2 covers local declarations too (not just
 module-level `declare_value`/`declare_type`), step 3 covers
 `IdentifierExpr` reads/writes and `MemberAccessExpr` reads (member *writes*
 -- `objet.champ = valeur` -- aren't resolved by anything today, index or
@@ -63,24 +64,41 @@ Type aliases are now indexed too, closing that gap:
   syntax only if `set_type` hasn't run yet (an alias declared but never
   referenced).
 
-**What's left before step 5 is actually safe**: a bare module-level
-`importer` binding still bypasses the index (`bind_imported_value`'s
-`module_level` branch writes straight to `m_value_symbols`, skipping
-`declare_value` entirely) -- masked in practice by `imported_value_
-inspection` running first for every import-derived hover, so it's a real
-gap in the index's coverage, not a hover regression, but the one piece
-left before `member_declaration_inspection`, `find_type_declaration`,
+The last named gap is closed too: `bind_imported_value`'s `module_level`
+branch used to write straight to `m_value_symbols` and return, the one
+`declare_value`/`declare_local` call site that never reached the index
+(one `ImportStmt` can bind many names -- a bare `importer Module`, or one
+call per member of `importer Module.{x comme y}` -- unlike the single-name
+declarations `declare_value` covers). It now calls `SemanticIndex::declare`
+itself on the same success path, right after the `m_value_symbols.emplace`
+that guards against a duplicate name, using the site token's own span (its
+lexeme is always exactly `binding`, since `resolve_import` only ever calls
+this with the alias/member token whose lexeme it just read) and `&import`
+as the backing declaration. Hover is unaffected -- `imported_value_
+inspection` still runs first and `inspection_from_symbol` has no
+`ImportStmt` branch, so it falls through to that old heuristic exactly as
+before -- but reads of the binding itself (`Maths` in `Maths.absolu(...)`,
+not just `absolu`) now resolve to a real indexed Symbol instead of nothing,
+via the same `diagnose_value_read`/`record_value_occurrence` path every
+other identifier already went through.
+
+With this, every declare_value/declare_local/declare_type call site the
+analyzer has feeds the index, and step 5 (deleting
+`member_declaration_inspection`, `find_type_declaration`,
 `find_class_member_statement`, `find_interface_member_statement`, and the
-`collect_statements` scan could actually be deleted.
+`collect_statements` scan) has no remaining coverage gap blocking it --
+that deletion just hasn't been attempted yet.
 
 Regression gate: all 15 pre-existing `SourceInspection` tests pass
-unchanged throughout; 11 new ones cover what the index newly resolves that
+unchanged throughout; 13 new ones cover what the index newly resolves that
 the old heuristics never did (a parameter reference, previously not
-indexed by `collect_statements` at all) or resolves more precisely (an
-inherited field, a type annotation, and a type alias reference -- including
-through a chain of two aliases -- all exercised end to end through
-`inspect_source` rather than only at the `SemanticIndexBinding` layer;
-a loop variable's *real* element type instead of a hardcoded one).
+indexed by `collect_statements` at all; a module-level import binding's
+own reads, previously invisible to the index entirely) or resolves more
+precisely (an inherited field, a type annotation, and a type alias
+reference -- including through a chain of two aliases -- all exercised end
+to end through `inspect_source` rather than only at the
+`SemanticIndexBinding` layer; a loop variable's *real* element type
+instead of a hardcoded one).
 
 ## Where we actually start from
 

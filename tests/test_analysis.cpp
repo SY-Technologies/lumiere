@@ -1061,6 +1061,54 @@ TEST(SourceInspection, DocumentsModuleFreeFunctions)
     EXPECT_FALSE(inspection->documentation.empty());
 }
 
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAModuleLevelImportBinding)
+{
+    // bind_imported_value's module_level branch used to write straight to
+    // m_value_symbols, never calling declare_value/declare_local -- the
+    // last gap docs/stage1-semantic-index-design.md named before step 5 is
+    // safe (masked in practice by imported_value_inspection running first
+    // on hover, so it was a real index-coverage gap rather than a visible
+    // regression). Confirm the binding itself -- not just the member it
+    // qualifies -- is now indexed and its reads resolve.
+    const std::string source =
+        "importer Maths\n"
+        "soit valeur = Maths.absolu(-2)\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::Symbol *module_symbol = result.model->index.lookup(
+        lumiere::kModuleScopeId, "Maths", lumiere::SymbolNamespace::Value);
+    ASSERT_NE(module_symbol, nullptr);
+    EXPECT_EQ(module_symbol->kind, lumiere::SemanticSymbolKind::MODULE);
+
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t reference_offset = source.rfind("Maths");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, reference_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+    EXPECT_EQ(occurrence->symbol, module_symbol->id);
+}
+
+TEST(SemanticIndexBinding, RecordsADeclarationForASelectivelyImportedFunctionBinding)
+{
+    // bind_imported_value's module_level branch is called from two spots
+    // in resolve_import: once for a bare `importer Module` (covered above),
+    // and once per member of `importer Module.{x comme y}` -- confirm the
+    // second call site is indexed too, under the alias name, not the
+    // module's original export name.
+    const std::string source =
+        "importer Chemin.{absolu comme chemin_absolu}\n"
+        "soit valeur = chemin_absolu(\".\")\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::Symbol *binding_symbol = result.model->index.lookup(
+        lumiere::kModuleScopeId, "chemin_absolu", lumiere::SymbolNamespace::Value);
+    ASSERT_NE(binding_symbol, nullptr);
+}
+
 TEST(SourceInspection, ResolvesQualifiedModuleDocumentationWithoutNameCollisions)
 {
     const std::string maths =
