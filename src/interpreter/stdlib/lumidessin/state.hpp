@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace lumiere
@@ -105,6 +107,42 @@ Value make_erreur_image(const std::string &operation, const std::string &path, c
 // this direction is never a Ref).
 struct CrayonState;
 
+// Opaque handle to the SDL3 window/renderer/texture triple backing a visible
+// canvas. Defined only in window.cpp, which is the sole translation unit in
+// this module that includes an SDL header -- docs/stdlib-lumidessin.md's
+// "Platform backend" section requires the platform layer's types to stay out
+// of public Lumière headers, and this pImpl split keeps them out of every
+// other .cpp in the module too, not just out of include/. A null
+// platform_window means "off-screen, or visible and closed"; CanvasState's
+// destructor is declared (not defaulted) below and defined only in
+// window.cpp for exactly this reason -- std::unique_ptr's deleter needs
+// PlatformWindow complete wherever a CanvasState is destroyed.
+struct PlatformWindow;
+
+// Keyboard/mouse/wheel state captured by the most recent prochaine_image()
+// call (docs/stdlib-lumidessin.md, "Input"). Keyed by the canonical French
+// names the language exposes (touche_enfoncée("a"), bouton_enfoncé("gauche"))
+// rather than by a platform scancode/button enum, so this header -- and
+// input.cpp, which only ever reads these sets -- never needs to see an SDL
+// type. window.cpp is the only place a platform code is translated into one
+// of these names, once, while pumping events.
+struct InputSnapshot
+{
+    std::unordered_set<std::string> keys_down;
+    std::unordered_set<std::string> keys_pressed;   // transitioned down during the latest pump
+    std::unordered_set<std::string> keys_released;  // transitioned up during the latest pump
+    std::string text;                                // texte_saisi(): OS-composed text from the latest pump
+
+    double mouse_x = 0.0;
+    double mouse_y = 0.0;
+    bool mouse_inside = false;
+    std::unordered_set<std::string> buttons_down;
+    std::unordered_set<std::string> buttons_pressed;
+    std::unordered_set<std::string> buttons_released;
+    double wheel_x = 0.0;
+    double wheel_y = 0.0;
+};
+
 struct CanvasState : NativeState
 {
     int32_t width = 0;
@@ -117,6 +155,32 @@ struct CanvasState : NativeState
     // its constructor and deregisters in its destructor; see CrayonState's
     // own comment for why a dangling pointer can never appear in this list.
     std::vector<CrayonState *> crayons;
+
+    // ---- Frame lifecycle (docs/stdlib-lumidessin.md, "Frame lifecycle") --
+    // Present on every canvas, visible or off-screen: an off-screen canvas
+    // still paces frames (régler_cadence/prochaine_image/écart_image), it
+    // just has no window to present to or events to pump.
+    int frame_rate = 60;          // régler_cadence; 1..240, default 60
+    bool frame_started = false;   // false until the first prochaine_image()
+    double last_frame_time = 0.0; // monotonic seconds at the most recent call
+    double next_deadline = 0.0;   // monotonic seconds prochaine_image should not return before
+    double last_elapsed = 0.0;    // écart_image()'s answer; never negative
+
+    // ---- Window (stage 7) and input (stage 8) -- meaningful only for a
+    // visible, open canvas. `platform_window` is null off-screen and after
+    // fermer(); `close_requested` is set by prochaine_image() when the
+    // native window reports a close request, and consumed (canvas closed)
+    // before that call returns.
+    std::unique_ptr<PlatformWindow> platform_window;
+    bool close_requested = false;
+    InputSnapshot input;
+
+    // Both declared here, defined only in window.cpp: the pImpl idiom
+    // requires PlatformWindow complete for the *constructor* too, not just
+    // the destructor -- the compiler-generated body must be able to unwind
+    // (destroy platform_window) if a later member's construction throws.
+    CanvasState();
+    ~CanvasState() override;
 
     void trace_references(RefVisitor &) const override
     {
@@ -247,5 +311,75 @@ void bind_canevas_crayon_methods(const Ref<LumiereObject> &object,
                                  const NativeFunctionFactory &make_native_function);
 
 Value make_crayon_value(Ref<CanvasState> canvas, const NativeFunctionFactory &make_native_function);
+
+// ---------------------------------------------------------------------------
+// Window and frame lifecycle -- stage 7. Defined in window.cpp, the only
+// translation unit in this module that includes an SDL3 header, and the
+// only one whose behavior differs under LUMIERE_ENABLE_LUMIDESSIN_WINDOW:
+// with it off, these functions still exist and still compile everywhere
+// else unchanged, but fenêtre() raises the documented availability error
+// instead of ever creating a window. docs/stdlib-lumidessin.md, "Frame
+// lifecycle" and "Platform backend".
+// ---------------------------------------------------------------------------
+
+// Creates the single visible canvas. Raises a runtime error if a visible
+// canvas is already open, the window system is unavailable (including
+// window support having been compiled out), or creation fails.
+Value make_fenetre_value(IRuntime &runtime,
+                         int32_t width,
+                         int32_t height,
+                         const std::string &title,
+                         const NativeFunctionFactory &make_native_function,
+                         const RuntimeSite &site);
+
+// Adds régler_cadence/prochaine_image/écart_image/présenter/
+// attendre_fermeture to a freshly constructed canvas object -- visible or
+// off-screen, since cadence timing applies to both.
+void bind_canevas_frame_methods(const Ref<LumiereObject> &object,
+                                CanvasState *state,
+                                const NativeFunctionFactory &make_native_function);
+
+// Destroys `state`'s platform window, if any, and clears its close
+// callback. Idempotent. Called by Canevas.fermer(), by ~CanvasState(), and
+// by attendre_fermeture() once the window closes.
+void release_platform_window(CanvasState &state);
+
+// Pure and sleep-free: given whether this is the canvas's first frame, the
+// current monotonic time, the previously recorded deadline, and the frame
+// interval, returns how long prochaine_image() should still wait (zero if
+// the deadline already passed -- a missed deadline is abandoned, never made
+// up) and the "now" the frame should be timed from. Exposed here, rather
+// than kept local to window.cpp, specifically so a unit test can exercise
+// the frame-pacing rule without a real clock or a real sleep
+// (docs/stdlib-lumidessin.md, "Testing contract": "frame-deadline
+// calculation without real sleeps").
+struct FrameWait
+{
+    double wait_seconds;
+    double frame_now;
+};
+// interval_seconds is not a parameter: the deadline already encodes it
+// (the caller advances next_deadline by the interval after each call),
+// so this function only ever needs to compare `now` against it.
+FrameWait compute_frame_wait(bool first_call, double now, double next_deadline);
+
+// ---------------------------------------------------------------------------
+// Input -- stage 8. Defined in input.cpp, which only ever reads
+// CanvasState::input (see InputSnapshot above) and therefore needs no SDL
+// dependency of its own; window.cpp is what populates it.
+// ---------------------------------------------------------------------------
+
+// Adds touche_enfoncée/touche_pressée/touche_relâchée/texte_saisi/
+// position_souris/souris_présente/bouton_enfoncé/bouton_pressé/
+// bouton_relâché/défilement to a freshly constructed canvas object.
+void bind_canevas_input_methods(const Ref<LumiereObject> &object,
+                                CanvasState *state,
+                                const NativeFunctionFactory &make_native_function);
+
+// The canonical key and mouse-button names documented under "Input", used
+// both to bind the methods above and by a conformance/unit test enumerating
+// them. An unrecognized name is a runtime error, never a silent false.
+const std::unordered_set<std::string> &canonical_key_names();
+const std::unordered_set<std::string> &canonical_button_names();
 
 } // namespace lumiere

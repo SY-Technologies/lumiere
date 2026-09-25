@@ -55,6 +55,8 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/lumidessin/text.cpp
     src/interpreter/stdlib/lumidessin/image.cpp
     src/interpreter/stdlib/lumidessin/crayon.cpp
+    src/interpreter/stdlib/lumidessin/window.cpp
+    src/interpreter/stdlib/lumidessin/input.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp
@@ -164,6 +166,27 @@ if(LUMIERE_ENABLE_LUMIDESSIN)
 endif()
 
 # -----------------------------
+# LumiDessin: SDL3 (window creation, input, presentation -- stage 7/8).
+# Vendored the same way stb and googletest are (FetchContent, pinned tag).
+# Building only the static library keeps the CLI a single self-contained
+# binary, matching LUMIERE_LIBRARY_TYPE's own default.
+# -----------------------------
+if(LUMIERE_ENABLE_LUMIDESSIN AND LUMIERE_ENABLE_LUMIDESSIN_WINDOW)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.16
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(SDL3)
+endif()
+
+# -----------------------------
 # Library target
 # -----------------------------
 
@@ -209,6 +232,16 @@ endif()
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMINET=$<BOOL:${LUMIERE_ENABLE_LUMINET}>)
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN}>)
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN_WINDOW=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN_WINDOW}>)
+
+if(LUMIERE_ENABLE_LUMIDESSIN AND LUMIERE_ENABLE_LUMIDESSIN_WINDOW)
+    # BUILD_INTERFACE-guarded: SDL3 is vendored (FetchContent), not
+    # installed, so it must never appear in lumiere's exported usage
+    # requirements -- only in this build's own link line. A downstream
+    # consumer of an installed Lumière package gets the window backend
+    # already linked into the static archive it receives; it does not need
+    # to find SDL3 itself.
+    target_link_libraries(lumiere PRIVATE $<BUILD_INTERFACE:SDL3::SDL3-static>)
+endif()
 
 # -----------------------------
 # CLI executable
@@ -296,6 +329,7 @@ if(BUILD_TESTING)
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp
+        tests/test_lumidessin_window.cpp
         tests/test_cli_integration.cpp
         tests/test_vm_lir.cpp
         tests/test_vm_verifier.cpp
@@ -362,6 +396,15 @@ if(BUILD_TESTING)
                 GTest::gtest_main
                 ${LUMIERE_PLATFORM_LIBRARIES}
         )
+
+        if(LUMIERE_ENABLE_LUMIDESSIN AND LUMIERE_ENABLE_LUMIDESSIN_WINDOW)
+            # The bounded visible-window smoke test injects a real SDL close
+            # event (docs/stdlib-lumidessin.md, "Platform tests") from the
+            # test process itself, which needs SDL3's own header and link
+            # symbols -- lumiere's own SDL3 dependency is BUILD_INTERFACE/
+            # PRIVATE and does not reach this target otherwise.
+            target_link_libraries(lumiere_unit_tests PRIVATE $<BUILD_INTERFACE:SDL3::SDL3-static>)
+        endif()
 
         include(GoogleTest)
         # A handful of CLI tests spawn a dozen subprocesses each. Under a

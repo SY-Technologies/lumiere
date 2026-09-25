@@ -1238,6 +1238,16 @@ native_module_exports(const std::string_view module_name)
                 named("Canevas")));
         export_callable(
             exports,
+            "fenêtre",
+            callable(
+                {
+                    parameter("largeur", "Entier"),
+                    parameter("hauteur", "Entier"),
+                    parameter("titre", "Texte"),
+                },
+                named("Canevas")));
+        export_callable(
+            exports,
             "point",
             callable(
                 {

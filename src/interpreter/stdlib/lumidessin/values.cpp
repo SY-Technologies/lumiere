@@ -378,6 +378,8 @@ Value make_canevas_value(int32_t width, int32_t height, bool visible, const Nati
     bind_canevas_text_methods(object, raw_state, make_native_function);
     bind_canevas_image_methods(object, raw_state, make_native_function);
     bind_canevas_crayon_methods(object, raw_state, make_native_function);
+    bind_canevas_frame_methods(object, raw_state, make_native_function);
+    bind_canevas_input_methods(object, raw_state, make_native_function);
 
     return Value::objet(std::move(object));
 }
