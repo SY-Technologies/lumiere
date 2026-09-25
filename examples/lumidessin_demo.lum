@@ -42,6 +42,10 @@ fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
     toile.tracer_polyligne(chemin, faux, LumiDessin.Couleurs.cyan, 2.0)
     afficher("toile: " + toile.largeur() + "x" + toile.hauteur())
 
+    soit taille_titre = toile.mesurer_texte("Lumière", 12)
+    afficher("mesure titre: " + taille_titre.largeur + "x" + taille_titre.hauteur)
+    toile.dessiner_texte("Lumière", 2.0, 2.0, 12, LumiDessin.Couleurs.noir)
+
     retourne Succès(rien)
 }
 

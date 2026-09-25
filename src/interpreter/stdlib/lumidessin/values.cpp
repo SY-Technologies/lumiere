@@ -176,8 +176,22 @@ Value make_point_value(double x, double y)
     return Value::objet(std::move(object));
 }
 
-// make_dimensions_value() is added in the stage that introduces
-// mesurer_texte(), its first caller.
+// ---------------------------------------------------------------------------
+// Dimensions -- immutable value type with plain readable fields (not
+// methods), per docs/stdlib-lumidessin.md's "Public types" section.
+// ---------------------------------------------------------------------------
+
+Value make_dimensions_value(int32_t width, int32_t height)
+{
+    auto object = make_ref<LumiereObject>();
+    auto klass = make_ref<LumiereClass>();
+    klass->name = "LumiDessin.Dimensions";
+    klass->type_identity = native_nominal_type_identity("LumiDessin", "Dimensions");
+    object->klass = std::move(klass);
+    object->fields["largeur"] = Value::entier(width);
+    object->fields["hauteur"] = Value::entier(height);
+    return Value::objet(std::move(object));
+}
 
 // ---------------------------------------------------------------------------
 // Image -- immutable decoded/captured RGBA8 pixels
@@ -328,6 +342,7 @@ Value make_canevas_value(int32_t width, int32_t height, bool visible, const Nati
         }));
 
     bind_canevas_drawing_methods(object, raw_state, make_native_function);
+    bind_canevas_text_methods(object, raw_state, make_native_function);
 
     return Value::objet(std::move(object));
 }

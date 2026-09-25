@@ -5396,6 +5396,127 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
     }
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinMeasuresAndDrawsTextConsistentlyAcrossLinesTabsAndMissingGlyphs)
+{
+    // mesurer_texte and dessiner_texte share one layout path
+    // (docs/stdlib-lumidessin.md, "Text"), so their agreement is checked
+    // structurally here rather than by hard-coding font-metric pixel
+    // values that would just be re-deriving stb_truetype's own output:
+    // three lines measure exactly 3x one line's height, a tab advances
+    // further than no tab, and an empty string is a single zero-width
+    // line. A codepoint the bundled font has no glyph for (an emoji) must
+    // not crash and must still paint something -- Inter's .notdef glyph is
+    // a drawn box, not empty (see text.cpp's "Missing glyphs" comment).
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.canevas(200, 120)\n"
+        "  soit une_ligne = c.mesurer_texte(\"Bonjour\", 20)\n"
+        "  soit trois_lignes = c.mesurer_texte(\"a\n"
+        "b\n"
+        "c\", 20)\n"
+        "  afficher(\"hauteur x3: \" + (trois_lignes.hauteur == une_ligne.hauteur * 3))\n"
+        "  soit vide = c.mesurer_texte(\"\", 20)\n"
+        "  afficher(\"vide: \" + vide.largeur + \"x\" + (vide.hauteur == une_ligne.hauteur))\n"
+        "  soit sans_tab = c.mesurer_texte(\"a\", 20)\n"
+        "  soit avec_tab = c.mesurer_texte(\"a	b\", 20)\n"
+        "  afficher(\"tab avance: \" + (avec_tab.largeur > sans_tab.largeur))\n"
+        "  soit accents = c.mesurer_texte(\"éèàçùâêîôû\", 20)\n"
+        "  afficher(\"accents mesurables: \" + (accents.largeur > 0))\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_texte(\"Ai\", 10.0, 10.0, 40, LumiDessin.Couleurs.noir)\n"
+        "  soit encre = faux\n"
+        "  soit y = 0\n"
+        "  tant que y < 120 {\n"
+        "    soit x = 0\n"
+        "    tant que x < 200 {\n"
+        "      soit p = c.lire_pixel(x, y)\n"
+        "      si p.rouge() != 255 { encre = vrai }\n"
+        "      x = x + 1\n"
+        "    }\n"
+        "    y = y + 1\n"
+        "  }\n"
+        "  afficher(\"encre deposee: \" + encre)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_texte(\"🎉\", 10.0, 10.0, 60, LumiDessin.Couleurs.noir)\n"
+        "  soit notdef_encre = faux\n"
+        "  y = 0\n"
+        "  tant que y < 120 {\n"
+        "    soit x = 0\n"
+        "    tant que x < 200 {\n"
+        "      soit p = c.lire_pixel(x, y)\n"
+        "      si p.rouge() != 255 { notdef_encre = vrai }\n"
+        "      x = x + 1\n"
+        "    }\n"
+        "    y = y + 1\n"
+        "  }\n"
+        "  afficher(\"glyphe manquant dessine quelque chose: \" + notdef_encre)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "hauteur x3: vrai\n"
+        "vide: 0xvrai\n"
+        "tab avance: vrai\n"
+        "accents mesurables: vrai\n"
+        "encre deposee: vrai\n"
+        "glyphe manquant dessine quelque chose: vrai\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinTextRaisesRuntimeErrorsForInvalidSizesAndClosedCanvas)
+{
+    // taille outside 1..1024 and any text method on a closed canvas are
+    // programmer errors, matching every other Canevas method
+    // (docs/stdlib-lumidessin.md's Failure policy).
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.mesurer_texte(\"x\", 0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.mesurer_texte attend une taille entre 1 et 1024"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.dessiner_texte(\"x\", 0.0, 0.0, 1025, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_texte attend une taille entre 1 et 1024"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.mesurer_texte(\"x\", 20)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.mesurer_texte ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.dessiner_texte(\"x\", 0.0, 0.0, 20, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_texte ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(

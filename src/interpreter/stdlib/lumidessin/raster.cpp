@@ -72,6 +72,13 @@ uint8_t round_channel(double value)
     return static_cast<uint8_t>(std::clamp(rounded, 0.0, 255.0));
 }
 
+} // namespace
+
+// Shared with text.cpp (glyph coverage compositing uses the same
+// source-over path as every SDF primitive below), so this one function --
+// alone among this file's blending/rasterization internals -- has external
+// linkage and a declaration in state.hpp instead of living in the
+// anonymous namespace above.
 void blend_pixel(CanvasState &canvas, int x, int y, const ColorState &color, double coverage)
 {
     if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height || coverage <= 0.0)
@@ -103,6 +110,10 @@ void blend_pixel(CanvasState &canvas, int x, int y, const ColorState &color, dou
     pixel[2] = blend_channel(color.b, pixel[2]);
     pixel[3] = round_channel(out_a * 255.0);
 }
+
+namespace
+{
+
 
 // ---------------------------------------------------------------------------
 // Signed-distance-field rasterization. Every primitive below reduces to a

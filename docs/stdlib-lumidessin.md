@@ -558,11 +558,17 @@ mesurer_texte(texte: Texte, taille: Entier) -> Dimensions
 font's em height in logical pixels and must be in `1..1024`. Newline characters
 start new lines. Tabs advance to the next four-space tab stop.
 
-LumiDessin embeds one redistributable font. It must contain the French alphabet,
-ASCII, common punctuation, and the Unicode replacement character. Missing
-glyphs render as the replacement glyph. Text measurement and rendering use the
-same shaping and line-spacing path, so the returned dimensions enclose the
-rendered pixels. Advanced script shaping — complex-script reordering, ligatures beyond what the bundled font's own glyph table provides — is out of scope for a module whose text drawing exists for labels and diagrams, not document layout.
+LumiDessin embeds one redistributable font (Inter-Regular.ttf). It must
+contain the French alphabet, ASCII, and common punctuation. A missing glyph
+renders as the font's own `.notdef` glyph — a deliberately drawn hollow box in
+Inter, not an empty shape — rather than a lookup of U+FFFD in the font's
+character map: most fonts, Inter included, have no cmap entry for the
+replacement character itself, so "missing glyphs render as the replacement
+glyph" means rendering whichever glyph the rasterizer already resolves an
+unmapped codepoint to, unconditionally, not a second lookup that would just as
+often fail. Text measurement and rendering use the same shaping and
+line-spacing path, so the returned dimensions enclose the rendered pixels.
+Advanced script shaping — complex-script reordering, ligatures beyond what the bundled font's own glyph table provides — is out of scope for a module whose text drawing exists for labels and diagrams, not document layout.
 
 ### Images
 
