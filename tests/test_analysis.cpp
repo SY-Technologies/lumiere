@@ -1123,6 +1123,87 @@ TEST(SourceInspection, DocumentsUserClassMethodReferences)
     EXPECT_EQ(inspection->documentation, "Fixe l'abscisse du point.");
 }
 
+// Step 4: inspect_source's identifier and member-access hover paths now try
+// the semantic index first (inspection_from_symbol, semantic_index.hpp +
+// inspection.cpp), falling back to the pre-existing AST heuristics only
+// when the index has nothing -- see docs/stage1-semantic-index-design.md.
+// The 15 tests above are the regression gate for that switch (all still
+// pass, unchanged); these are new coverage for what the index adds.
+
+TEST(SourceInspection, ResolvesAParameterReference)
+{
+    // Parameters have no Declaration entry in collect_statements' scan at
+    // all (only VarDeclStmt/FunctionDeclStmt/etc. push one), so hovering a
+    // parameter's use always fell through to builtin (i.e. null) before the
+    // index existed. declare_local now indexes PARAMETER bindings too.
+    const std::string source =
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
+    const auto inspection = inspect_source(source, source.rfind("valeur"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "valeur");
+    EXPECT_EQ(inspection->kind, "paramètre");
+}
+
+TEST(SourceInspection, DocumentsAClassFieldReference)
+{
+    const std::string source =
+        "classe Point {\n"
+        "    /** L'abscisse. */\n"
+        "    x: Entier\n"
+        "}\n"
+        "soit p = Point(x: 1)\n"
+        "soit v = p.x\n";
+    const auto inspection = inspect_source(source, source.rfind(".x") + 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "x");
+    EXPECT_EQ(inspection->kind, "champ");
+    EXPECT_EQ(inspection->documentation, "L'abscisse.");
+}
+
+TEST(SourceInspection, DescribesAClassReferenceAsClasseNotFonction)
+{
+    // declaration_inspection_from_stmt's kind labels ("méthode"/"champ")
+    // are written for the member-access context member_declaration_
+    // inspection built them for; inspection_from_symbol corrects them back
+    // to "fonction"/"variable" for a non-member declaration, but a class
+    // reference (the `Point` in `Point()`) needs its own "classe" label,
+    // since declaration_inspection_from_stmt doesn't cover ClassDeclStmt
+    // at all.
+    const std::string source =
+        "classe Point {}\n"
+        "soit p = Point()\n";
+    const auto inspection = inspect_source(source, source.rfind("Point"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "Point");
+    EXPECT_EQ(inspection->kind, "classe");
+}
+
+TEST(SourceInspection, DocumentsAnInheritedFieldReference)
+{
+    // find_member_declaration's parent-chain walk (semantic_analysis.cpp)
+    // is what record_member_occurrence resolves an inherited member
+    // through; confirm the hover for it, not just the raw Occurrence
+    // (already covered at the SemanticIndexBinding layer), comes out
+    // right end to end.
+    const std::string source =
+        "classe Base {\n"
+        "    /** Hérité. */\n"
+        "    x: Entier\n"
+        "}\n"
+        "classe Enfant : Base {}\n"
+        "soit e = Enfant(x: 1)\n"
+        "soit v = e.x\n";
+    const auto inspection = inspect_source(source, source.rfind(".x") + 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "x");
+    EXPECT_EQ(inspection->kind, "champ");
+    EXPECT_EQ(inspection->documentation, "Hérité.");
+}
+
 TEST(SourceInspection, EscapesControlCharactersInJson)
 {
     // The escaper this serializes through used to remember only the quote and

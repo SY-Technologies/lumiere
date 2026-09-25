@@ -191,11 +191,13 @@ private:
         // docs/stage1-semantic-index-design.md's open questions.
         const SourceSpan span = span_of(name, m_index_source);
         static_cast<void>(m_analysis.model.index.declare(
-            SymbolNamespace::Value, kind, name.lexeme, span, span, kModuleScopeId));
+            SymbolNamespace::Value, kind, name.lexeme, span, span, kModuleScopeId,
+            /*type=*/nullptr, /*documentation=*/{}, &declaration));
     }
 
     void declare_type(const Token &name,
-                      const SemanticTypeKind kind)
+                      const SemanticTypeKind kind,
+                      const Stmt &declaration)
     {
         SemanticTypeRef type = kind == SemanticTypeKind::CLASS
                                    ? m_analysis.model.types.class_type(name.lexeme)
@@ -210,7 +212,8 @@ private:
                                                    : SemanticSymbolKind::INTERFACE;
         const SourceSpan span = span_of(name, m_index_source);
         static_cast<void>(m_analysis.model.index.declare(
-            SymbolNamespace::Type, symbol_kind, name.lexeme, span, span, kModuleScopeId, std::move(type)));
+            SymbolNamespace::Type, symbol_kind, name.lexeme, span, span, kModuleScopeId, std::move(type),
+            /*documentation=*/{}, &declaration));
     }
 
     /** The index Scope a declaration or occurrence right now belongs to. */
@@ -645,7 +648,8 @@ private:
         }
         const SourceSpan span = span_of(name, m_index_source);
         const SymbolId id = m_analysis.model.index.declare(
-            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope());
+            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope(),
+            /*type=*/nullptr, /*documentation=*/{}, declaration);
         if (declaration != nullptr)
         {
             m_symbol_by_declaration.emplace(declaration, id);
@@ -1118,7 +1122,7 @@ private:
             }
             else if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
             {
-                declare_type(klass->name, SemanticTypeKind::CLASS);
+                declare_type(klass->name, SemanticTypeKind::CLASS, *klass);
                 declare_value(klass->name, SemanticSymbolKind::CLASS, *klass);
                 if (std::any_of(
                         klass->interfaces.begin(), klass->interfaces.end(),
@@ -1136,7 +1140,7 @@ private:
             }
             else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
             {
-                declare_type(interface->name, SemanticTypeKind::INTERFACE);
+                declare_type(interface->name, SemanticTypeKind::INTERFACE, *interface);
                 declare_value(interface->name, SemanticSymbolKind::INTERFACE, *interface);
                 if (!interface->is_public)
                 {
