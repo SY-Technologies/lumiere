@@ -1208,10 +1208,6 @@ native_module_exports(const std::string_view module_name)
 
     if (module_name == "LumiDessin")
     {
-        // Stage 1 of docs/stdlib-lumidessin.md's implementation order:
-        // nominal types only. Free functions (ouvrir, créer_hors_écran,
-        // point, rvb, rvba, depuis_hex, ...) are exported here as the
-        // stages that implement them land.
         exports.types.emplace("Canevas", SemanticTypeKind::CLASS);
         exports.types.emplace("Crayon", SemanticTypeKind::CLASS);
         exports.types.emplace("Couleur", SemanticTypeKind::CLASS);
@@ -1224,6 +1220,59 @@ native_module_exports(const std::string_view module_name)
         exports.types.emplace("ErreurCouleur", SemanticTypeKind::CLASS);
         exports.values.emplace("ErreurCouleur", SemanticSymbolKind::CLASS);
         exports.error_types.insert("ErreurCouleur");
+
+        // Object and Crayon method calls (canevas.largeur(), point.x, ...)
+        // are resolved dynamically, like every other native object's
+        // methods in this codebase (compare Temps.DateHeure/Fuseau, whose
+        // methods also have no exports here) -- only module-level members
+        // need a static signature.
+
+        export_callable(
+            exports,
+            "créer_hors_écran",
+            callable(
+                {
+                    parameter("largeur", "Entier"),
+                    parameter("hauteur", "Entier"),
+                },
+                named("Canevas")));
+        export_callable(
+            exports,
+            "point",
+            callable(
+                {
+                    parameter("x", "Décimal"),
+                    parameter("y", "Décimal"),
+                },
+                named("Point")));
+        export_callable(
+            exports,
+            "rvb",
+            callable(
+                {
+                    parameter("rouge", "Entier"),
+                    parameter("vert", "Entier"),
+                    parameter("bleu", "Entier"),
+                },
+                named("Couleur")));
+        export_callable(
+            exports,
+            "rvba",
+            callable(
+                {
+                    parameter("rouge", "Entier"),
+                    parameter("vert", "Entier"),
+                    parameter("bleu", "Entier"),
+                    parameter("alpha", "Entier"),
+                },
+                named("Couleur")));
+        export_callable(
+            exports,
+            "depuis_hex",
+            callable(
+                {parameter("valeur", "Texte")},
+                generic("Résultat", {named("Couleur"), named("ErreurCouleur")})));
+        export_value(exports, "Couleurs", named("Universel"));
         return exports;
     }
 

@@ -5087,6 +5087,160 @@ TEST(InterpreterBuiltinModules, TempsMonotonicClockMeasuresRealElapsedTimeAndNev
         "jamais negatif: vrai\n");
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinSupportsColorConstructionAndComponentAccess)
+{
+    // rvb/rvba build straight-alpha Couleur values (rvb defaults alpha to
+    // 255), depuis_hex accepts both #RRGGBB and #RRGGBBAA case-insensitively
+    // and reports a structured Échec(ErreurCouleur) otherwise, and the
+    // Couleurs.* constants match the table in docs/stdlib-lumidessin.md.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {\n"
+        "  soit c1 = LumiDessin.rvb(10, 20, 30)\n"
+        "  afficher(\"rvb: \" + c1.rouge() + \",\" + c1.vert() + \",\" + c1.bleu() + \",\" + c1.alpha())\n"
+        "  soit c2 = LumiDessin.rvba(10, 20, 30, 40)\n"
+        "  afficher(\"rvba: \" + c2.rouge() + \",\" + c2.vert() + \",\" + c2.bleu() + \",\" + c2.alpha())\n"
+        "  soit c3 = LumiDessin.depuis_hex(\"#a1B2c3\") ou propager\n"
+        "  afficher(\"hex6: \" + c3.rouge() + \",\" + c3.vert() + \",\" + c3.bleu() + \",\" + c3.alpha())\n"
+        "  soit c4 = LumiDessin.depuis_hex(\"#000000FF\") ou propager\n"
+        "  afficher(\"hex8: \" + c4.rouge() + \",\" + c4.vert() + \",\" + c4.bleu() + \",\" + c4.alpha())\n"
+        "  afficher(\"blanc: \" + LumiDessin.Couleurs.blanc.rouge() + \",\" + LumiDessin.Couleurs.blanc.alpha())\n"
+        "  afficher(\"transparent alpha: \" + LumiDessin.Couleurs.transparent.alpha())\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon LumiDessin.depuis_hex(\"pas-hex\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"echec attendu: \" + e.opération + \" / \" + e.valeur)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "rvb: 10,20,30,255\n"
+        "rvba: 10,20,30,40\n"
+        "hex6: 161,178,195,255\n"
+        "hex8: 0,0,0,255\n"
+        "blanc: 255,255\n"
+        "transparent alpha: 0\n"
+        "echec attendu: depuis_hex / pas-hex\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSupportsOffScreenCanvasLifecycleClearPixelReadWriteAndCapture)
+{
+    // créer_hors_écran starts opaque white and invisible; effacer replaces
+    // every pixel including alpha; lire_pixel and capturer both observe the
+    // replaced pixels; fermer is idempotent and est_ouvert reflects it.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.créer_hors_écran(3, 2)\n"
+        "  afficher(\"taille: \" + c.largeur() + \"x\" + c.hauteur())\n"
+        "  afficher(\"visible: \" + c.est_visible())\n"
+        "  soit blanc_initial = c.lire_pixel(0, 0)\n"
+        "  afficher(\"blanc initial: \" + blanc_initial.rouge() + \",\" + blanc_initial.alpha())\n"
+        "  c.effacer(LumiDessin.rvba(1, 2, 3, 4))\n"
+        "  soit p = c.lire_pixel(2, 1)\n"
+        "  afficher(\"apres effacer: \" + p.rouge() + \",\" + p.vert() + \",\" + p.bleu() + \",\" + p.alpha())\n"
+        "  soit image = c.capturer()\n"
+        "  afficher(\"capture: \" + image.largeur() + \"x\" + image.hauteur())\n"
+        "  afficher(\"ouvert: \" + c.est_ouvert())\n"
+        "  c.fermer()\n"
+        "  c.fermer()\n"
+        "  afficher(\"ouvert apres fermer x2: \" + c.est_ouvert())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "taille: 3x2\n"
+        "visible: faux\n"
+        "blanc initial: 255,255\n"
+        "apres effacer: 1,2,3,4\n"
+        "capture: 3x2\n"
+        "ouvert: vrai\n"
+        "ouvert apres fermer x2: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSupportsPointConstruction)
+{
+    // Point exposes x/y as plain readable fields (no parentheses), per
+    // docs/stdlib-lumidessin.md's "Public types" section, and accepts
+    // integer literals coerced to Décimal like every other Décimal
+    // parameter in this stdlib.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit p1 = LumiDessin.point(1.5, -2.25)\n"
+        "  afficher(\"p1: \" + p1.x + \",\" + p1.y)\n"
+        "  soit p2 = LumiDessin.point(3, 4)\n"
+        "  afficher(\"p2: \" + p2.x + \",\" + p2.y)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "p1: 1.5,-2.25\np2: 3.0,4.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinRaisesRuntimeErrorsForInvalidDimensionsColorComponentsPixelBoundsAndClosedCanvas)
+{
+    // Invalid canvas dimensions, out-of-range color components, an
+    // out-of-bounds pixel read, and any method but est_ouvert()/fermer() on
+    // a closed canvas are all programmer-error runtime errors, not
+    // Résultat failures -- docs/stdlib-lumidessin.md's Failure policy.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.créer_hors_écran(0, 5) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.créer_hors_écran attend des dimensions entre 1 et 16384"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.créer_hors_écran(16384, 16384) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.créer_hors_écran attend un canevas d'au plus 16777216 pixels"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.rvba(0, 0, 0, 256) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.rvba attend une composante de couleur entre 0 et 255"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(4, 4)\n"
+                                       "  c.lire_pixel(4, 0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.lire_pixel attend des coordonnées à l'intérieur du canevas"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.créer_hors_écran(4, 4)\n"
+                                       "  c.fermer()\n"
+                                       "  c.effacer(LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.effacer ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(

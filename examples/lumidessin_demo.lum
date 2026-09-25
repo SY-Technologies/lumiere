@@ -1,0 +1,43 @@
+importer LumiDessin
+
+fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
+    soit dessin = LumiDessin.créer_hors_écran(320, 200)
+    afficher("canevas: " + dessin.largeur() + "x" + dessin.hauteur() + " visible=" + dessin.est_visible())
+
+    dessin.effacer(LumiDessin.Couleurs.blanc)
+    soit blanc = dessin.lire_pixel(0, 0)
+    afficher("blanc: " + blanc.rouge() + "," + blanc.vert() + "," + blanc.bleu() + "," + blanc.alpha())
+
+    soit bleu_ciel = LumiDessin.depuis_hex("#87CEEB") ou propager
+    dessin.effacer(bleu_ciel)
+    soit p = dessin.lire_pixel(159, 99)
+    afficher("bleu ciel: " + p.rouge() + "," + p.vert() + "," + p.bleu())
+
+    soit rose = LumiDessin.rvba(255, 192, 203, 128)
+    afficher("rose: " + rose.rouge() + "," + rose.vert() + "," + rose.bleu() + "," + rose.alpha())
+
+    soit origine = LumiDessin.point(0, 0)
+    soit centre = LumiDessin.point(160.0, 100.0)
+    afficher("origine: " + origine.x + "," + origine.y)
+    afficher("centre: " + centre.x + "," + centre.y)
+
+    soit capture = dessin.capturer()
+    afficher("capture: " + capture.largeur() + "x" + capture.hauteur())
+
+    dessin.fermer()
+    afficher("ouvert apres fermer: " + dessin.est_ouvert())
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> rien
+        Échec(e) -> afficher("échec: " + e.cause)
+    }
+
+    agir selon LumiDessin.depuis_hex("#zzzzzz") {
+        Succès(_) -> afficher("inattendu: succès")
+        Échec(e) -> afficher("échec hex attendu: " + e.opération + " / " + e.cause)
+    }
+}
