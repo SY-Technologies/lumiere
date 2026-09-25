@@ -1,8 +1,9 @@
 # Stage 1 design: the semantic tooling index
 
-Status: draft, for review. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
-("semantic tooling index") into something implementable. Nothing here is
-committed yet.
+Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
+("semantic tooling index") into something implementable. Rollout steps 1
+and 2 (below) are implemented; steps 3-5 (occurrence recording, switching
+inspect_source over, deleting the old heuristics) remain.
 
 ## Where we actually start from
 
