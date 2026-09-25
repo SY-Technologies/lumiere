@@ -213,8 +213,20 @@ private:
             SymbolNamespace::Type, symbol_kind, name.lexeme, span, span, kModuleScopeId, std::move(type)));
     }
 
+    /** The index Scope a declaration or occurrence right now belongs to. */
+    ScopeId current_index_scope() const
+    {
+        return m_index_scopes.empty() ? kModuleScopeId : m_index_scopes.back();
+    }
+
     void push_scope()
     {
+        // The enclosing span is a placeholder until statement nodes carry
+        // their own extent -- same open item declare_value/declare_type
+        // already note for Symbol::enclosing_span.
+        const ScopeId id = m_analysis.model.index.push_scope(
+            current_index_scope(), SourceSpan{m_index_source, 0, 0});
+        m_index_scopes.push_back(id);
         m_scopes.emplace_back();
         m_type_scopes.emplace_back();
         m_signature_scopes.emplace_back();
@@ -246,6 +258,9 @@ private:
         m_scopes.pop_back();
         m_type_scopes.pop_back();
         m_signature_scopes.pop_back();
+        // The index's own Scope record is permanent -- only this walk's
+        // transient "which scope am I resolving in" bookkeeping unwinds.
+        m_index_scopes.pop_back();
     }
 
     bool obligation_has_other_owner(
@@ -626,7 +641,11 @@ private:
         {
             diagnose(name, "LUM-S0007",
                      "le nom '" + name.lexeme + "' est déjà déclaré dans cette portée");
+            return;
         }
+        const SourceSpan span = span_of(name, m_index_source);
+        static_cast<void>(m_analysis.model.index.declare(
+            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope()));
     }
 
     void set_local_type(const std::string &name, SemanticTypeRef type)
@@ -3030,10 +3049,39 @@ private:
      * always a plain identifier, and it must name a declared, non-fixed
      * variable. Reads are checked too now, in diagnose_value_read.
      */
+    /**
+     * @brief Records a read/write occurrence for `name` in the semantic
+     * index, when -- and only when -- the index already has a Symbol for
+     * it.
+     *
+     * Not every name `find_local_value`/`find_value`/`find_type` resolves
+     * has a matching index entry yet: builtins, imports, and type aliases
+     * aren't indexed until a later rollout step (see
+     * docs/stage1-semantic-index-design.md). That's fine and expected --
+     * an occurrence with no resolvable symbol is simply not recorded, per
+     * the design's own recovery rules, rather than needing a sentinel.
+     */
+    void record_value_occurrence(const Token &name, const bool is_write)
+    {
+        const Symbol *resolved = m_analysis.model.index.lookup(
+            current_index_scope(), name.lexeme, SymbolNamespace::Value);
+        if (resolved == nullptr)
+        {
+            resolved = m_analysis.model.index.lookup(
+                current_index_scope(), name.lexeme, SymbolNamespace::Type);
+        }
+        if (resolved != nullptr)
+        {
+            m_analysis.model.index.record_occurrence(
+                span_of(name, m_index_source), resolved->id, is_write);
+        }
+    }
+
     void diagnose_assignment_target(const IdentifierExpr &target)
     {
         if (const LocalBinding *binding = find_local_value(target.name.lexeme))
         {
+            record_value_occurrence(target.name, /*is_write=*/true);
             if (const auto *declaration =
                     dynamic_cast<const VarDeclStmt *>(binding->declaration);
                 declaration != nullptr && declaration->is_fixe)
@@ -3046,6 +3094,7 @@ private:
 
         if (const SemanticSymbol *symbol = m_analysis.model.find_value(target.name.lexeme))
         {
+            record_value_occurrence(target.name, /*is_write=*/true);
             if (const auto *declaration =
                     dynamic_cast<const VarDeclStmt *>(symbol->declaration);
                 declaration != nullptr && declaration->is_fixe)
@@ -3084,6 +3133,7 @@ private:
             m_analysis.model.find_value(name.lexeme) != nullptr ||
             m_analysis.model.find_type(name.lexeme) != nullptr)
         {
+            record_value_occurrence(name, /*is_write=*/false);
             return;
         }
         diagnose(name, "LUM-S0057",
@@ -4154,6 +4204,11 @@ private:
     SourceId m_index_source{0};
     SemanticAnalysis m_analysis;
     std::vector<std::unordered_map<std::string, LocalBinding>> m_scopes;
+    // Mirrors m_scopes one-for-one: m_index_scopes[i] is the permanent
+    // SemanticIndex::Scope record for the same lexical scope m_scopes[i] is
+    // the transient resolution bookkeeping for. See push_scope/pop_scope
+    // and current_index_scope() below.
+    std::vector<ScopeId> m_index_scopes;
     std::vector<std::unordered_map<std::string, SemanticTypeRef>> m_type_scopes;
     std::vector<std::unordered_map<std::string, CallableSignature>> m_signature_scopes;
     std::vector<CallableOwner> m_callable_stack;
