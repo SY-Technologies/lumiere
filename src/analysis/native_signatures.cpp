@@ -1263,6 +1263,31 @@ native_module_exports(const std::string_view module_name)
                 {parameter("valeur", "Texte")},
                 generic("Résultat", {named("Couleur"), named("ErreurCouleur")})));
         export_value(exports, "Couleurs", named("Universel"));
+        export_callable(
+            exports,
+            "charger_image",
+            callable(
+                {parameter("chemin", "Texte")},
+                generic("Résultat", {named("Image"), named("ErreurImage")})));
+
+        // Canevas.enregistrer_png is the one Canevas *method* (as opposed to
+        // module-level function) that needs a static signature: every other
+        // method call resolves dynamically (see the comment above), but a
+        // method's return type must be statically known as Résultat[...]
+        // for 'agir selon' to accept Succès/Échec patterns against it
+        // (semantic_analysis.cpp's resolve_match). The dotted key mirrors
+        // how semantic_analysis.cpp's callable_signature() looks up a
+        // method: object_type->name() + "." + member_name, which for an
+        // imported module becomes "<alias>." + this export's own key --
+        // i.e. "LumiDessin." + "Canevas.enregistrer_png" ==
+        // "LumiDessin.Canevas.enregistrer_png", exactly what a Canevas
+        // receiver's type name resolves to.
+        exports.callables.emplace(
+            "Canevas.enregistrer_png",
+            callable(
+                {parameter("chemin", "Texte")},
+                generic("Résultat", {named("Rien"), named("ErreurImage")})));
+
         return exports;
     }
 

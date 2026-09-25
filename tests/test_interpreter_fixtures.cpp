@@ -5517,6 +5517,105 @@ TEST(InterpreterBuiltinModules, LumiDessinTextRaisesRuntimeErrorsForInvalidSizes
     }
 }
 
+TEST(InterpreterBuiltinModules, LumiDessinSavesAndLoadsPngRoundTripAndDrawsImages)
+{
+    // enregistrer_png/charger_image round-trip losslessly; dessiner_image
+    // copies 1:1, dessiner_image_redimensionnée/nette sample a scaled copy,
+    // and opacité scales the composite -- all through the same blend_pixel
+    // path raster.cpp's shapes use (docs/stdlib-lumidessin.md, "Images").
+    const std::filesystem::path png_root = std::filesystem::temp_directory_path() / "lumiere_lumidessin_png_test";
+    std::filesystem::create_directories(png_root);
+    const std::filesystem::path png_path = png_root / "carre.png";
+    const std::filesystem::path non_png_path = png_root / "pas_une_image.png";
+    {
+        std::ofstream junk(non_png_path, std::ios::binary);
+        junk << "ceci n'est pas un PNG";
+    }
+
+    const std::string program =
+        "importer LumiDessin\nfonction principal() {\n  soit source = LumiDessin.canevas(4, 4)\n  source.effacer(LumiDessin.Couleurs.blanc)\n  source.remplir_rectangle(1.0, 1.0, 2.0, 2.0, LumiDessin.Couleurs.rouge)\n  agir selon source.enregistrer_png(\""
+        + png_path.string()
+        + "\") {\n    Succès(_) -> afficher(\"sauvegarde: ok\")\n    Échec(e) -> afficher(\"BUG sauvegarde: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + png_path.string()
+        + "\") {\n    Succès(img) -> {\n      afficher(\"chargee: \" + img.largeur() + \"x\" + img.hauteur())\n      soit copie = LumiDessin.canevas(4, 4)\n      copie.effacer(LumiDessin.Couleurs.blanc)\n      copie.dessiner_image(img, 0.0, 0.0)\n      soit coin = copie.lire_pixel(0, 0)\n      soit centre = copie.lire_pixel(2, 2)\n      afficher(\"copie coin: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n      afficher(\"copie centre: \" + centre.rouge() + \",\" + centre.vert() + \",\" + centre.bleu())\n      soit agrandie = LumiDessin.canevas(8, 8)\n      agrandie.effacer(LumiDessin.Couleurs.blanc)\n      agrandie.dessiner_image_redimensionnée(img, 0.0, 0.0, 8.0, 8.0, 1.0)\n      soit p_agrandie = agrandie.lire_pixel(4, 4)\n      afficher(\"redim centre: \" + p_agrandie.rouge() + \",\" + p_agrandie.vert() + \",\" + p_agrandie.bleu())\n      soit demi_opacite = LumiDessin.canevas(8, 8)\n      demi_opacite.effacer(LumiDessin.Couleurs.blanc)\n      demi_opacite.dessiner_image_nette(img, 0.0, 0.0, 8.0, 8.0, 0.5)\n      soit p_demi = demi_opacite.lire_pixel(4, 4)\n      afficher(\"nette demi-opacite centre: \" + p_demi.rouge() + \",\" + p_demi.vert() + \",\" + p_demi.bleu())\n    }\n    Échec(e) -> afficher(\"BUG chargement: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + (png_root / "absent.png").string()
+        + "\") {\n    Succès(_) -> afficher(\"BUG: fichier absent charge\")\n    Échec(e) -> afficher(\"fichier absent: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + non_png_path.string()
+        + "\") {\n    Succès(_) -> afficher(\"BUG: non-png charge\")\n    Échec(e) -> afficher(\"non-png: \" + e.cause)\n  }\n}\n";
+
+    const auto [output, completed] = execute_program(program);
+
+    std::filesystem::remove_all(png_root);
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "sauvegarde: ok\n"
+        "chargee: 4x4\n"
+        "copie coin: 255,255,255\n"
+        "copie centre: 255,0,0\n"
+        "redim centre: 255,0,0\n"
+        "nette demi-opacite centre: 255,128,128\n"
+        "fichier absent: impossible d'ouvrir le fichier\n"
+        "non-png: format non pris en charge\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinImageRaisesRuntimeErrorsForInvalidGeometryOpacityAndClosedCanvas)
+{
+    // Negative width/height, opacité outside 0.0..1.0, and any image method
+    // on a closed canvas are programmer errors, matching the rest of the
+    // module's Failure policy.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.dessiner_image_redimensionnée(img, 0.0, 0.0, -1.0, 5.0, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image_redimensionnée attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.dessiner_image_nette(img, 0.0, 0.0, 5.0, 5.0, 1.5)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image_nette attend une opacité entre 0.0 et 1.0"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.fermer()\n"
+                                       "  c.dessiner_image(img, 0.0, 0.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.enregistrer_png(\"/tmp/inaccessible.png\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.enregistrer_png ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(

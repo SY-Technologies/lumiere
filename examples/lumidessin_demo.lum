@@ -46,6 +46,14 @@ fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
     afficher("mesure titre: " + taille_titre.largeur + "x" + taille_titre.hauteur)
     toile.dessiner_texte("Lumière", 2.0, 2.0, 12, LumiDessin.Couleurs.noir)
 
+    soit vignette = toile.capturer()
+    soit rendu = LumiDessin.canevas(96, 48)
+    rendu.effacer(LumiDessin.Couleurs.blanc)
+    rendu.dessiner_image(vignette, 0.0, 0.0)
+    rendu.dessiner_image_redimensionnée(vignette, 64.0, 0.0, 32.0, 24.0, 1.0)
+    rendu.dessiner_image_nette(vignette, 64.0, 24.0, 32.0, 24.0, 0.5)
+    afficher("rendu: " + rendu.largeur() + "x" + rendu.hauteur())
+
     retourne Succès(rien)
 }
 

@@ -227,6 +227,35 @@ Value make_image_value(int32_t width,
     return Value::objet(std::move(object));
 }
 
+bool is_image_object(const Value &value)
+{
+    return value.is_objet() && value.as_objet() != nullptr && value.as_objet()->klass != nullptr &&
+           value.as_objet()->klass->name == "LumiDessin.Image";
+}
+
+const ImageState &expect_image(IRuntime &runtime, const Value &value, const std::string &context, const RuntimeSite &site)
+{
+    if (!is_image_object(value))
+    {
+        runtime.raise_runtime_error(site, context + " attend une valeur de type Image");
+    }
+    auto *state = dynamic_cast<ImageState *>(value.as_objet()->native_state.get());
+    if (state == nullptr)
+    {
+        runtime.raise_runtime_error(site, context + " attend une valeur Image valide");
+    }
+    return *state;
+}
+
+// LumiDessin.ErreurImage fits stdlib_error_value's opération/chemin/cause
+// shape exactly (docs/stdlib-lumidessin.md, "Public types"), unlike
+// ErreurCouleur -- so it uses that shared helper directly rather than a
+// bespoke constructor.
+Value make_erreur_image(const std::string &operation, const std::string &path, const std::string &cause)
+{
+    return stdlib_error_value("LumiDessin.ErreurImage", operation, cause, path);
+}
+
 // ---------------------------------------------------------------------------
 // Canevas -- mutable RGBA8 framebuffer. Off-screen lifetime, clear, pixel
 // read/write, and capture live here; drawing-primitive methods are added by
@@ -343,6 +372,7 @@ Value make_canevas_value(int32_t width, int32_t height, bool visible, const Nati
 
     bind_canevas_drawing_methods(object, raw_state, make_native_function);
     bind_canevas_text_methods(object, raw_state, make_native_function);
+    bind_canevas_image_methods(object, raw_state, make_native_function);
 
     return Value::objet(std::move(object));
 }
