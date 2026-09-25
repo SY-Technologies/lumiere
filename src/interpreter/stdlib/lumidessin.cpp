@@ -49,6 +49,18 @@ void register_lumidessin_module(Module &module)
             return canvas;
         });
 
+    // ---- Images -------------------------------------------------------
+
+    stdlib_bind_public_function(
+        module,
+        make_native_function,
+        "charger_image",
+        [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+            const auto &args = *native_args.arguments;
+            const auto path = stdlib_expect_path_arg(runtime, args, "LumiDessin.charger_image", native_args.site);
+            return load_png_image(runtime, path, make_native_function, native_args.site);
+        });
+
     // ---- Values and colors ------------------------------------------------
 
     stdlib_bind_public_function(

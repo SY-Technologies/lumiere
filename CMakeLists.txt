@@ -53,6 +53,7 @@ set(LUMIERE_LIBRARY_SOURCES
     src/interpreter/stdlib/lumidessin/values.cpp
     src/interpreter/stdlib/lumidessin/raster.cpp
     src/interpreter/stdlib/lumidessin/text.cpp
+    src/interpreter/stdlib/lumidessin/image.cpp
     src/interpreter/tree_walker/tree_walker.cpp
     src/interpreter/tree_walker/tree_walker_core.cpp
     src/interpreter/tree_walker/tree_walker_expr.cpp

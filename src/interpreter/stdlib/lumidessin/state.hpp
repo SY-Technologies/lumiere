@@ -12,6 +12,7 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -89,6 +90,9 @@ Value make_image_value(int32_t width,
                        int32_t height,
                        std::vector<uint8_t> pixels,
                        const NativeFunctionFactory &make_native_function);
+bool is_image_object(const Value &value);
+const ImageState &expect_image(IRuntime &runtime, const Value &value, const std::string &context, const RuntimeSite &site);
+Value make_erreur_image(const std::string &operation, const std::string &path, const std::string &cause);
 
 // ---------------------------------------------------------------------------
 // Canevas -- mutable RGBA8 framebuffer
@@ -142,5 +146,21 @@ Value make_dimensions_value(int32_t width, int32_t height);
 void bind_canevas_text_methods(const Ref<LumiereObject> &object,
                                CanvasState *state,
                                const NativeFunctionFactory &make_native_function);
+
+// ---------------------------------------------------------------------------
+// Images -- defined in image.cpp. bind_canevas_image_methods() adds
+// enregistrer_png/dessiner_image/dessiner_image_redimensionnée/
+// dessiner_image_nette to a freshly constructed canvas object;
+// load_png_image() backs the module-level charger_image().
+// ---------------------------------------------------------------------------
+
+void bind_canevas_image_methods(const Ref<LumiereObject> &object,
+                                CanvasState *state,
+                                const NativeFunctionFactory &make_native_function);
+
+Value load_png_image(IRuntime &runtime,
+                     const std::filesystem::path &path,
+                     const NativeFunctionFactory &make_native_function,
+                     const RuntimeSite &site);
 
 } // namespace lumiere
