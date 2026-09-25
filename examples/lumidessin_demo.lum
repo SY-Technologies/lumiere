@@ -1,19 +1,19 @@
 importer LumiDessin
 
 fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
-    soit dessin = LumiDessin.créer_hors_écran(320, 200)
+    soit dessin = LumiDessin.canevas(320, 200)
     afficher("canevas: " + dessin.largeur() + "x" + dessin.hauteur() + " visible=" + dessin.est_visible())
 
     dessin.effacer(LumiDessin.Couleurs.blanc)
     soit blanc = dessin.lire_pixel(0, 0)
     afficher("blanc: " + blanc.rouge() + "," + blanc.vert() + "," + blanc.bleu() + "," + blanc.alpha())
 
-    soit bleu_ciel = LumiDessin.depuis_hex("#87CEEB") ou propager
+    soit bleu_ciel = LumiDessin.couleur_hex("#87CEEB") ou propager
     dessin.effacer(bleu_ciel)
     soit p = dessin.lire_pixel(159, 99)
     afficher("bleu ciel: " + p.rouge() + "," + p.vert() + "," + p.bleu())
 
-    soit rose = LumiDessin.rvba(255, 192, 203, 128)
+    soit rose = LumiDessin.couleur(255, 192, 203, 128)
     afficher("rose: " + rose.rouge() + "," + rose.vert() + "," + rose.bleu() + "," + rose.alpha())
 
     soit origine = LumiDessin.point(0, 0)
@@ -27,11 +27,11 @@ fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
     dessin.fermer()
     afficher("ouvert apres fermer: " + dessin.est_ouvert())
 
-    soit toile = LumiDessin.créer_hors_écran(64, 48)
+    soit toile = LumiDessin.canevas(64, 48)
     toile.effacer(LumiDessin.Couleurs.blanc)
     toile.tracer_ligne(0.0, 0.0, 63.0, 47.0, LumiDessin.Couleurs.noir, 2.0)
     toile.tracer_rectangle(4.0, 4.0, 20.0, 12.0, LumiDessin.Couleurs.rouge, 2.0)
-    toile.remplir_rectangle(30.0, 4.0, 20.0, 12.0, LumiDessin.rvba(0, 128, 0, 180))
+    toile.remplir_rectangle(30.0, 4.0, 20.0, 12.0, LumiDessin.couleur(0, 128, 0, 180))
     toile.tracer_cercle(16.0, 30.0, 8.0, LumiDessin.Couleurs.bleu, 2.0)
     toile.remplir_cercle(48.0, 30.0, 8.0, LumiDessin.Couleurs.orange)
     toile.tracer_ellipse(32.0, 40.0, 12.0, 6.0, LumiDessin.Couleurs.violet, 1.0)
@@ -51,7 +51,7 @@ fonction principal() {
         Échec(e) -> afficher("échec: " + e.cause)
     }
 
-    agir selon LumiDessin.depuis_hex("#zzzzzz") {
+    agir selon LumiDessin.couleur_hex("#zzzzzz") {
         Succès(_) -> afficher("inattendu: succès")
         Échec(e) -> afficher("échec hex attendu: " + e.opération + " / " + e.cause)
     }

@@ -1229,7 +1229,7 @@ native_module_exports(const std::string_view module_name)
 
         export_callable(
             exports,
-            "créer_hors_écran",
+            "canevas",
             callable(
                 {
                     parameter("largeur", "Entier"),
@@ -1247,28 +1247,18 @@ native_module_exports(const std::string_view module_name)
                 named("Point")));
         export_callable(
             exports,
-            "rvb",
+            "couleur",
             callable(
                 {
                     parameter("rouge", "Entier"),
                     parameter("vert", "Entier"),
                     parameter("bleu", "Entier"),
+                    parameter("alpha", "Entier", true),
                 },
                 named("Couleur")));
         export_callable(
             exports,
-            "rvba",
-            callable(
-                {
-                    parameter("rouge", "Entier"),
-                    parameter("vert", "Entier"),
-                    parameter("bleu", "Entier"),
-                    parameter("alpha", "Entier"),
-                },
-                named("Couleur")));
-        export_callable(
-            exports,
-            "depuis_hex",
+            "couleur_hex",
             callable(
                 {parameter("valeur", "Texte")},
                 generic("Résultat", {named("Couleur"), named("ErreurCouleur")})));

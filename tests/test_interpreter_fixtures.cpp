@@ -5089,20 +5089,20 @@ TEST(InterpreterBuiltinModules, TempsMonotonicClockMeasuresRealElapsedTimeAndNev
 
 TEST(InterpreterBuiltinModules, LumiDessinSupportsColorConstructionAndComponentAccess)
 {
-    // rvb/rvba build straight-alpha Couleur values (rvb defaults alpha to
-    // 255), depuis_hex accepts both #RRGGBB and #RRGGBBAA case-insensitively
+    // couleur builds straight-alpha Couleur values (alpha defaults to
+    // 255), couleur_hex accepts both #RRGGBB and #RRGGBBAA case-insensitively
     // and reports a structured Échec(ErreurCouleur) otherwise, and the
     // Couleurs.* constants match the table in docs/stdlib-lumidessin.md.
     const auto [output, completed] = execute_program(
         "importer LumiDessin\n"
         "fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {\n"
-        "  soit c1 = LumiDessin.rvb(10, 20, 30)\n"
-        "  afficher(\"rvb: \" + c1.rouge() + \",\" + c1.vert() + \",\" + c1.bleu() + \",\" + c1.alpha())\n"
-        "  soit c2 = LumiDessin.rvba(10, 20, 30, 40)\n"
-        "  afficher(\"rvba: \" + c2.rouge() + \",\" + c2.vert() + \",\" + c2.bleu() + \",\" + c2.alpha())\n"
-        "  soit c3 = LumiDessin.depuis_hex(\"#a1B2c3\") ou propager\n"
+        "  soit c1 = LumiDessin.couleur(10, 20, 30)\n"
+        "  afficher(\"couleur: \" + c1.rouge() + \",\" + c1.vert() + \",\" + c1.bleu() + \",\" + c1.alpha())\n"
+        "  soit c2 = LumiDessin.couleur(10, 20, 30, 40)\n"
+        "  afficher(\"couleur+alpha: \" + c2.rouge() + \",\" + c2.vert() + \",\" + c2.bleu() + \",\" + c2.alpha())\n"
+        "  soit c3 = LumiDessin.couleur_hex(\"#a1B2c3\") ou propager\n"
         "  afficher(\"hex6: \" + c3.rouge() + \",\" + c3.vert() + \",\" + c3.bleu() + \",\" + c3.alpha())\n"
-        "  soit c4 = LumiDessin.depuis_hex(\"#000000FF\") ou propager\n"
+        "  soit c4 = LumiDessin.couleur_hex(\"#000000FF\") ou propager\n"
         "  afficher(\"hex8: \" + c4.rouge() + \",\" + c4.vert() + \",\" + c4.bleu() + \",\" + c4.alpha())\n"
         "  afficher(\"blanc: \" + LumiDessin.Couleurs.blanc.rouge() + \",\" + LumiDessin.Couleurs.blanc.alpha())\n"
         "  afficher(\"transparent alpha: \" + LumiDessin.Couleurs.transparent.alpha())\n"
@@ -5113,7 +5113,7 @@ TEST(InterpreterBuiltinModules, LumiDessinSupportsColorConstructionAndComponentA
         "    Succès(_) -> rien\n"
         "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
         "  }\n"
-        "  agir selon LumiDessin.depuis_hex(\"pas-hex\") {\n"
+        "  agir selon LumiDessin.couleur_hex(\"pas-hex\") {\n"
         "    Succès(_) -> afficher(\"inattendu: succès\")\n"
         "    Échec(e) -> afficher(\"echec attendu: \" + e.opération + \" / \" + e.valeur)\n"
         "  }\n"
@@ -5122,29 +5122,29 @@ TEST(InterpreterBuiltinModules, LumiDessinSupportsColorConstructionAndComponentA
     EXPECT_TRUE(completed);
     EXPECT_EQ(
         output,
-        "rvb: 10,20,30,255\n"
-        "rvba: 10,20,30,40\n"
+        "couleur: 10,20,30,255\n"
+        "couleur+alpha: 10,20,30,40\n"
         "hex6: 161,178,195,255\n"
         "hex8: 0,0,0,255\n"
         "blanc: 255,255\n"
         "transparent alpha: 0\n"
-        "echec attendu: depuis_hex / pas-hex\n");
+        "echec attendu: couleur_hex / pas-hex\n");
 }
 
 TEST(InterpreterBuiltinModules, LumiDessinSupportsOffScreenCanvasLifecycleClearPixelReadWriteAndCapture)
 {
-    // créer_hors_écran starts opaque white and invisible; effacer replaces
+    // canevas starts opaque white and invisible; effacer replaces
     // every pixel including alpha; lire_pixel and capturer both observe the
     // replaced pixels; fermer is idempotent and est_ouvert reflects it.
     const auto [output, completed] = execute_program(
         "importer LumiDessin\n"
         "fonction principal() {\n"
-        "  soit c = LumiDessin.créer_hors_écran(3, 2)\n"
+        "  soit c = LumiDessin.canevas(3, 2)\n"
         "  afficher(\"taille: \" + c.largeur() + \"x\" + c.hauteur())\n"
         "  afficher(\"visible: \" + c.est_visible())\n"
         "  soit blanc_initial = c.lire_pixel(0, 0)\n"
         "  afficher(\"blanc initial: \" + blanc_initial.rouge() + \",\" + blanc_initial.alpha())\n"
-        "  c.effacer(LumiDessin.rvba(1, 2, 3, 4))\n"
+        "  c.effacer(LumiDessin.couleur(1, 2, 3, 4))\n"
         "  soit p = c.lire_pixel(2, 1)\n"
         "  afficher(\"apres effacer: \" + p.rouge() + \",\" + p.vert() + \",\" + p.bleu() + \",\" + p.alpha())\n"
         "  soit image = c.capturer()\n"
@@ -5195,32 +5195,32 @@ TEST(InterpreterBuiltinModules, LumiDessinRaisesRuntimeErrorsForInvalidDimension
     {
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
-                                       "fonction principal() { LumiDessin.créer_hors_écran(0, 5) }\n");
+                                       "fonction principal() { LumiDessin.canevas(0, 5) }\n");
         EXPECT_FALSE(completed);
         EXPECT_TRUE(output.empty());
-        EXPECT_NE(error.find("LumiDessin.créer_hors_écran attend des dimensions entre 1 et 16384"), std::string::npos);
+        EXPECT_NE(error.find("LumiDessin.canevas attend des dimensions entre 1 et 16384"), std::string::npos);
     }
     {
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
-                                       "fonction principal() { LumiDessin.créer_hors_écran(16384, 16384) }\n");
+                                       "fonction principal() { LumiDessin.canevas(16384, 16384) }\n");
         EXPECT_FALSE(completed);
         EXPECT_TRUE(output.empty());
-        EXPECT_NE(error.find("LumiDessin.créer_hors_écran attend un canevas d'au plus 16777216 pixels"), std::string::npos);
+        EXPECT_NE(error.find("LumiDessin.canevas attend un canevas d'au plus 16777216 pixels"), std::string::npos);
     }
     {
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
-                                       "fonction principal() { LumiDessin.rvba(0, 0, 0, 256) }\n");
+                                       "fonction principal() { LumiDessin.couleur(0, 0, 0, 256) }\n");
         EXPECT_FALSE(completed);
         EXPECT_TRUE(output.empty());
-        EXPECT_NE(error.find("LumiDessin.rvba attend une composante de couleur entre 0 et 255"), std::string::npos);
+        EXPECT_NE(error.find("LumiDessin.couleur attend une composante de couleur entre 0 et 255"), std::string::npos);
     }
     {
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(4, 4)\n"
+                                       "  soit c = LumiDessin.canevas(4, 4)\n"
                                        "  c.lire_pixel(4, 0)\n"
                                        "}\n");
         EXPECT_FALSE(completed);
@@ -5231,7 +5231,7 @@ TEST(InterpreterBuiltinModules, LumiDessinRaisesRuntimeErrorsForInvalidDimension
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(4, 4)\n"
+                                       "  soit c = LumiDessin.canevas(4, 4)\n"
                                        "  c.fermer()\n"
                                        "  c.effacer(LumiDessin.Couleurs.noir)\n"
                                        "}\n");
@@ -5253,7 +5253,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesClipAndComposite)
     const auto [output, completed] = execute_program(
         "importer LumiDessin\n"
         "fonction principal() {\n"
-        "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  soit c = LumiDessin.canevas(10, 10)\n"
         "  c.effacer(LumiDessin.Couleurs.blanc)\n"
         "  c.dessiner_pixel(3, 3, LumiDessin.Couleurs.noir)\n"
         "  soit px = c.lire_pixel(3, 3)\n"
@@ -5267,15 +5267,15 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesClipAndComposite)
         "  soit coin = c.lire_pixel(0, 0)\n"
         "  afficher(\"coin intact: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n"
         "  soit triangle = [LumiDessin.point(0.0, 0.0), LumiDessin.point(9.0, 0.0), LumiDessin.point(4.0, 9.0)]\n"
-        "  soit c2 = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  soit c2 = LumiDessin.canevas(10, 10)\n"
         "  c2.effacer(LumiDessin.Couleurs.blanc)\n"
         "  c2.remplir_polygone(triangle, LumiDessin.Couleurs.noir)\n"
         "  soit dedans = c2.lire_pixel(4, 2)\n"
         "  soit dehors = c2.lire_pixel(9, 9)\n"
         "  afficher(\"polygone: \" + dedans.rouge() + \",\" + dehors.rouge())\n"
-        "  soit c3 = LumiDessin.créer_hors_écran(4, 4)\n"
-        "  c3.effacer(LumiDessin.rvb(255, 0, 0))\n"
-        "  c3.remplir_rectangle(0.0, 0.0, 4.0, 4.0, LumiDessin.rvba(0, 0, 255, 128))\n"
+        "  soit c3 = LumiDessin.canevas(4, 4)\n"
+        "  c3.effacer(LumiDessin.couleur(255, 0, 0))\n"
+        "  c3.remplir_rectangle(0.0, 0.0, 4.0, 4.0, LumiDessin.couleur(0, 0, 255, 128))\n"
         "  soit fondu = c3.lire_pixel(2, 2)\n"
         "  afficher(\"fondu: \" + fondu.rouge() + \",\" + fondu.vert() + \",\" + fondu.bleu() + \",\" + fondu.alpha())\n"
         "}\n");
@@ -5301,7 +5301,7 @@ TEST(InterpreterBuiltinModules, LumiDessinTreatsZeroThicknessAndZeroAreaAsNoOpsA
     const auto [output, completed] = execute_program(
         "importer LumiDessin\n"
         "fonction principal() {\n"
-        "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+        "  soit c = LumiDessin.canevas(10, 10)\n"
         "  c.effacer(LumiDessin.Couleurs.blanc)\n"
         "  c.tracer_ligne(0.0, 0.0, 9.0, 9.0, LumiDessin.Couleurs.noir, 0.0)\n"
         "  c.remplir_rectangle(0.0, 0.0, 0.0, 5.0, LumiDessin.Couleurs.noir)\n"
@@ -5309,7 +5309,7 @@ TEST(InterpreterBuiltinModules, LumiDessinTreatsZeroThicknessAndZeroAreaAsNoOpsA
         "  soit intact = c.lire_pixel(5, 5)\n"
         "  afficher(\"toujours blanc: \" + intact.rouge() + \",\" + intact.vert() + \",\" + intact.bleu())\n"
         "\n"
-        "  soit arc_c = LumiDessin.créer_hors_écran(40, 40)\n"
+        "  soit arc_c = LumiDessin.canevas(40, 40)\n"
         "  arc_c.effacer(LumiDessin.Couleurs.blanc)\n"
         "  arc_c.tracer_arc(20.0, 20.0, 10.0, 0.0, 90.0, LumiDessin.Couleurs.noir, 2.0)\n"
         "  soit droite = arc_c.lire_pixel(30, 20)\n"
@@ -5342,7 +5342,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
                                        "  c.remplir_rectangle(0.0, 0.0, -1.0, 5.0, LumiDessin.Couleurs.noir)\n"
                                        "}\n");
         EXPECT_FALSE(completed);
@@ -5353,7 +5353,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
                                        "  c.tracer_ligne(0.0, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, -1.0)\n"
                                        "}\n");
         EXPECT_FALSE(completed);
@@ -5365,7 +5365,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
             execute_program_with_error("importer LumiDessin\n"
                                        "importer Maths\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
                                        "  c.tracer_ligne(Maths.infini, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, 1.0)\n"
                                        "}\n");
         EXPECT_FALSE(completed);
@@ -5376,7 +5376,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
         const auto [output, completed, error] =
             execute_program_with_error("importer LumiDessin\n"
                                        "fonction principal() {\n"
-                                       "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
                                        "  c.tracer_polyligne([LumiDessin.point(0.0, 0.0)], faux, LumiDessin.Couleurs.noir, 1.0)\n"
                                        "}\n");
         EXPECT_FALSE(completed);
@@ -5387,7 +5387,7 @@ TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsFor
         const auto [output, completed, error] = execute_program_with_error(
             "importer LumiDessin\n"
             "fonction principal() {\n"
-            "  soit c = LumiDessin.créer_hors_écran(10, 10)\n"
+            "  soit c = LumiDessin.canevas(10, 10)\n"
             "  c.remplir_polygone([LumiDessin.point(0.0, 0.0), LumiDessin.point(1.0, 1.0)], LumiDessin.Couleurs.noir)\n"
             "}\n");
         EXPECT_FALSE(completed);
