@@ -1,14 +1,36 @@
 # Stage 1 design: the semantic tooling index
 
 Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
-("semantic tooling index") into something implementable. Rollout steps 1-3
+("semantic tooling index") into something implementable. Rollout steps 1-4
 are implemented: step 2 covers local declarations too (not just
-module-level `declare_value`/`declare_type`), and step 3 covers
+module-level `declare_value`/`declare_type`), step 3 covers
 `IdentifierExpr` reads/writes and `MemberAccessExpr` reads (member *writes*
 -- `objet.champ = valeur` -- aren't resolved by anything today, index or
 not; see the analyzer's own EGAL handling, which only special-cases an
-`IdentifierExpr` target). Steps 4-5 (switching `inspect_source` over to
-`occurrence_at`, deleting the old heuristics it replaces) remain.
+`IdentifierExpr` target), and step 4 tries `occurrence_at` first in both
+`inspect_source` hover paths, formatting through the new
+`inspection_from_symbol` (inspection.cpp).
+
+Step 4 deliberately **kept** the old heuristics it was meant to switch
+away from (`member_declaration_inspection`, the `collect_statements`
+scan) as a fallback for what step 3 doesn't index yet: a name used in a
+*type annotation* (`soit p: Point`) rather than a value expression, a
+`pour`-loop variable and an `agir selon` pattern binding (both
+`declare_local`'d with no backing `Stmt`, so `inspection_from_symbol` has
+nothing to format), and anything the member-access path's stdlib/import
+branches already own. This means step 5 ("delete the heuristics it
+replaced") is **not** actually safe yet -- those code paths are still
+load-bearing for the cases above, not dead weight. Closing that gap (type
+annotations and loop/pattern bindings recording occurrences too) is what
+would let step 5 proceed; it's additive work in the same shape as step 3,
+not a design change.
+
+Regression gate: all 15 pre-existing `SourceInspection` tests pass
+unchanged; 4 new ones cover what the index newly resolves that the old
+heuristics never did (a parameter reference, previously not indexed by
+`collect_statements` at all) or resolves more precisely (an inherited
+field, exercising `find_member_declaration`'s parent-chain walk end to
+end rather than only at the `SemanticIndexBinding` layer).
 
 ## Where we actually start from
 

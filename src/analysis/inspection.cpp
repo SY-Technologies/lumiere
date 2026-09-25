@@ -3,6 +3,7 @@
 #include "lumiere/analysis/analysis.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 #include "lumiere/analysis/semantic_analysis.hpp"
+#include "lumiere/analysis/semantic_index.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -913,6 +914,104 @@ Inspection declaration_to_inspection(const Declaration &declaration)
     return inspection;
 }
 
+/// True when `declaration` is one of a top-level class's or interface's own
+/// members -- decides "méthode"/"champ" (declaration_inspection_from_stmt's
+/// labels, written for exactly that member-access context) versus
+/// "fonction"/"variable" (a module-level or local declaration, which reads
+/// oddly labelled "méthode" outside a class). Mirrors find_type_declaration's
+/// own restriction to top-level statements: classes don't nest in Lumière.
+bool is_member_declaration(const StmtList &statements, const Stmt *declaration)
+{
+    for (const StmtPtr &statement : statements)
+    {
+        if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
+        {
+            for (const StmtPtr &member : klass->members)
+            {
+                if (member.get() == declaration)
+                {
+                    return true;
+                }
+            }
+        }
+        else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
+        {
+            for (const StmtPtr &member : interface->methods)
+            {
+                if (member.get() == declaration)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Builds an Inspection straight from an indexed Symbol -- the
+ * Stage 1 replacement for re-deriving the same answer by re-walking the
+ * AST (docs/stage1-semantic-index-design.md, "What inspection.cpp looks
+ * like after this").
+ *
+ * Reuses declaration_inspection_from_stmt verbatim for the two kinds it
+ * already covers (function/variable declarations), since that formatting
+ * is exactly what DescribesFunctionDeclarationsAndReferences and
+ * DocumentsUserClassMethodReferences already pin down -- only its
+ * method/field-only kind label needs correcting for a module-level or
+ * local declaration, which is_member_declaration alone can tell it.
+ * Classes, interfaces and parameters (which declaration_inspection_from_stmt
+ * has never covered) get their own small formatting here.
+ */
+std::optional<Inspection> inspection_from_symbol(const Symbol &symbol,
+                                                  const StmtList &top_level_statements,
+                                                  const std::size_t start_offset,
+                                                  const std::size_t end_offset)
+{
+    if (symbol.declaration != nullptr)
+    {
+        if (std::optional<Inspection> inspection = declaration_inspection_from_stmt(*symbol.declaration))
+        {
+            if (!is_member_declaration(top_level_statements, symbol.declaration))
+            {
+                if (inspection->kind == "méthode")
+                {
+                    inspection->kind = "fonction";
+                }
+                else if (inspection->kind == "champ")
+                {
+                    inspection->kind = "variable";
+                }
+            }
+            inspection->start_offset = start_offset;
+            inspection->end_offset = end_offset;
+            return inspection;
+        }
+        if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(symbol.declaration))
+        {
+            return Inspection{klass->name.lexeme, "classe", "classe " + klass->name.lexeme,
+                              {}, klass->name.lexeme, klass->documentation, start_offset, end_offset};
+        }
+        if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(symbol.declaration))
+        {
+            return Inspection{interface->name.lexeme, "interface", "interface " + interface->name.lexeme,
+                              {}, interface->name.lexeme, interface->documentation, start_offset, end_offset};
+        }
+        return std::nullopt;
+    }
+    if (symbol.kind == SemanticSymbolKind::PARAMETER)
+    {
+        // Parameters have no backing declaration Stmt (Parameter isn't one),
+        // so this is the one kind formatted from the Symbol's own fields
+        // rather than by re-reading a declaration node.
+        const std::string type = symbol.type != nullptr ? std::string(symbol.type->name()) : "";
+        return Inspection{symbol.name, "paramètre",
+                          symbol.name + (type.empty() ? "" : ": " + type),
+                          {}, type, symbol.documentation, start_offset, end_offset};
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::optional<Inspection> inspect_source(const std::string &source,
@@ -1003,18 +1102,49 @@ std::optional<Inspection> inspect_source(const std::string &source,
             {
                 member_inspection = by_type;
             }
-            else if (const auto by_user =
-                         member_declaration_inspection(
-                             *analysis.model, analysis.statements,
-                             *member_access, selected);
-                     by_user.has_value())
+            // Stage 1's index (record_member_occurrence, semantic_analysis.cpp)
+            // records exactly this occurrence when the member resolved to a
+            // user-declared field or method -- try it before falling back to
+            // member_declaration_inspection's own AST re-walk, which stays as
+            // a safety net for whatever the index doesn't cover yet (an
+            // interface-typed receiver, a member found through `ici`/`parent`
+            // -- see record_member_occurrence's own call sites).
+            else if (const Occurrence *occurrence =
+                         analysis.model->index.occurrence_at(SourceId{0}, selected->start_offset);
+                     occurrence != nullptr)
             {
-                member_inspection = by_user;
+                member_inspection = inspection_from_symbol(
+                    *analysis.model->index.symbol(occurrence->symbol),
+                    analysis.statements, selected->start_offset, selected->end_offset);
+            }
+            if (!member_inspection.has_value())
+            {
+                member_inspection = member_declaration_inspection(
+                    *analysis.model, analysis.statements, *member_access, selected);
             }
         }
         if (member_inspection.has_value())
         {
             return member_inspection;
+        }
+    }
+
+    // Stage 1's index (record_value_occurrence, semantic_analysis.cpp)
+    // records this occurrence for every identifier read/write the analyzer
+    // resolved -- try it before falling back to the declarations scan
+    // below, which stays as a safety net for what isn't indexed yet (a
+    // type-annotation reference, an imported name, a builtin -- see
+    // record_value_occurrence's own doc comment).
+    if (const Occurrence *occurrence =
+            analysis.model->index.occurrence_at(SourceId{0}, selected->start_offset);
+        occurrence != nullptr)
+    {
+        if (std::optional<Inspection> indexed = inspection_from_symbol(
+                *analysis.model->index.symbol(occurrence->symbol),
+                analysis.statements, selected->start_offset, selected->end_offset);
+            indexed.has_value())
+        {
+            return indexed;
         }
     }
 

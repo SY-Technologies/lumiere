@@ -12,6 +12,14 @@
 namespace lumiere
 {
 
+/** Forward declaration only -- semantic_index.hpp must not depend on the
+ *  parser's AST (that would invert the existing include direction, where
+ *  semantic_analysis.hpp depends on parser/ast.hpp, not the reverse).
+ *  Symbol::declaration is an opaque `const Stmt *` for exactly that reason:
+ *  useful to a caller that already includes ast.hpp (inspection.cpp does),
+ *  and otherwise just an identity to compare or store. */
+struct Stmt;
+
 /**
  * @brief An opaque, snapshot-local handle for one recorded declaration.
  *
@@ -72,6 +80,13 @@ struct Symbol
      *  a function's own `Symbol` lives in its enclosing scope, while its
      *  body is a separate, nested `Scope`. */
     ScopeId scope = kModuleScopeId;
+    /** The AST node this was declared from, when there is one -- null for
+     *  a parameter (Parameter isn't a Stmt) and for anything declared
+     *  without a backing statement. Lets a caller that already has the
+     *  parser's AST (inspection.cpp) format a full declaration (signature,
+     *  parameters, doc comment) instead of the index re-deriving and
+     *  storing all of that itself. */
+    const Stmt *declaration = nullptr;
 };
 
 /** One lexical scope: a name lookup boundary with a parent and an extent. */
@@ -152,12 +167,13 @@ public:
                                    const SourceSpan enclosing_span,
                                    const ScopeId scope,
                                    SemanticTypeRef type = nullptr,
-                                   std::string documentation = {})
+                                   std::string documentation = {},
+                                   const Stmt *declaration = nullptr)
     {
         const auto id = static_cast<SymbolId>(m_symbols.size());
         m_symbols.push_back(Symbol{id, space, kind, std::move(name), declaration_span,
                                    enclosing_span, std::move(type),
-                                   std::move(documentation), scope});
+                                   std::move(documentation), scope, declaration});
         m_scopes.at(static_cast<std::size_t>(scope)).symbols.push_back(id);
         return id;
     }
