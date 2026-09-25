@@ -184,6 +184,24 @@ public:
         m_occurrences.push_back(Occurrence{span, symbol, is_write});
     }
 
+    /**
+     * @brief Fills in a Symbol's type after the fact.
+     *
+     * `declare` runs before a local's initializer (or a parameter's
+     * resolved signature type) is known -- `SemanticAnalyzer::
+     * set_local_type` already updates its own transient LocalBinding at
+     * that later point; this is the same update for the permanent Symbol,
+     * called from there. A no-op if `id` isn't a symbol this index issued.
+     */
+    void set_type(const SymbolId id, SemanticTypeRef type)
+    {
+        const auto index = static_cast<std::size_t>(id);
+        if (index < m_symbols.size())
+        {
+            m_symbols[index].type = std::move(type);
+        }
+    }
+
     [[nodiscard]] const Symbol *symbol(const SymbolId id) const
     {
         const auto index = static_cast<std::size_t>(id);

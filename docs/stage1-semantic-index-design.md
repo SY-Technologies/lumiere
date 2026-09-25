@@ -13,24 +13,48 @@ not; see the analyzer's own EGAL handling, which only special-cases an
 
 Step 4 deliberately **kept** the old heuristics it was meant to switch
 away from (`member_declaration_inspection`, the `collect_statements`
-scan) as a fallback for what step 3 doesn't index yet: a name used in a
-*type annotation* (`soit p: Point`) rather than a value expression, a
-`pour`-loop variable and an `agir selon` pattern binding (both
-`declare_local`'d with no backing `Stmt`, so `inspection_from_symbol` has
-nothing to format), and anything the member-access path's stdlib/import
-branches already own. This means step 5 ("delete the heuristics it
-replaced") is **not** actually safe yet -- those code paths are still
-load-bearing for the cases above, not dead weight. Closing that gap (type
-annotations and loop/pattern bindings recording occurrences too) is what
-would let step 5 proceed; it's additive work in the same shape as step 3,
-not a design change.
+scan) as a fallback for what step 3 didn't index yet. That gap is now
+mostly closed:
+
+- `resolve_type`'s `NAMED` branch now records an occurrence when a type
+  annotation (`soit p: Point`) resolves to a user class/interface --
+  `record_value_occurrence` only ever saw *expression* reads, never a
+  type annotation, which isn't one.
+- `pour`-loop variables get their own `SemanticSymbolKind::LOOP_VARIABLE`
+  (they have no backing `VarDeclStmt` -- there's no `soit`/`fixe` in
+  `pour x dans ...` -- so `inspection_from_symbol` couldn't format them
+  as a plain `VARIABLE` the way a real local's `Stmt` lets it).
+- `agir selon` pattern bindings and local `importer` bindings (both
+  `declare_local`'d with no backing `Stmt` either) get a generic
+  `VARIABLE`-with-no-declaration formatting in `inspection_from_symbol` --
+  new coverage, since `collect_statements` never had an entry for either.
+- `SemanticIndex::set_type` plus a `set_local_type` update lets a local's
+  *inferred* type reach the index after the fact (declare-time is always
+  before the initializer/signature is resolved), so parameter and
+  `pour`-variable hovers now carry a real `return_type` instead of
+  nothing (parameters) or `collect_statements`' old hardcoded `"Entier"`
+  regardless of what's actually being iterated (`pour`-variables).
+
+**What's left before step 5 is actually safe**: type aliases
+(`type Nombre = Texte`) still go through `m_aliases`/`m_resolved_aliases`
+only -- never `declare_type`, so never the index -- and `collect_statements`
+is still the only thing that can format one for hover
+(`"alias de type"`). A bare module-level `importer` binding is the same
+story (`bind_imported_value`'s `module_level` branch writes straight to
+`m_value_symbols`, bypassing `declare_value`/the index entirely) --
+though that one is masked in practice by `imported_value_inspection`
+running first for every import-derived hover, so it's a real gap in the
+index's coverage, not a hover regression. Indexing type aliases is the
+one piece that would need to land before `member_declaration_inspection`
+and the `collect_statements` scan could actually be deleted.
 
 Regression gate: all 15 pre-existing `SourceInspection` tests pass
-unchanged; 4 new ones cover what the index newly resolves that the old
-heuristics never did (a parameter reference, previously not indexed by
-`collect_statements` at all) or resolves more precisely (an inherited
-field, exercising `find_member_declaration`'s parent-chain walk end to
-end rather than only at the `SemanticIndexBinding` layer).
+unchanged throughout; 8 new ones cover what the index newly resolves that
+the old heuristics never did (a parameter reference, previously not
+indexed by `collect_statements` at all) or resolves more precisely (an
+inherited field and a type annotation, both exercised end to end through
+`inspect_source` rather than only at the `SemanticIndexBinding` layer;
+a loop variable's *real* element type instead of a hardcoded one).
 
 ## Where we actually start from
 

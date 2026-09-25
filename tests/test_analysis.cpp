@@ -1204,6 +1204,79 @@ TEST(SourceInspection, DocumentsAnInheritedFieldReference)
     EXPECT_EQ(inspection->documentation, "Hérité.");
 }
 
+// Closing the step-4 gap the design doc names: type annotations, pour-loop
+// variables and agir-selon pattern bindings now record/resolve through the
+// index too, via resolve_type's NAMED branch, LOOP_VARIABLE, and the
+// generic VARIABLE-with-no-declaration branch in inspection_from_symbol,
+// plus set_local_type syncing a local's inferred type into the index.
+
+TEST(SourceInspection, ResolvesAParameterTypeAnnotationToItsClass)
+{
+    // Type annotations never go through diagnose_value_read (they're not
+    // an expression), so resolve_type's own NAMED branch is what has to
+    // record this occurrence -- a distinct hook from record_value_occurrence.
+    const std::string source =
+        "classe Point {}\n"
+        "fonction f(p: Point) -> Rien {}\n";
+    const auto inspection = inspect_source(source, source.rfind("Point"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "Point");
+    EXPECT_EQ(inspection->kind, "classe");
+}
+
+TEST(SourceInspection, DescribesAPourLoopVariableReference)
+{
+    const std::string source =
+        "fonction f() -> Rien {\n"
+        "    pour chaque x dans [1, 2, 3] {\n"
+        "        afficher(x)\n"
+        "    }\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.rfind("(x)") + 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "x");
+    EXPECT_EQ(inspection->kind, "variable de boucle");
+    // The real element type, not collect_statement's old hardcoded
+    // "Entier" (which was never true for a loop over anything else).
+    EXPECT_EQ(inspection->return_type, "Entier");
+}
+
+TEST(SourceInspection, DescribesAMatchPatternBindingReference)
+{
+    const std::string source =
+        "classe ErreurTest réalise Erreur {}\n"
+        "fonction source() -> Résultat[Entier, ErreurTest] { retourne Succès(1) }\n"
+        "fonction cible() -> Résultat[Rien, ErreurTest] {\n"
+        "  agir selon source() {\n"
+        "    Succès(v) -> afficher(v)\n"
+        "    Échec(e) -> propager\n"
+        "  }\n"
+        "  retourne Succès(rien)\n"
+        "}\n";
+    const auto inspection = inspect_source(source, source.rfind("(v)") + 1);
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "v");
+    EXPECT_EQ(inspection->kind, "variable");
+}
+
+TEST(SourceInspection, ResolvesAParameterReferenceWithItsInferredType)
+{
+    // ResolvesAParameterReference (above) only checked kind, since
+    // set_local_type didn't sync a parameter's type into the index yet at
+    // the time it was written. It does now -- confirm return_type comes
+    // through too.
+    const std::string source =
+        "fonction doubler(valeur: Entier) -> Entier { retourne valeur * 2 }\n";
+    const auto inspection = inspect_source(source, source.rfind("valeur"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->kind, "paramètre");
+    EXPECT_EQ(inspection->return_type, "Entier");
+}
+
 TEST(SourceInspection, EscapesControlCharactersInJson)
 {
     // The escaper this serializes through used to remember only the quote and
