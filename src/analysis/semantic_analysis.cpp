@@ -2259,6 +2259,37 @@ private:
     }
 
     /**
+     * @brief record_member_occurrence's counterpart for an interface-typed
+     * receiver.
+     *
+     * inferred_type's MemberAccessExpr branch used to resolve a receiver's
+     * declaration only through class_declaration (a plain ClassDeclStmt*),
+     * so a member accessed through a variable/parameter/field typed as an
+     * *interface* never went through record_member_occurrence at all --
+     * find_interface_method (already used by callable_signature, for call
+     * resolution) is the interface-side equivalent of find_member_
+     * declaration; interfaces have no field members and no inheritance
+     * chain to walk, so unlike find_member_declaration this never
+     * recurses.
+     */
+    void record_interface_member_occurrence(const InterfaceDeclStmt &interface,
+                                            const MemberAccessExpr &member)
+    {
+        const FunctionDeclStmt *method = find_interface_method(interface, member.member.lexeme);
+        if (method == nullptr)
+        {
+            return;
+        }
+        const auto found = m_symbol_by_declaration.find(method);
+        if (found == m_symbol_by_declaration.end())
+        {
+            return;
+        }
+        m_analysis.model.index.record_occurrence(
+            span_of(member.member, m_index_source), found->second, /*is_write=*/false);
+    }
+
+    /**
      * @brief What `objet[indice]` reads out of @p receiver, or null if the
      * receiver's static type does not say -- an unresolved expression, a bare
      * `Liste` written with no element type, anything not indexable.
@@ -2680,6 +2711,17 @@ private:
                 {
                     record_member_occurrence(*klass, *member);
                     return member_type(*klass, member->member.lexeme);
+                }
+                if (const InterfaceDeclStmt *interface =
+                        interface_declaration(object_type->second))
+                {
+                    record_interface_member_occurrence(*interface, *member);
+                    if (const FunctionDeclStmt *method =
+                            find_interface_method(*interface, member->member.lexeme))
+                    {
+                        return ensure_signature(*method).return_type;
+                    }
+                    return *m_analysis.model.find_type("Universel");
                 }
             }
             if (const auto *object =

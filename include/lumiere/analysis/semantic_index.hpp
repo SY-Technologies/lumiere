@@ -230,6 +230,30 @@ public:
         return nullptr;
     }
 
+    /**
+     * @brief The Symbol whose own declaring name sits at this exact byte,
+     * if any -- the complement to occurrence_at, which only ever finds a
+     * *reference*. `declare`'s `declaration_span` argument is always the
+     * declaring token's own span (see its call sites), so a hover on a
+     * declaration's own name resolves the same way a hover on a use of it
+     * does, through the same inspection_from_symbol formatting -- rather
+     * than needing a second, AST-side answer for exactly that one case.
+     */
+    [[nodiscard]] const Symbol *declaration_at(const SourceId document,
+                                               const std::size_t byte_offset) const
+    {
+        for (const Symbol &symbol : m_symbols)
+        {
+            if (symbol.declaration_span.source == document &&
+                byte_offset >= symbol.declaration_span.start &&
+                byte_offset < symbol.declaration_span.end)
+            {
+                return &symbol;
+            }
+        }
+        return nullptr;
+    }
+
     /** Every recorded occurrence of `symbol`, in recording order. */
     [[nodiscard]] std::vector<const Occurrence *> occurrences_of(const SymbolId target) const
     {
