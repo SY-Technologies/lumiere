@@ -296,6 +296,113 @@ TEST(SemanticIndexBinding, ADuplicateLocalDeclarationDiagnosesAndLeavesTheFirstS
     EXPECT_EQ(count, 1);
 }
 
+// Step 3, third of three: MemberAccessExpr occurrence recording.
+// find_member_declaration (semantic_analysis.cpp) is the single lookup the
+// design's "Populating it" section asks for -- member_type (type-checking)
+// and record_member_occurrence (indexing) both call it instead of each
+// re-walking klass.members on its own.
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAClassField)
+{
+    const std::string source =
+        "classe Point {\n"
+        "    x: Entier\n"
+        "}\n"
+        "soit p = Point(x: 1)\n"
+        "soit v = p.x\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t member_offset = source.rfind(".x") + 1; // the `x` in `p.x`
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, member_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "x");
+    EXPECT_EQ(resolved->kind, lumiere::SemanticSymbolKind::VARIABLE);
+    // Resolves to the field's own declaration inside the class body, not the
+    // constructor argument that happens to share its name.
+    EXPECT_EQ(resolved->declaration_span.start, source.find("x: Entier"));
+}
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAMethodCall)
+{
+    const std::string source =
+        "classe Point {\n"
+        "    fonction abscisse(valeur: Entier) { retourne valeur }\n"
+        "}\n"
+        "soit point = Point()\n"
+        "point.abscisse(3)\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t member_offset = source.rfind("abscisse");
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, member_offset);
+    ASSERT_NE(occurrence, nullptr);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "abscisse");
+    EXPECT_EQ(resolved->kind, lumiere::SemanticSymbolKind::FUNCTION);
+}
+
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAnInheritedMember)
+{
+    // find_member_declaration walks the parent chain -- confirm the
+    // occurrence resolves to the field's declaration on the base class, not
+    // to nothing, when the access happens through a derived instance.
+    const std::string source =
+        "classe Base {\n"
+        "    x: Entier\n"
+        "}\n"
+        "classe Enfant : Base {}\n"
+        "soit e = Enfant(x: 1)\n"
+        "soit v = e.x\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const std::size_t member_offset = source.rfind(".x") + 1;
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, member_offset);
+    ASSERT_NE(occurrence, nullptr);
+
+    const lumiere::Symbol *resolved = result.model->index.symbol(occurrence->symbol);
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->name, "x");
+    // The one and only `x: Entier` in the source is Base's.
+    EXPECT_EQ(resolved->declaration_span.start, source.find("x: Entier"));
+}
+
+TEST(SemanticIndexBinding, UnknownMemberRecordsNoOccurrenceButStaysWellFormed)
+{
+    const std::string source =
+        "classe Point {\n"
+        "    x: Entier\n"
+        "}\n"
+        "soit p = Point(x: 1)\n"
+        "soit v = p.inconnu\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t unresolved_offset = source.rfind("inconnu");
+    for (std::size_t offset = 0; offset <= source.size(); ++offset)
+    {
+        if (const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, offset))
+        {
+            EXPECT_NE(result.model->index.symbol(occurrence->symbol), nullptr) << "offset " << offset;
+            EXPECT_NE(offset, unresolved_offset) << "an unresolved member must not record an occurrence";
+        }
+    }
+}
+
 TEST(AnalysisDiagnostics, ReportsLexicalErrorWithByteRange)
 {
     const AnalysisResult result = analyze_source("soit café = @\n", "main.lum");

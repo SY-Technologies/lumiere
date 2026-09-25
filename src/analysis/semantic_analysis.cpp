@@ -644,8 +644,12 @@ private:
             return;
         }
         const SourceSpan span = span_of(name, m_index_source);
-        static_cast<void>(m_analysis.model.index.declare(
-            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope()));
+        const SymbolId id = m_analysis.model.index.declare(
+            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope());
+        if (declaration != nullptr)
+        {
+            m_symbol_by_declaration.emplace(declaration, id);
+        }
     }
 
     void set_local_type(const std::string &name, SemanticTypeRef type)
@@ -2116,8 +2120,18 @@ private:
         return nullptr;
     }
 
-    SemanticTypeRef member_type(const ClassDeclStmt &klass,
-                                const std::string &name)
+    /**
+     * @brief The field or method declaration named `name` on `klass`,
+     * walking up the inheritance chain if `klass` itself doesn't have it.
+     *
+     * The one member-lookup `member_type` (type-checking) and the semantic
+     * index's occurrence recording for MemberAccessExpr both call, per
+     * docs/stage1-semantic-index-design.md's "Populating it" section --
+     * previously each re-walked klass.members on its own, which is exactly
+     * the kind of duplicated lookup that section calls out.
+     */
+    const Stmt *find_member_declaration(const ClassDeclStmt &klass,
+                                        const std::string &name) const
     {
         for (const StmtPtr &member : klass.members)
         {
@@ -2125,13 +2139,13 @@ private:
                     dynamic_cast<const VarDeclStmt *>(member.get());
                 field != nullptr && field->name.lexeme == name)
             {
-                return resolve_type(field->type);
+                return field;
             }
             if (const auto *method =
                     dynamic_cast<const FunctionDeclStmt *>(member.get());
                 method != nullptr && method->name.lexeme == name)
             {
-                return ensure_signature(*method).return_type;
+                return method;
             }
         }
         if (!klass.parent.empty())
@@ -2139,10 +2153,51 @@ private:
             if (const ClassDeclStmt *parent_class =
                     class_declaration(klass.parent.name))
             {
-                return member_type(*parent_class, name);
+                return find_member_declaration(*parent_class, name);
             }
         }
+        return nullptr;
+    }
+
+    SemanticTypeRef member_type(const ClassDeclStmt &klass,
+                                const std::string &name)
+    {
+        const Stmt *declaration = find_member_declaration(klass, name);
+        if (const auto *field = dynamic_cast<const VarDeclStmt *>(declaration))
+        {
+            return resolve_type(field->type);
+        }
+        if (const auto *method = dynamic_cast<const FunctionDeclStmt *>(declaration))
+        {
+            return ensure_signature(*method).return_type;
+        }
         return *m_analysis.model.find_type("Universel");
+    }
+
+    /**
+     * @brief Records a read occurrence for a MemberAccessExpr, when the
+     * index already has a Symbol for the member it resolved to.
+     *
+     * Mirrors record_value_occurrence's contract: a member the analyzer
+     * can't place (an unknown field, a stdlib/collection member with no
+     * user declaration, a module-qualified reference) simply records
+     * nothing, per the design's recovery rules -- occurrence recording
+     * never invents a symbol just to have one.
+     */
+    void record_member_occurrence(const ClassDeclStmt &klass, const MemberAccessExpr &member)
+    {
+        const Stmt *declaration = find_member_declaration(klass, member.member.lexeme);
+        if (declaration == nullptr)
+        {
+            return;
+        }
+        const auto found = m_symbol_by_declaration.find(declaration);
+        if (found == m_symbol_by_declaration.end())
+        {
+            return;
+        }
+        m_analysis.model.index.record_occurrence(
+            span_of(member.member, m_index_source), found->second, /*is_write=*/false);
     }
 
     /**
@@ -2535,6 +2590,7 @@ private:
                 object != nullptr && object->name.lexeme == "ici" &&
                 !m_class_stack.empty())
             {
+                record_member_occurrence(*m_class_stack.back(), *member);
                 return member_type(*m_class_stack.back(),
                                    member->member.lexeme);
             }
@@ -2548,6 +2604,7 @@ private:
                         class_declaration(
                             m_class_stack.back()->parent.name))
                 {
+                    record_member_occurrence(*parent_class, *member);
                     return member_type(*parent_class,
                                        member->member.lexeme);
                 }
@@ -2563,6 +2620,7 @@ private:
                 if (const ClassDeclStmt *klass =
                         class_declaration(object_type->second))
                 {
+                    record_member_occurrence(*klass, *member);
                     return member_type(*klass, member->member.lexeme);
                 }
             }
@@ -4209,6 +4267,12 @@ private:
     // the transient resolution bookkeeping for. See push_scope/pop_scope
     // and current_index_scope() below.
     std::vector<ScopeId> m_index_scopes;
+    // What SymbolId declare_local indexed a given declaration AST node
+    // under, so a later lookup that already has the AST node (a class
+    // member found by walking klass.members, e.g.) can find its Symbol in
+    // O(1) instead of re-deriving a scope id for it. Only ever grows;
+    // never keyed by nullptr since declare_local skips absent declarations.
+    std::unordered_map<const Stmt *, SymbolId> m_symbol_by_declaration;
     std::vector<std::unordered_map<std::string, SemanticTypeRef>> m_type_scopes;
     std::vector<std::unordered_map<std::string, CallableSignature>> m_signature_scopes;
     std::vector<CallableOwner> m_callable_stack;
