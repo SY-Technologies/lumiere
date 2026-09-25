@@ -27,8 +27,21 @@ struct Inspection
     std::size_t end_offset = 0;
 };
 
-/** Returns compiler-owned hover information for the token at a UTF-8 byte offset. */
-[[nodiscard]] std::optional<Inspection> inspect_source(const std::string &source, std::size_t byte_offset);
+/**
+ * @brief Returns compiler-owned hover information for the token at a UTF-8
+ * byte offset.
+ *
+ * @param source_path The document's logical path, used exactly as
+ *        `analyze_source` uses it: to resolve the imports the source
+ *        declares and to label any diagnostics semantic analysis produces
+ *        along the way. Omitting it (the default) limits member resolution
+ *        to what needs no import context -- stdlib members and names
+ *        declared in this same buffer -- the same restriction inspection
+ *        has always had for a path-less buffer.
+ */
+[[nodiscard]] std::optional<Inspection> inspect_source(const std::string &source,
+                                                        std::size_t byte_offset,
+                                                        std::string source_path = {});
 
 /** Serializes an inspection response for editor tooling. */
 [[nodiscard]] std::string inspection_to_json(const std::optional<Inspection> &inspection);

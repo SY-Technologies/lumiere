@@ -1,6 +1,7 @@
 #include "lumiere/analysis/inspection.hpp"
 
 #include "lumiere/analysis/analysis.hpp"
+#include "lumiere/diagnostics/diagnostic.hpp"
 #include "lumiere/analysis/semantic_analysis.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
@@ -900,20 +901,6 @@ std::optional<std::string_view> keyword_detail(const TokenType type)
     return found->second;
 }
 
-std::string escape_json(const std::string &value)
-{
-    std::string escaped;
-    for (const char character : value)
-    {
-        if (character == '"' || character == '\\')
-        {
-            escaped.push_back('\\');
-        }
-        escaped.push_back(character);
-    }
-    return escaped;
-}
-
 Inspection declaration_to_inspection(const Declaration &declaration)
 {
     Inspection inspection;
@@ -928,7 +915,9 @@ Inspection declaration_to_inspection(const Declaration &declaration)
 
 } // namespace
 
-std::optional<Inspection> inspect_source(const std::string &source, const std::size_t byte_offset)
+std::optional<Inspection> inspect_source(const std::string &source,
+                                          const std::size_t byte_offset,
+                                          std::string source_path)
 {
     Lexer lexer(source);
     const std::vector<Token> tokens = lexer.tokenise();
@@ -962,7 +951,7 @@ std::optional<Inspection> inspect_source(const std::string &source, const std::s
                                                            selected->start_offset,
                                                            selected->end_offset);
 
-    AnalysisResult analysis = analyze_source(source);
+    AnalysisResult analysis = analyze_source(source, std::move(source_path));
     if (auto imported = imported_value_inspection(analysis.statements, *selected))
     {
         return imported;
@@ -987,18 +976,22 @@ std::optional<Inspection> inspect_source(const std::string &source, const std::s
             return imported;
         }
     }
-    if (analysis.has_errors())
+    if (analysis.has_errors() || analysis.model == nullptr)
     {
         return builtin;
     }
     if (member_access != nullptr)
     {
-        const SemanticAnalysis semantics =
-            analyze_semantics(analysis.statements);
+        // analysis.model already carries every name and type this same
+        // buffer's own analyze_source pass established -- with the imports
+        // source_path resolved, unlike a fresh analyze_semantics call made
+        // here with no path and no imports, which used to look up a member
+        // access on an imported type against a semantic model that had never
+        // heard of the import.
         const std::string member_name = member_access->member.lexeme;
         std::optional<Inspection> member_inspection;
         if (const SemanticTypeRef *object_type =
-                semantics.model.type_of(*member_access->object))
+                analysis.model->type_of(*member_access->object))
         {
             if (const auto by_type =
                     qualified_member_inspection(
@@ -1012,7 +1005,7 @@ std::optional<Inspection> inspect_source(const std::string &source, const std::s
             }
             else if (const auto by_user =
                          member_declaration_inspection(
-                             semantics.model, analysis.statements,
+                             *analysis.model, analysis.statements,
                              *member_access, selected);
                      by_user.has_value())
             {
@@ -1055,9 +1048,9 @@ std::string inspection_to_json(const std::optional<Inspection> &inspection)
     }
     std::ostringstream output;
     output << "{\"protocolVersion\":2,\"inspection\":{";
-    output << "\"label\":\"" << escape_json(inspection->label) << "\",";
-    output << "\"kind\":\"" << escape_json(inspection->kind) << "\",";
-    output << "\"signature\":\"" << escape_json(inspection->signature) << "\",";
+    output << "\"label\":" << json_string(inspection->label) << ",";
+    output << "\"kind\":" << json_string(inspection->kind) << ",";
+    output << "\"signature\":" << json_string(inspection->signature) << ",";
     output << "\"parameters\":[";
     for (std::size_t i = 0; i < inspection->parameters.size(); ++i)
     {
@@ -1065,11 +1058,11 @@ std::string inspection_to_json(const std::optional<Inspection> &inspection)
         {
             output << ",";
         }
-        output << "\"" << escape_json(inspection->parameters[i]) << "\"";
+        output << json_string(inspection->parameters[i]);
     }
     output << "],";
-    output << "\"returnType\":\"" << escape_json(inspection->return_type) << "\",";
-    output << "\"documentation\":\"" << escape_json(inspection->documentation) << "\",";
+    output << "\"returnType\":" << json_string(inspection->return_type) << ",";
+    output << "\"documentation\":" << json_string(inspection->documentation) << ",";
     output << "\"range\":{\"start\":" << inspection->start_offset
            << ",\"end\":" << inspection->end_offset << "}}}";
     return output.str();

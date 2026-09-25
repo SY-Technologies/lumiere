@@ -6,6 +6,8 @@
 #include "lumiere/diagnostics/diagnostic.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string_view>
 
 namespace
@@ -759,6 +761,92 @@ TEST(SourceInspection, DocumentsUserClassMethodReferences)
     EXPECT_EQ(inspection->kind, "méthode");
     EXPECT_EQ(inspection->signature, "fonction abscisse(valeur: Entier) -> Rien");
     EXPECT_EQ(inspection->documentation, "Fixe l'abscisse du point.");
+}
+
+TEST(SourceInspection, EscapesControlCharactersInJson)
+{
+    // The escaper this serializes through used to remember only the quote and
+    // the backslash -- any other control character (a tab, a newline, a raw
+    // 0x01) went into the output byte for byte, which is not valid JSON and
+    // would desynchronize whatever parsed it. A doc comment is exactly where
+    // one of these can appear: it is free-form text a user wrote, not a
+    // grammar production that could plausibly forbid a tab.
+    lumiere::Inspection inspection;
+    inspection.label = "tabulee";
+    inspection.kind = "fonction";
+    inspection.signature = "tabulee() -> Rien";
+    inspection.documentation = "Colonne un\tcolonne deux\nligne suivante avec \"guillemets\" et \x01.";
+
+    const std::string json = inspection_to_json(inspection);
+
+    const std::string expected_documentation =
+        "\"documentation\":\"Colonne un\\tcolonne deux\\nligne suivante avec \\\"guillemets\\\" et \\u0001.\"";
+    EXPECT_NE(json.find(expected_documentation), std::string::npos) << json;
+
+    // No literal control byte reached the output: every one of them was
+    // escaped, not just the two escape_json used to remember.
+    EXPECT_EQ(json.find('\t'), std::string::npos);
+    EXPECT_EQ(json.find('\n'), std::string::npos);
+    EXPECT_EQ(json.find('\x01'), std::string::npos);
+}
+
+TEST(SourceInspection, ResolvesMemberCallOnceAnImportItDependsOnIsThreaded)
+{
+    // inspect_source used to analyze the buffer with no source_path at all
+    // (the parameter did not exist), so a file whose own type-checking
+    // depends on a locally imported module -- here, a method parameter typed
+    // by an imported class -- always failed semantic analysis: the import
+    // could never resolve without a path to resolve it against. That made
+    // analysis.has_errors() true, and inspect_source returned nullopt before
+    // ever looking at the member access. It also used to re-run semantic
+    // analysis a second time, from scratch, with no path or imports either,
+    // just to answer a member access -- so even a caller that supplied the
+    // path to the first pass would have lost it again on the second. Passing
+    // source_path through and reusing analysis.model (the first pass' own,
+    // correctly import-resolved model) is what this test guards end to end.
+    const auto root = std::filesystem::temp_directory_path() / "lumiere_inspect_local_import";
+    std::filesystem::create_directories(root);
+    const auto module_file = root / "Formes.lum";
+    const auto main_file = root / "main.lum";
+
+    {
+        std::ofstream module_out(module_file);
+        module_out << "public classe Point {}\n";
+    }
+
+    const std::string source =
+        "importer Formes\n"
+        "classe Boite {\n"
+        "  /** Range un point dans la boîte. */\n"
+        "  fonction stocker(valeur: Formes.Point) -> Rien {}\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  soit boite = Boite()\n"
+        "  boite.stocker(Formes.Point())\n"
+        "}\n";
+    {
+        std::ofstream main_out(main_file);
+        main_out << source;
+    }
+
+    // With no source_path, the import cannot resolve, semantic analysis
+    // reports an error, and inspect_source bails out before it ever reaches
+    // the member access.
+    const auto without_path = inspect_source(source, source.rfind("stocker"));
+    EXPECT_FALSE(without_path.has_value());
+
+    // With the real path, the import resolves, analysis is clean, and the
+    // member access on `boite` (a class declared in this same buffer) now
+    // resolves through the reused, correctly-built model.
+    const auto with_path =
+        inspect_source(source, source.rfind("stocker"), main_file.string());
+
+    std::filesystem::remove_all(root);
+
+    ASSERT_TRUE(with_path.has_value());
+    EXPECT_EQ(with_path->label, "stocker");
+    EXPECT_EQ(with_path->kind, "méthode");
+    EXPECT_EQ(with_path->documentation, "Range un point dans la boîte.");
 }
 
 TEST(AnalysisDiagnostics, RejectsLocalVariableShadowingImportModuleName)

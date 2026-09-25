@@ -280,7 +280,8 @@ int inspect_source_at_offset(const InspectOptions &options)
 {
     std::ostringstream buffer;
     buffer << std::cin.rdbuf();
-    std::cout << lumiere::inspection_to_json(lumiere::inspect_source(buffer.str(), options.byte_offset));
+    std::cout << lumiere::inspection_to_json(
+        lumiere::inspect_source(buffer.str(), options.byte_offset, options.source_path));
     return 0;
 }
 
