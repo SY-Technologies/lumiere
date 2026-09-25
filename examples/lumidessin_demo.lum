@@ -27,6 +27,21 @@ fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
     dessin.fermer()
     afficher("ouvert apres fermer: " + dessin.est_ouvert())
 
+    soit toile = LumiDessin.créer_hors_écran(64, 48)
+    toile.effacer(LumiDessin.Couleurs.blanc)
+    toile.tracer_ligne(0.0, 0.0, 63.0, 47.0, LumiDessin.Couleurs.noir, 2.0)
+    toile.tracer_rectangle(4.0, 4.0, 20.0, 12.0, LumiDessin.Couleurs.rouge, 2.0)
+    toile.remplir_rectangle(30.0, 4.0, 20.0, 12.0, LumiDessin.rvba(0, 128, 0, 180))
+    toile.tracer_cercle(16.0, 30.0, 8.0, LumiDessin.Couleurs.bleu, 2.0)
+    toile.remplir_cercle(48.0, 30.0, 8.0, LumiDessin.Couleurs.orange)
+    toile.tracer_ellipse(32.0, 40.0, 12.0, 6.0, LumiDessin.Couleurs.violet, 1.0)
+    toile.tracer_arc(16.0, 16.0, 10.0, 0.0, 180.0, LumiDessin.Couleurs.noir, 2.0)
+    soit triangle = [LumiDessin.point(20.0, 40.0), LumiDessin.point(30.0, 46.0), LumiDessin.point(24.0, 46.0)]
+    toile.remplir_polygone(triangle, LumiDessin.Couleurs.rose)
+    soit chemin = [LumiDessin.point(0.0, 24.0), LumiDessin.point(10.0, 14.0), LumiDessin.point(20.0, 24.0)]
+    toile.tracer_polyligne(chemin, faux, LumiDessin.Couleurs.cyan, 2.0)
+    afficher("toile: " + toile.largeur() + "x" + toile.hauteur())
+
     retourne Succès(rien)
 }
 
