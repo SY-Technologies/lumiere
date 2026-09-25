@@ -466,11 +466,25 @@ private:
         if (module_level)
         {
             if (!m_analysis.model.m_value_symbols.emplace(
-                    binding, SemanticSymbol{kind, binding, &import, std::move(type)}).second)
+                    binding, SemanticSymbol{kind, binding, &import, type}).second)
             {
                 diagnose(site, "LUM-S0001",
                          "le nom '" + binding + "' est déjà déclaré dans ce module");
+                return;
             }
+            // Mirrors declare_value: a module-level `importer` binding
+            // never called it (one ImportStmt can bind many names here,
+            // unlike a single-name VarDeclStmt/FunctionDeclStmt), so this
+            // was the one declare_value/declare_local call site that never
+            // reached the index -- the last gap docs/stage1-semantic-index-
+            // design.md named before step 5 is safe. `site`'s lexeme is
+            // always `binding` itself (resolve_import only ever calls this
+            // with the alias/member token whose own lexeme it just read),
+            // so span_of(site, ...) is exactly this declaration's span.
+            const SourceSpan span = span_of(site, m_index_source);
+            static_cast<void>(m_analysis.model.index.declare(
+                SymbolNamespace::Value, kind, binding, span, span, kModuleScopeId,
+                std::move(type), /*documentation=*/{}, &import));
             return;
         }
         Token binding_token = site;
