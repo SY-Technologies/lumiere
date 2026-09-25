@@ -997,6 +997,17 @@ std::optional<Inspection> inspection_from_symbol(const Symbol &symbol,
             return Inspection{interface->name.lexeme, "interface", "interface " + interface->name.lexeme,
                               {}, interface->name.lexeme, interface->documentation, start_offset, end_offset};
         }
+        if (const auto *alias = dynamic_cast<const TypeAliasDeclStmt *>(symbol.declaration))
+        {
+            // symbol.type, not alias->target's syntax, so a reference shows
+            // the alias's *resolved* type (following any chain of aliases)
+            // once resolve_alias has filled it in -- same reasoning as
+            // PARAMETER/VARIABLE below reading symbol.type over re-deriving
+            // it from the AST.
+            const std::string resolved = symbol.type != nullptr ? std::string(symbol.type->name()) : type_name(alias->target);
+            return Inspection{alias->name.lexeme, "alias de type", "type " + alias->name.lexeme + " = " + resolved,
+                              {}, resolved, alias->documentation, start_offset, end_offset};
+        }
         return std::nullopt;
     }
     if (symbol.kind == SemanticSymbolKind::PARAMETER)

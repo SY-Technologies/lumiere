@@ -24,6 +24,12 @@ enum class SemanticSymbolKind
      *  dans ...`), so it needs its own hover formatting
      *  (inspection.cpp's inspection_from_symbol). */
     LOOP_VARIABLE,
+    /** A `type X = ...` alias. Declared in SymbolNamespace::Type like CLASS
+     *  and INTERFACE, but its Symbol::type starts null and is filled in by
+     *  SemanticIndex::set_type once resolve_alias resolves the target --
+     *  aliases can forward-reference each other, so the resolved type isn't
+     *  known at the same collect_module_declarations pass that declares it. */
+    TYPE_ALIAS,
 };
 
 } // namespace lumiere

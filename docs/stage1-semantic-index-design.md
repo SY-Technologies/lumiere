@@ -35,24 +35,50 @@ mostly closed:
   nothing (parameters) or `collect_statements`' old hardcoded `"Entier"`
   regardless of what's actually being iterated (`pour`-variables).
 
-**What's left before step 5 is actually safe**: type aliases
-(`type Nombre = Texte`) still go through `m_aliases`/`m_resolved_aliases`
-only -- never `declare_type`, so never the index -- and `collect_statements`
-is still the only thing that can format one for hover
-(`"alias de type"`). A bare module-level `importer` binding is the same
-story (`bind_imported_value`'s `module_level` branch writes straight to
-`m_value_symbols`, bypassing `declare_value`/the index entirely) --
-though that one is masked in practice by `imported_value_inspection`
-running first for every import-derived hover, so it's a real gap in the
-index's coverage, not a hover regression. Indexing type aliases is the
-one piece that would need to land before `member_declaration_inspection`
-and the `collect_statements` scan could actually be deleted.
+Type aliases are now indexed too, closing that gap:
+
+- `type Nombre = Entier` declares a `SemanticSymbolKind::TYPE_ALIAS` Symbol
+  in `SymbolNamespace::Type` at `collect_module_declarations` time, same
+  scope as a class/interface -- but with a null `type`, since the target
+  isn't resolved yet (aliases can forward-reference each other; `resolve_
+  alias` is what actually walks the chain, later, possibly lazily). Its
+  `SymbolId` is kept in a new `m_alias_symbols` map so `resolve_alias` can
+  call `SemanticIndex::set_type` once it has the resolved type -- the same
+  "declare now, fill in the type once it's known" shape `set_local_type`
+  already uses for locals.
+- `resolve_type`'s `NAMED` branch used to try `resolve_alias` first and
+  return immediately on success, *before* reaching the occurrence-recording
+  code below it -- which only ever ran on the `find_type` (class/interface)
+  path. So every alias reference was silently never indexed, no matter how
+  much step 3/4 work landed. Fixed by resolving through `resolve_alias` or
+  `find_type` into one `resolved_type` first, then recording the occurrence
+  once against whichever namespace entry `syntax.name` names in
+  `SymbolNamespace::Type` -- an alias and a class/interface are now handled
+  identically here.
+- `inspection_from_symbol` gained a `TypeAliasDeclStmt` branch (aliases were
+  never covered by `declaration_inspection_from_stmt`, same as classes/
+  interfaces): labelled `"alias de type"`, detail type read from
+  `symbol.type` (the *resolved* target, following any alias chain) rather
+  than re-deriving it from `alias->target`'s syntax, falling back to that
+  syntax only if `set_type` hasn't run yet (an alias declared but never
+  referenced).
+
+**What's left before step 5 is actually safe**: a bare module-level
+`importer` binding still bypasses the index (`bind_imported_value`'s
+`module_level` branch writes straight to `m_value_symbols`, skipping
+`declare_value` entirely) -- masked in practice by `imported_value_
+inspection` running first for every import-derived hover, so it's a real
+gap in the index's coverage, not a hover regression, but the one piece
+left before `member_declaration_inspection`, `find_type_declaration`,
+`find_class_member_statement`, `find_interface_member_statement`, and the
+`collect_statements` scan could actually be deleted.
 
 Regression gate: all 15 pre-existing `SourceInspection` tests pass
-unchanged throughout; 8 new ones cover what the index newly resolves that
+unchanged throughout; 11 new ones cover what the index newly resolves that
 the old heuristics never did (a parameter reference, previously not
 indexed by `collect_statements` at all) or resolves more precisely (an
-inherited field and a type annotation, both exercised end to end through
+inherited field, a type annotation, and a type alias reference -- including
+through a chain of two aliases -- all exercised end to end through
 `inspect_source` rather than only at the `SemanticIndexBinding` layer;
 a loop variable's *real* element type instead of a hardcoded one).
 

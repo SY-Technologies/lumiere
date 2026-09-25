@@ -380,6 +380,36 @@ TEST(SemanticIndexBinding, RecordsAReadOccurrenceForAnInheritedMember)
     EXPECT_EQ(resolved->declaration_span.start, source.find("x: Entier"));
 }
 
+TEST(SemanticIndexBinding, RecordsAReadOccurrenceForATypeAliasReference)
+{
+    // Type aliases used to be resolved entirely through m_aliases/
+    // m_resolved_aliases, bypassing the index -- resolve_type's NAMED
+    // branch tried resolve_alias first and returned immediately on success,
+    // never reaching the occurrence-recording code below it (which only
+    // ever ran for the find_type/class-or-interface path). Confirm a
+    // reference to an alias name now resolves to an indexed Symbol too.
+    const std::string source =
+        "type Nombre = Entier\n"
+        "fonction f(n: Nombre) -> Rien {}\n";
+    const AnalysisResult result = analyze_source(source, "main.lum");
+    ASSERT_FALSE(result.has_errors()) << diagnostics_to_json(result.diagnostics, "main.lum");
+    ASSERT_NE(result.model, nullptr);
+
+    const lumiere::Symbol *alias_symbol = result.model->index.lookup(
+        lumiere::kModuleScopeId, "Nombre", lumiere::SymbolNamespace::Type);
+    ASSERT_NE(alias_symbol, nullptr);
+    EXPECT_EQ(alias_symbol->kind, lumiere::SemanticSymbolKind::TYPE_ALIAS);
+    ASSERT_NE(alias_symbol->type, nullptr);
+    EXPECT_EQ(alias_symbol->type->name(), "Entier");
+
+    const lumiere::SourceId main = result.model->index.source("main.lum");
+    const std::size_t reference_offset = source.rfind("Nombre");
+    const lumiere::Occurrence *occurrence = result.model->index.occurrence_at(main, reference_offset);
+    ASSERT_NE(occurrence, nullptr);
+    EXPECT_FALSE(occurrence->is_write);
+    EXPECT_EQ(occurrence->symbol, alias_symbol->id);
+}
+
 TEST(SemanticIndexBinding, UnknownMemberRecordsNoOccurrenceButStaysWellFormed)
 {
     const std::string source =
@@ -1260,6 +1290,43 @@ TEST(SourceInspection, DescribesAMatchPatternBindingReference)
     ASSERT_TRUE(inspection.has_value());
     EXPECT_EQ(inspection->label, "v");
     EXPECT_EQ(inspection->kind, "variable");
+}
+
+TEST(SourceInspection, DocumentsATypeAliasReference)
+{
+    // The last hover-side gap: a reference to a type alias's name now
+    // resolves through the index (inspection_from_symbol's new
+    // TypeAliasDeclStmt branch) instead of falling through to nullopt,
+    // since declaration_inspection_from_stmt has never covered aliases.
+    const std::string source =
+        "/** Un compte d'éléments. */\n"
+        "type Nombre = Entier\n"
+        "fonction f(n: Nombre) -> Rien {}\n";
+    const auto inspection = inspect_source(source, source.rfind("Nombre"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "Nombre");
+    EXPECT_EQ(inspection->kind, "alias de type");
+    EXPECT_EQ(inspection->return_type, "Entier");
+    EXPECT_EQ(inspection->documentation, "Un compte d'éléments.");
+}
+
+TEST(SourceInspection, DocumentsATypeAliasReferenceThroughAnotherAlias)
+{
+    // Nombre resolves through Compteur, not directly to Entier --
+    // resolve_alias's own memoized recursion is what set_type has to read
+    // the *final* resolved type back from, so this pins that the chain
+    // resolves rather than just the one-hop case above.
+    const std::string source =
+        "type Compteur = Entier\n"
+        "type Nombre = Compteur\n"
+        "fonction f(n: Nombre) -> Rien {}\n";
+    const auto inspection = inspect_source(source, source.rfind("Nombre"));
+
+    ASSERT_TRUE(inspection.has_value());
+    EXPECT_EQ(inspection->label, "Nombre");
+    EXPECT_EQ(inspection->kind, "alias de type");
+    EXPECT_EQ(inspection->return_type, "Entier");
 }
 
 TEST(SourceInspection, ResolvesAParameterReferenceWithItsInferredType)
