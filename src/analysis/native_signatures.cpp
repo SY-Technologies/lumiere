@@ -1206,6 +1206,27 @@ native_module_exports(const std::string_view module_name)
         return exports;
     }
 
+    if (module_name == "LumiDessin")
+    {
+        // Stage 1 of docs/stdlib-lumidessin.md's implementation order:
+        // nominal types only. Free functions (ouvrir, créer_hors_écran,
+        // point, rvb, rvba, depuis_hex, ...) are exported here as the
+        // stages that implement them land.
+        exports.types.emplace("Canevas", SemanticTypeKind::CLASS);
+        exports.types.emplace("Crayon", SemanticTypeKind::CLASS);
+        exports.types.emplace("Couleur", SemanticTypeKind::CLASS);
+        exports.types.emplace("Image", SemanticTypeKind::CLASS);
+        exports.types.emplace("Point", SemanticTypeKind::CLASS);
+        exports.types.emplace("Dimensions", SemanticTypeKind::CLASS);
+        exports.types.emplace("ErreurImage", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurImage", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurImage");
+        exports.types.emplace("ErreurCouleur", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurCouleur", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurCouleur");
+        return exports;
+    }
+
     if (module_name == "LumiTest")
     {
         return exports;

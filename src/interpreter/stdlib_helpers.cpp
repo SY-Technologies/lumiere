@@ -258,6 +258,10 @@ bool register_builtin_module(Module &module,
     {
         register_regex_module(module);
     }
+    else if (module.name == "LumiDessin")
+    {
+        register_lumidessin_module(module);
+    }
     else if (module.name == "LumiTest")
         register_lumitest_module(module,
                                  lumitest_state != nullptr
