@@ -38,6 +38,17 @@ struct Diagnostic
 };
 
 /**
+ * @brief Encodes @p value as a double-quoted JSON string.
+ *
+ * Escapes exactly what JSON requires -- quote, backslash, and every control
+ * character, not only the two a hand-rolled escaper tends to remember -- so
+ * every JSON-emitting tooling response (diagnostics, inspection, and
+ * whatever the language service adds next) produces valid JSON from the same
+ * one implementation instead of each guessing its own subset.
+ */
+[[nodiscard]] std::string json_string(std::string_view value);
+
+/**
  * @brief Returns the stable machine-readable spelling of a severity.
  */
 [[nodiscard]] std::string_view diagnostic_severity_name(DiagnosticSeverity severity);
