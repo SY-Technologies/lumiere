@@ -34,15 +34,15 @@ void register_lumidessin_module(Module &module)
     stdlib_bind_public_function(
         module,
         make_native_function,
-        "créer_hors_écran",
+        "canevas",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
-            stdlib_expect_positional(runtime, args, 2, "LumiDessin.créer_hors_écran", native_args.site);
+            stdlib_expect_positional(runtime, args, 2, "LumiDessin.canevas", native_args.site);
             const int64_t width =
-                stdlib_expect_integer(runtime, args[0].value, "LumiDessin.créer_hors_écran", native_args.site);
+                stdlib_expect_integer(runtime, args[0].value, "LumiDessin.canevas", native_args.site);
             const int64_t height =
-                stdlib_expect_integer(runtime, args[1].value, "LumiDessin.créer_hors_écran", native_args.site);
-            validate_canvas_dimensions(runtime, width, height, "LumiDessin.créer_hors_écran", native_args.site);
+                stdlib_expect_integer(runtime, args[1].value, "LumiDessin.canevas", native_args.site);
+            validate_canvas_dimensions(runtime, width, height, "LumiDessin.canevas", native_args.site);
             Value canvas = make_canevas_value(
                 static_cast<int32_t>(width), static_cast<int32_t>(height), false, make_native_function);
             runtime.annotate_value(canvas, "LumiDessin.Canevas", native_args.site);
@@ -68,30 +68,16 @@ void register_lumidessin_module(Module &module)
     stdlib_bind_public_function(
         module,
         make_native_function,
-        "rvb",
+        "couleur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
-            stdlib_expect_positional(runtime, args, 3, "LumiDessin.rvb", native_args.site);
-            const int64_t r = expect_color_component(runtime, args[0].value, "LumiDessin.rvb", native_args.site);
-            const int64_t g = expect_color_component(runtime, args[1].value, "LumiDessin.rvb", native_args.site);
-            const int64_t b = expect_color_component(runtime, args[2].value, "LumiDessin.rvb", native_args.site);
-            Value color = make_couleur_value(
-                static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b), 255, make_native_function);
-            runtime.annotate_value(color, "LumiDessin.Couleur", native_args.site);
-            return color;
-        });
-
-    stdlib_bind_public_function(
-        module,
-        make_native_function,
-        "rvba",
-        [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
-            const auto &args = *native_args.arguments;
-            stdlib_expect_positional(runtime, args, 4, "LumiDessin.rvba", native_args.site);
-            const int64_t r = expect_color_component(runtime, args[0].value, "LumiDessin.rvba", native_args.site);
-            const int64_t g = expect_color_component(runtime, args[1].value, "LumiDessin.rvba", native_args.site);
-            const int64_t b = expect_color_component(runtime, args[2].value, "LumiDessin.rvba", native_args.site);
-            const int64_t a = expect_color_component(runtime, args[3].value, "LumiDessin.rvba", native_args.site);
+            stdlib_expect_positional_range(runtime, args, 3, 4, "LumiDessin.couleur", native_args.site);
+            const int64_t r = expect_color_component(runtime, args[0].value, "LumiDessin.couleur", native_args.site);
+            const int64_t g = expect_color_component(runtime, args[1].value, "LumiDessin.couleur", native_args.site);
+            const int64_t b = expect_color_component(runtime, args[2].value, "LumiDessin.couleur", native_args.site);
+            const int64_t a = args.size() == 4
+                                  ? expect_color_component(runtime, args[3].value, "LumiDessin.couleur", native_args.site)
+                                  : 255;
             Value color = make_couleur_value(
                 static_cast<uint8_t>(r),
                 static_cast<uint8_t>(g),
@@ -105,14 +91,14 @@ void register_lumidessin_module(Module &module)
     stdlib_bind_public_function(
         module,
         make_native_function,
-        "depuis_hex",
+        "couleur_hex",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             const auto &args = *native_args.arguments;
-            stdlib_expect_positional(runtime, args, 1, "LumiDessin.depuis_hex", native_args.site);
-            const std::string text = stdlib_expect_text(runtime, args[0].value, "LumiDessin.depuis_hex", native_args.site);
+            stdlib_expect_positional(runtime, args, 1, "LumiDessin.couleur_hex", native_args.site);
+            const std::string text = stdlib_expect_text(runtime, args[0].value, "LumiDessin.couleur_hex", native_args.site);
 
             const auto fail = [&](const std::string &cause) {
-                return stdlib_failure(make_erreur_couleur("depuis_hex", text, cause), native_args.site);
+                return stdlib_failure(make_erreur_couleur("couleur_hex", text, cause), native_args.site);
             };
 
             if (text.size() != 7 && text.size() != 9)

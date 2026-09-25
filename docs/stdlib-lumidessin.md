@@ -104,7 +104,7 @@ importer LumiDessin
 
 fonction principal()
 {
-    soit dessin = LumiDessin.ouvrir(800, 600, "Carré")
+    soit dessin = LumiDessin.fenêtre(800, 600, "Carré")
     soit crayon = dessin.crayon()
 
     soit côté = 0
@@ -127,7 +127,7 @@ importer LumiDessin
 
 fonction principal()
 {
-    soit dessin = LumiDessin.ouvrir(800, 600, "Formes")
+    soit dessin = LumiDessin.fenêtre(800, 600, "Formes")
     dessin.effacer(LumiDessin.Couleurs.blanc)
     dessin.remplir_cercle(400, 300, 90, LumiDessin.Couleurs.bleu)
     dessin.tracer_cercle(400, 300, 90, LumiDessin.Couleurs.noir, 4)
@@ -144,7 +144,7 @@ importer LumiDessin
 
 fonction principal()
 {
-    soit dessin = LumiDessin.ouvrir(800, 600, "Animation")
+    soit dessin = LumiDessin.fenêtre(800, 600, "Animation")
     dessin.régler_cadence(60)
     soit x = 100.0
 
@@ -174,7 +174,7 @@ importer LumiDessin
 
 fonction principal()
 {
-    soit dessin = LumiDessin.créer_hors_écran(640, 480)
+    soit dessin = LumiDessin.canevas(640, 480)
     dessin.effacer(LumiDessin.Couleurs.blanc)
     dessin.tracer_ligne(40, 40, 600, 440, LumiDessin.Couleurs.rouge, 6)
 
@@ -246,7 +246,7 @@ valeur
 cause
 ```
 
-`opération` is always `"depuis_hex"` today; it is carried for the same reason
+`opération` is always `"couleur_hex"` today; it is carried for the same reason
 the other error types carry it — so a second color-parsing function added
 later does not force a breaking field-shape change. Because the shared
 `stdlib_error_value` helper names its fourth field `chemin`, which does not
@@ -266,11 +266,11 @@ and tooling.
 ### Canvas creation
 
 ```text
-ouvrir(largeur: Entier, hauteur: Entier, titre: Texte) -> Canevas
-créer_hors_écran(largeur: Entier, hauteur: Entier) -> Canevas
+fenêtre(largeur: Entier, hauteur: Entier, titre: Texte) -> Canevas
+canevas(largeur: Entier, hauteur: Entier) -> Canevas
 ```
 
-`ouvrir` creates the single visible window. It raises a runtime error if a
+`fenêtre` creates the single visible window. It raises a runtime error if a
 visible canvas is already open, the window system is unavailable, or creation
 fails. A program generally cannot recover meaningfully from those conditions,
 so window creation does not return `Résultat`.
@@ -278,7 +278,7 @@ so window creation does not return `Résultat`.
 The title is UTF-8 text and may be empty. The visible window's client area has
 the requested logical size; window decorations are not included in that size.
 
-`créer_hors_écran` never initializes the window system. It may therefore be
+`canevas` never initializes the window system. It may therefore be
 used in tests, CI, containers, and servers.
 
 Both functions validate dimensions before multiplying or allocating. Each
@@ -301,12 +301,12 @@ when a transparent exported image is wanted.
 
 ```text
 point(x: Décimal, y: Décimal) -> Point
-rvb(rouge: Entier, vert: Entier, bleu: Entier) -> Couleur
-rvba(rouge: Entier, vert: Entier, bleu: Entier, alpha: Entier) -> Couleur
-depuis_hex(valeur: Texte) -> Résultat[Couleur, ErreurCouleur]
+couleur(rouge: Entier, vert: Entier, bleu: Entier, alpha: Entier = 255) -> Couleur
+couleur_hex(valeur: Texte) -> Résultat[Couleur, ErreurCouleur]
 ```
 
-Every color component must be in `0..255`. `depuis_hex` accepts exactly
+Every color component must be in `0..255`. `alpha` defaults to `255`, so
+the common case is `couleur(rouge, vert, bleu)`. `couleur_hex` accepts exactly
 `#RRGGBB` or `#RRGGBBAA`, case-insensitively, and accepts no surrounding
 whitespace. Six-digit input has alpha 255.
 
@@ -928,7 +928,7 @@ LUMIERE_ENABLE_LUMIDESSIN_WINDOW=ON
 ```
 
 Disabling the first option removes the module. Disabling only the second keeps
-off-screen drawing and image I/O; `ouvrir` then raises a clear availability
+off-screen drawing and image I/O; `fenêtre` then raises a clear availability
 error. Official desktop releases enable both.
 
 Visible canvas operations must run on the process main thread, satisfying the
