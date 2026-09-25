@@ -962,6 +962,97 @@ native_module_exports(const std::string_view module_name)
         return exports;
     }
 
+    if (module_name == "Collections")
+    {
+        const TypeExpr universel_list = generic("Liste", {named("Universel")});
+        export_callable(
+            exports,
+            "étendue",
+            callable(
+                {
+                    parameter("début", "Entier"),
+                    parameter("fin", "Entier"),
+                    parameter("pas", "Entier"),
+                },
+                generic("Liste", {named("Entier")})));
+        export_callable(
+            exports,
+            "transformer",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("transformation", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "filtrer",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "réduire",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("initial", "Universel"),
+                    parameter("réduction", "Universel"),
+                },
+                named("Universel")));
+        export_callable(
+            exports,
+            "trouver",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                union_type({named("Universel"), named("Rien")})));
+        export_callable(
+            exports,
+            "position",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                union_type({named("Entier"), named("Rien")})));
+        for (const char *name : {"tout", "au_moins_un"})
+        {
+            export_callable(
+                exports,
+                name,
+                callable(
+                    {
+                        parameter("valeurs", "Universel"),
+                        parameter("prédicat", "Universel"),
+                    },
+                    named("Logique")));
+        }
+        export_callable(
+            exports,
+            "trier",
+            callable({parameter("valeurs", "Universel")}, universel_list));
+        export_callable(
+            exports,
+            "trier_par",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("clé", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "inverser",
+            callable({parameter("valeurs", "Universel")}, universel_list));
+        return exports;
+    }
+
     if (module_name == "LumiTest")
     {
         return exports;

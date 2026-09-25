@@ -246,6 +246,10 @@ bool register_builtin_module(Module &module,
     {
         register_luminet_module(module);
     }
+    else if (module.name == "Collections")
+    {
+        register_collections_module(module);
+    }
     else if (module.name == "LumiTest")
         register_lumitest_module(module,
                                  lumitest_state != nullptr

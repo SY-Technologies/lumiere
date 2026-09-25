@@ -4405,6 +4405,149 @@ TEST(InterpreterBuiltinModules, RejectsInvalidMathsUsage)
     EXPECT_NE(error3.find("Maths.racine_n"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, SupportsCollectionsModuleCoreOperations)
+{
+    const auto [output, completed] = execute_program(
+        "importer Collections.{étendue, transformer, filtrer, réduire, trouver, position, tout, au_moins_un, trier, trier_par, inverser}\n"
+        "fonction principal() {\n"
+        "  afficher(étendue(0, 5, 1))\n"
+        "  afficher(étendue(5, 0, -1))\n"
+        "  afficher(étendue(0, 0, 1))\n"
+        "  afficher(transformer(étendue(1, 5, 1), fonction(x: Universel) -> Universel { retourne x * x }))\n"
+        "  afficher(filtrer(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x % 2 == 0 }))\n"
+        "  afficher(réduire(étendue(1, 5, 1), 0, fonction(acc: Universel, x: Universel) -> Universel { retourne acc + x }))\n"
+        "  afficher(trouver(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x > 5 }))\n"
+        "  afficher(trouver(étendue(0, 3, 1), fonction(x: Universel) -> Universel { retourne x > 50 }))\n"
+        "  afficher(position(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x > 5 }))\n"
+        "  afficher(position(étendue(0, 3, 1), fonction(x: Universel) -> Universel { retourne x > 50 }))\n"
+        "  afficher(tout(étendue(0, 5, 1), fonction(x: Universel) -> Universel { retourne x >= 0 }))\n"
+        "  afficher(tout([], fonction(x: Universel) -> Universel { retourne faux }))\n"
+        "  afficher(au_moins_un(étendue(0, 5, 1), fonction(x: Universel) -> Universel { retourne x == 3 }))\n"
+        "  afficher(au_moins_un([], fonction(x: Universel) -> Universel { retourne vrai }))\n"
+        "  afficher(trier([3, 1, 2]))\n"
+        "  afficher(trier([3, 1.5, 2]))\n"
+        "  afficher(trier([\"banane\", \"abricot\", \"cerise\"]))\n"
+        "  afficher(trier_par([\"bb\", \"a\", \"ccc\"], fonction(x: Universel) -> Universel { retourne x.taille() }))\n"
+        "  afficher(inverser([1, 2, 3]))\n"
+        "  afficher(inverser([]))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "[0, 1, 2, 3, 4]\n"
+        "[5, 4, 3, 2, 1]\n"
+        "[]\n"
+        "[1, 4, 9, 16]\n"
+        "[0, 2, 4, 6, 8]\n"
+        "10\n"
+        "6\n"
+        "rien\n"
+        "6\n"
+        "rien\n"
+        "vrai\n"
+        "vrai\n"
+        "vrai\n"
+        "faux\n"
+        "[1, 2, 3]\n"
+        "[1.5, 2, 3]\n"
+        "[abricot, banane, cerise]\n"
+        "[a, bb, ccc]\n"
+        "[3, 2, 1]\n"
+        "[]\n");
+}
+
+TEST(InterpreterBuiltinModules, CollectionsAlgorithmsAcceptEveryIterableKindMatchingPourChaque)
+{
+    // Collections algorithms must accept the same five iterable kinds as
+    // `pour chaque`, with the same contract: a Dictionnaire yields its keys.
+    const auto [output, completed] = execute_program(
+        "importer Collections.{transformer}\n"
+        "fonction principal() {\n"
+        "  soit liste_fixe = [1, 2, 3].en_liste_fixe(3)\n"
+        "  soit ensemble = [3, 1, 2].en_ensemble()\n"
+        "  soit dictionnaire = {\"un\": 1, \"deux\": 2}\n"
+        "  afficher(transformer(liste_fixe, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(ensemble, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(dictionnaire, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(\"abc\", fonction(x: Universel) -> Universel { retourne x }))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "[1, 2, 3]\n[3, 1, 2]\n[un, deux]\n[a, b, c]\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsANonIterableCollectionsArgument)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{filtrer}\n"
+        "fonction principal() {\n"
+        "  afficher(filtrer(5, fonction(x: Universel) -> Universel { retourne vrai }))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(
+        error.find("Collections.filtrer attend une valeur itérable (Liste, ListeFixe, Ensemble, Dictionnaire ou Texte)"),
+        std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsACollectionsPredicateThatDoesNotReturnLogique)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{filtrer}\n"
+        "fonction principal() {\n"
+        "  afficher(filtrer([1, 2, 3], fonction(x: Universel) -> Universel { retourne 5 }))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.filtrer : le prédicat doit retourner Logique"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsAZeroStepInCollectionsÉtendue)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{étendue}\n"
+        "fonction principal() {\n"
+        "  afficher(étendue(0, 5, 0))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.étendue: pas ne peut pas être zéro"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsMixedTypesInCollectionsTrier)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{trier}\n"
+        "fonction principal() {\n"
+        "  afficher(trier([1, \"a\"]))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.trier ne peut pas trier des valeurs de types différents ensemble"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsSortingNonNombreInCollectionsTrier)
+{
+    // non_nombre has no order relative to anything (including itself), and
+    // letting it reach std::stable_sort's comparator would be undefined
+    // behavior, not just a surprising result.
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Maths\n"
+        "importer Collections.{trier}\n"
+        "fonction principal() {\n"
+        "  afficher(trier([1.0, Maths.non_nombre]))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.trier ne peut pas trier non_nombre"), std::string::npos);
+}
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(

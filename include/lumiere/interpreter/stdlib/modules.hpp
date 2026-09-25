@@ -22,6 +22,7 @@ void register_maths_module(Module &module);
 void register_temps_module(Module &module);
 void register_aleatoire_module(Module &module);
 void register_luminet_module(Module &module);
+void register_collections_module(Module &module);
 Value execute_texte_member(IRuntime &runtime,
                            const Value &receiver,
                            std::string_view member_name,
