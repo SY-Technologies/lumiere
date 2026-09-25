@@ -326,6 +326,7 @@ if(BUILD_TESTING)
         tests/test_value_hash.cpp
         tests/test_cycles.cpp
         tests/test_analysis.cpp
+        tests/test_semantic_index.cpp
         tests/test_parser.cpp
         tests/test_parser_fixtures.cpp
         tests/test_interpreter_fixtures.cpp
