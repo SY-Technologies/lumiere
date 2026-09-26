@@ -1,12 +1,15 @@
 # Stage 1 design: the semantic tooling index
 
-Status: approved. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
-("semantic tooling index") into something implementable. Rollout steps 1-4
-are implemented and, as of the two prerequisites below (declaration-site
-lookup, interface member indexing), step 5's deletion has no known
-correctness gap left blocking it -- see below for how that claim was
-tested, since an earlier version of this doc made it prematurely: step 2
-covers local declarations too (not just
+Status: **complete**. Elaborates `docs/tooling-v2-spec.md`'s Stage 1
+("semantic tooling index") into something implementable, and all five
+rollout steps are now implemented, including step 5's deletion of the
+AST-heuristic hover fallbacks (`member_declaration_inspection`,
+`find_type_declaration`, `find_class_member_statement`,
+`find_interface_member_statement`, `collect_statements`/`collect_statement`)
+-- see below for the two prerequisites that made that deletion safe and the
+audit that checked it before it happened, since an earlier version of this
+doc claimed readiness prematurely once already: step 2 covers local
+declarations too (not just
 module-level `declare_value`/`declare_type`), step 3 covers
 `IdentifierExpr` reads/writes and `MemberAccessExpr` reads (member *writes*
 -- `objet.champ = valeur` -- aren't resolved by anything today, index or
@@ -164,6 +167,33 @@ declaration kind's own site -- class, interface, method, `pour`-variable,
 match pattern binding -- all exercised end to end through `inspect_source`
 rather than only at the `SemanticIndexBinding` layer; a loop variable's
 *real* element type instead of a hardcoded one).
+
+**Step 5 itself is done.** With the audit above confirming every case
+covered by hand, `member_declaration_inspection`, `find_type_declaration`,
+`find_class_member_statement`, `find_interface_member_statement`, and
+`collect_statements`/`collect_statement`/`push_declaration` (plus the
+`Declaration` struct and `declaration_to_inspection`, which existed only to
+feed that scan) were deleted from `inspection.cpp`: -276 lines net (1235 ->
+977). `inspect_source`'s member-access branch now tries `qualified_member_
+inspection` (stdlib) then the index, full stop; its plain-identifier path
+tries `occurrence_at` then `declaration_at` then gives up to `builtin_
+inspection` -- no AST re-walk left under either. All 577 tests pass
+unchanged, and a manual `lumiere inspect` CLI check confirmed a class
+field's own declaration, a class field reference, and a class declaration
+all still resolve correctly end to end.
+
+Stage 1 (the semantic tooling index) is complete: every declaration the
+analyzer makes is indexed, every reference kind (identifier read/write,
+member access on a class or interface receiver, type annotation, alias
+chain, import binding) is recorded against it, hover reads exclusively
+from the index, and the AST-heuristic code Stage 1 was meant to replace no
+longer exists. What Stage 1 does *not* cover, left for whatever stage of
+`docs/tooling-v2-spec.md` picks it up next: member *writes*
+(`objet.champ = valeur`, never resolved by anything, index or not),
+find-references/rename (the index already has `occurrences_of`, but
+nothing surfaces it), and hovering a bare module-level import alias by
+itself rather than a member accessed through it (`ModuleLevelImportBindingsHaveNoHoverYet`
+pins this as a known, pre-existing gap, not a regression).
 
 ## Where we actually start from
 
