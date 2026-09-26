@@ -41,17 +41,6 @@ std::string join_parameters(const std::vector<Parameter> &params)
     return output.str();
 }
 
-struct Declaration
-{
-    std::string label;
-    std::string kind;
-    std::string signature;
-    std::vector<std::string> parameters;
-    std::string return_type;
-    std::string documentation;
-    std::size_t offset;
-};
-
 /// Documentation for a global builtin or stdlib module value. Built straight
 /// from the embedded stdlib/*.lum sources; sheds light on a name the compiler
 /// knows natively without a source declaration.
@@ -368,121 +357,6 @@ std::optional<Inspection> builtin_inspection(const std::string &name,
                : documented_inspection(match->module, name, start_offset, end_offset);
 }
 
-void collect_statements(const StmtList &statements, std::vector<Declaration> &declarations);
-
-void push_declaration(std::vector<Declaration> &declarations, Declaration declaration)
-{
-    declarations.push_back(std::move(declaration));
-}
-
-void collect_statement(const Stmt &statement, std::vector<Declaration> &declarations)
-{
-    if (const auto *variable = dynamic_cast<const VarDeclStmt *>(&statement))
-    {
-        const std::string qualifier = variable->is_fixe ? "fixe " : "soit ";
-        std::string signature = qualifier + variable->name.lexeme;
-        if (!variable->type.empty())
-        {
-            signature += ": " + variable->type.to_string();
-        }
-        push_declaration(declarations, {variable->name.lexeme,
-                                        "variable",
-                                        signature,
-                                        {},
-                                        variable->type.empty() ? "" : variable->type.to_string(),
-                                        variable->documentation,
-                                        variable->name.start_offset});
-    }
-    else if (const auto *function = dynamic_cast<const FunctionDeclStmt *>(&statement))
-    {
-        std::vector<std::string> parameters;
-        parameters.reserve(function->params.size());
-        for (const Parameter &parameter : function->params)
-        {
-            parameters.push_back(parameter.name + " : " + type_name(parameter.type));
-        }
-        push_declaration(declarations, {function->name.lexeme,
-                                        "fonction",
-                                        "fonction " + function->name.lexeme + "(" + join_parameters(function->params) + ")" +
-                                            " -> " + type_name(function->return_type),
-                                        std::move(parameters),
-                                        type_name(function->return_type),
-                                        function->documentation,
-                                        function->name.start_offset});
-        if (function->body != nullptr)
-        {
-            collect_statement(*function->body, declarations);
-        }
-    }
-    else if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(&statement))
-    {
-        push_declaration(declarations, {klass->name.lexeme,
-                                        "classe",
-                                        "classe " + klass->name.lexeme,
-                                        {},
-                                        klass->name.lexeme,
-                                        klass->documentation,
-                                        klass->name.start_offset});
-        collect_statements(klass->members, declarations);
-    }
-    else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(&statement))
-    {
-        push_declaration(declarations, {interface->name.lexeme,
-                                        "interface",
-                                        "interface " + interface->name.lexeme,
-                                        {},
-                                        interface->name.lexeme,
-                                        interface->documentation,
-                                        interface->name.start_offset});
-        collect_statements(interface->methods, declarations);
-    }
-    else if (const auto *alias = dynamic_cast<const TypeAliasDeclStmt *>(&statement))
-    {
-        push_declaration(declarations, {alias->name.lexeme,
-                                        "alias de type",
-                                        "type " + alias->name.lexeme + " = " + type_name(alias->target),
-                                        {},
-                                        type_name(alias->target),
-                                        alias->documentation,
-                                        alias->name.start_offset});
-    }
-    else if (const auto *block = dynamic_cast<const BlockStmt *>(&statement))
-    {
-        collect_statements(block->statements, declarations);
-    }
-    else if (const auto *conditional = dynamic_cast<const IfStmt *>(&statement))
-    {
-        collect_statement(*conditional->then_branch, declarations);
-        if (conditional->else_branch != nullptr)
-        {
-            collect_statement(*conditional->else_branch, declarations);
-        }
-    }
-    else if (const auto *loop = dynamic_cast<const ForStmt *>(&statement))
-    {
-        push_declaration(declarations, {loop->variable.lexeme,
-                                        "variable de boucle",
-                                        "variable de boucle " + loop->variable.lexeme,
-                                        {},
-                                        "Entier",
-                                        {},
-                                        loop->variable.start_offset});
-        collect_statement(*loop->body, declarations);
-    }
-    else if (const auto *loop = dynamic_cast<const WhileStmt *>(&statement))
-    {
-        collect_statement(*loop->body, declarations);
-    }
-}
-
-void collect_statements(const StmtList &statements, std::vector<Declaration> &declarations)
-{
-    for (const StmtPtr &statement : statements)
-    {
-        collect_statement(*statement, declarations);
-    }
-}
-
 const MemberAccessExpr *find_member_access_expr(const Expr *expression, const std::size_t offset)
 {
     if (expression == nullptr)
@@ -729,123 +603,6 @@ return Inspection{variable->name.lexeme,
     return std::nullopt;
 }
 
-const Stmt *find_class_member_statement(const ClassDeclStmt &klass, const std::string_view name)
-{
-    for (const StmtPtr &member : klass.members)
-    {
-        if (const auto *function = dynamic_cast<const FunctionDeclStmt *>(member.get()))
-        {
-            if (function->name.lexeme == name)
-            {
-                return member.get();
-            }
-        }
-        else if (const auto *variable = dynamic_cast<const VarDeclStmt *>(member.get()))
-        {
-            if (variable->name.lexeme == name)
-            {
-                return member.get();
-            }
-        }
-    }
-    return nullptr;
-}
-
-const Stmt *find_interface_member_statement(const InterfaceDeclStmt &interface, const std::string_view name)
-{
-    for (const StmtPtr &member : interface.methods)
-    {
-        if (const auto *function = dynamic_cast<const FunctionDeclStmt *>(member.get()))
-        {
-            if (function->name.lexeme == name)
-            {
-                return member.get();
-            }
-        }
-    }
-    return nullptr;
-}
-
-/// Resolves `objet.membre` where objet's type is a user-declared class or
-/// interface, by locating the type's declaration and its member.
-const Stmt *find_type_declaration(const StmtList &statements, const std::string_view type_name)
-{
-    for (const StmtPtr &statement : statements)
-    {
-        if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
-        {
-            if (klass->name.lexeme == type_name)
-            {
-                return statement.get();
-            }
-        }
-        else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
-        {
-            if (interface->name.lexeme == type_name)
-            {
-                return statement.get();
-            }
-        }
-        else if (const auto *alias = dynamic_cast<const TypeAliasDeclStmt *>(statement.get()))
-        {
-            if (alias->name.lexeme == type_name)
-            {
-                return statement.get();
-            }
-        }
-    }
-    return nullptr;
-}
-
-std::optional<Inspection> member_declaration_inspection(const SemanticModel &model,
-                                                         const StmtList &statements,
-                                                         const MemberAccessExpr &access,
-                                                         const Token *selected)
-{
-    const std::string member_name = access.member.lexeme;
-    const SemanticTypeRef *object_type = model.type_of(*access.object);
-    if (object_type == nullptr)
-    {
-        return std::nullopt;
-    }
-    std::string type_name = std::string((*object_type)->display());
-    const Stmt *type_declaration = find_type_declaration(statements, type_name);
-    if (type_declaration == nullptr)
-    {
-        return std::nullopt;
-    }
-    const auto apply_offsets = [&](Inspection &result)
-    {
-        result.start_offset = selected->start_offset;
-        result.end_offset = selected->end_offset;
-    };
-    if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(type_declaration))
-    {
-        if (const Stmt *member = find_class_member_statement(*klass, member_name))
-        {
-            std::optional<Inspection> result = declaration_inspection_from_stmt(*member);
-            if (result.has_value())
-            {
-                apply_offsets(*result);
-            }
-            return result;
-        }
-    }
-    if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(type_declaration))
-    {
-        if (const Stmt *member = find_interface_member_statement(*interface, member_name))
-        {
-            std::optional<Inspection> result = declaration_inspection_from_stmt(*member);
-            if (result.has_value())
-            {
-                apply_offsets(*result);
-            }
-            return result;
-        }
-    }
-    return std::nullopt;
-}
-
 std::optional<Inspection> qualified_member_inspection(const std::string &object_type,
                                                        const std::string &member_name,
                                                        const std::size_t start_offset,
@@ -902,24 +659,15 @@ std::optional<std::string_view> keyword_detail(const TokenType type)
     return found->second;
 }
 
-Inspection declaration_to_inspection(const Declaration &declaration)
-{
-    Inspection inspection;
-    inspection.label = declaration.label;
-    inspection.kind = declaration.kind;
-    inspection.signature = declaration.signature;
-    inspection.parameters = declaration.parameters;
-    inspection.return_type = declaration.return_type;
-    inspection.documentation = declaration.documentation;
-    return inspection;
-}
-
 /// True when `declaration` is one of a top-level class's or interface's own
 /// members -- decides "méthode"/"champ" (declaration_inspection_from_stmt's
 /// labels, written for exactly that member-access context) versus
 /// "fonction"/"variable" (a module-level or local declaration, which reads
-/// oddly labelled "méthode" outside a class). Mirrors find_type_declaration's
-/// own restriction to top-level statements: classes don't nest in Lumière.
+/// oddly labelled "méthode" outside a class). Restricted to top-level
+/// statements because classes don't nest in Lumière -- record_member_
+/// occurrence/record_interface_member_occurrence (semantic_analysis.cpp)
+/// share the same restriction, via class_declaration/interface_declaration
+/// only ever consulting the module-level symbol table.
 bool is_member_declaration(const StmtList &statements, const Stmt *declaration)
 {
     for (const StmtPtr &statement : statements)
@@ -1136,13 +884,14 @@ std::optional<Inspection> inspect_source(const std::string &source,
             {
                 member_inspection = by_type;
             }
-            // Stage 1's index (record_member_occurrence, semantic_analysis.cpp)
-            // records exactly this occurrence when the member resolved to a
-            // user-declared field or method -- try it before falling back to
-            // member_declaration_inspection's own AST re-walk, which stays as
-            // a safety net for whatever the index doesn't cover yet (an
-            // interface-typed receiver, a member found through `ici`/`parent`
-            // -- see record_member_occurrence's own call sites).
+            // Stage 1's index (record_member_occurrence /
+            // record_interface_member_occurrence, semantic_analysis.cpp)
+            // records exactly this occurrence for a user-declared field or
+            // method, class or interface receiver alike -- this used to be
+            // a fallback ahead of member_declaration_inspection's own AST
+            // re-walk (deleted once a pre-deletion audit confirmed every
+            // case it covered, including an interface-typed receiver,
+            // resolves here too), and is now the only path for one.
             else if (const Occurrence *occurrence =
                          analysis.model->index.occurrence_at(SourceId{0}, selected->start_offset);
                      occurrence != nullptr)
@@ -1150,11 +899,6 @@ std::optional<Inspection> inspect_source(const std::string &source,
                 member_inspection = inspection_from_symbol(
                     *analysis.model->index.symbol(occurrence->symbol),
                     analysis.statements, selected->start_offset, selected->end_offset);
-            }
-            if (!member_inspection.has_value())
-            {
-                member_inspection = member_declaration_inspection(
-                    *analysis.model, analysis.statements, *member_access, selected);
             }
         }
         if (member_inspection.has_value())
@@ -1165,10 +909,7 @@ std::optional<Inspection> inspect_source(const std::string &source,
 
     // Stage 1's index (record_value_occurrence, semantic_analysis.cpp)
     // records this occurrence for every identifier read/write the analyzer
-    // resolved -- try it before falling back to the declarations scan
-    // below, which stays as a safety net for what isn't indexed yet (a
-    // type-annotation reference, an imported name, a builtin -- see
-    // record_value_occurrence's own doc comment).
+    // resolved.
     if (const Occurrence *occurrence =
             analysis.model->index.occurrence_at(SourceId{0}, selected->start_offset);
         occurrence != nullptr)
@@ -1184,10 +925,13 @@ std::optional<Inspection> inspect_source(const std::string &source,
 
     // occurrence_at only ever finds a *reference*; a hover on a
     // declaration's own name (the `doubler` in `fonction doubler(...)`
-    // itself, not a call to it) needs declaration_at instead -- the two
-    // together are what let the declarations scan below actually become
-    // deletable, once every kind it covers is confirmed to resolve here
-    // too.
+    // itself, not a call to it) resolves through declaration_at instead --
+    // this used to fall back further, to an AST-side declarations scan
+    // (collect_statements/collect_statement, deleted once a pre-deletion
+    // audit confirmed every case it covered resolves here too, and in two
+    // cases -- a parameter's own declaration, a class field's or method's
+    // own declaration labelled correctly as "champ"/"méthode" -- more
+    // correctly than that scan ever did).
     if (const Symbol *declared =
             analysis.model->index.declaration_at(SourceId{0}, selected->start_offset);
         declared != nullptr)
@@ -1198,26 +942,6 @@ std::optional<Inspection> inspect_source(const std::string &source,
         {
             return indexed;
         }
-    }
-
-    std::vector<Declaration> declarations;
-    collect_statements(analysis.statements, declarations);
-
-    const Declaration *best = nullptr;
-    for (const Declaration &declaration : declarations)
-    {
-        if (declaration.label == selected->lexeme &&
-            (best == nullptr || (declaration.offset <= selected->start_offset && declaration.offset > best->offset)))
-        {
-            best = &declaration;
-        }
-    }
-    if (best != nullptr)
-    {
-        Inspection inspection = declaration_to_inspection(*best);
-        inspection.start_offset = selected->start_offset;
-        inspection.end_offset = selected->end_offset;
-        return inspection;
     }
     return builtin;
 }
