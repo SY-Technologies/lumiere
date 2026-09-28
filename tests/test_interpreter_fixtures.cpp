@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -40,6 +41,24 @@ namespace
 {
 
 std::mutex g_stdio_capture_mutex;
+
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+// setenv isn't available on MSVC; _putenv_s is its Windows equivalent but
+// always overwrites, so an existing value is checked first to match
+// setenv's "third argument 0" no-overwrite behaviour the call sites rely
+// on (a CI environment that already set SDL_VIDEODRIVER is respected).
+void set_env_if_unset(const char *name, const char *value)
+{
+#ifdef _WIN32
+    if (std::getenv(name) == nullptr)
+    {
+        _putenv_s(name, value);
+    }
+#else
+    setenv(name, value, 0);
+#endif
+}
+#endif
 
 using lumiere::Lexer;
 using lumiere::Parser;
@@ -5930,9 +5949,9 @@ TEST(InterpreterBuiltinModules, LumiDessinFenetreOpensPresentsAndClosesUnderTheD
     // "Platform tests": "creates, presents, injects or receives a close
     // event, and exits"). SDL's dummy video driver needs no real display,
     // so this runs in ordinary headless CI; it is only compiled when
-    // window support is built in. setenv's third argument is 0 so a CI
-    // environment that already set SDL_VIDEODRIVER is respected.
-    setenv("SDL_VIDEODRIVER", "dummy", 0);
+    // window support is built in. set_env_if_unset only sets it when unset,
+    // so a CI environment that already configured SDL_VIDEODRIVER is respected.
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
 
     const auto [output, completed] = execute_program(
         "importer LumiDessin\n"
@@ -5953,7 +5972,7 @@ TEST(InterpreterBuiltinModules, LumiDessinFenetreOpensPresentsAndClosesUnderTheD
 
 TEST(InterpreterBuiltinModules, LumiDessinFenetreRaisesWhenAlreadyOpen)
 {
-    setenv("SDL_VIDEODRIVER", "dummy", 0);
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
 
     const auto [output, completed, error] =
         execute_program_with_error("importer LumiDessin\n"
@@ -5974,7 +5993,7 @@ TEST(InterpreterBuiltinModules, LumiDessinFenetreRespondsToAnInjectedCloseEvent)
     // the "injects or receives a close event" half of the platform smoke
     // test the doc describes, rather than only the fermer()-from-Lumière
     // path the previous test covers.
-    setenv("SDL_VIDEODRIVER", "dummy", 0);
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
     ASSERT_TRUE(SDL_InitSubSystem(SDL_INIT_VIDEO));
 
     std::thread closer([] {
