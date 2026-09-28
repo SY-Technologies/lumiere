@@ -16,7 +16,12 @@ jobs:
         include:
           - os: ubuntu-latest
             build_type: Release
-            cmake_extra_args: ""
+            # This runner has no X11/Wayland dev headers, and SDL treats
+            # that as fatal unless told the build doesn't need real
+            # windows -- it doesn't here (see docker/run-linux-tests for
+            # the same reasoning). macOS/Windows use Cocoa/Win32, not this
+            # check, so the flag stays Linux-only.
+            cmake_extra_args: "-DSDL_UNIX_CONSOLE_BUILD=ON"
           - os: macos-latest
             build_type: Release
             cmake_extra_args: ""
@@ -50,6 +55,7 @@ jobs:
         run: >-
           cmake -S . -B build-sanitizers -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer"
+          -DSDL_UNIX_CONSOLE_BUILD=ON
       - name: Build
         run: cmake --build build-sanitizers --parallel 2
       - name: Test
