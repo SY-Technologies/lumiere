@@ -229,6 +229,17 @@ if(LUMIERE_ENABLE_WARNINGS)
     endif()
 endif()
 
+if(MSVC)
+    # Lumière's identifiers, string literals, and error messages are French
+    # (docs/README.md), so the compiler must be told this source is UTF-8 --
+    # otherwise MSVC falls back to the system codepage, which both misparses
+    # multi-byte characters in identifiers/literals (surfacing as C2015 or
+    # C3872 on accented text) and silently corrupts accented content baked
+    # into string literals that happen to parse anyway. /utf-8 sets both
+    # /source-charset:utf-8 and /execution-charset:utf-8.
+    target_compile_options(lumiere PRIVATE /utf-8)
+endif()
+
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMINET=$<BOOL:${LUMIERE_ENABLE_LUMINET}>)
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN}>)
 target_compile_definitions(lumiere PUBLIC LUMIERE_ENABLE_LUMIDESSIN_WINDOW=$<BOOL:${LUMIERE_ENABLE_LUMIDESSIN_WINDOW}>)
@@ -250,6 +261,10 @@ endif()
 add_executable(lumiere_cli src/lumiere.cpp)
 
 add_executable(LUMIERE::lumiere_cli ALIAS lumiere_cli)
+
+if(MSVC)
+    target_compile_options(lumiere_cli PRIVATE /utf-8)
+endif()
 
 set_target_properties(lumiere_cli PROPERTIES OUTPUT_NAME lumiere)
 
@@ -364,6 +379,10 @@ if(BUILD_TESTING)
         )
 
         add_dependencies(lumiere_unit_tests lumiere_cli)
+
+        if(MSVC)
+            target_compile_options(lumiere_unit_tests PRIVATE /utf-8)
+        endif()
 
         if(EXISTS "${PROJECT_SOURCE_DIR}/tests/fixtures/interpreter")
             target_compile_definitions(lumiere_unit_tests
