@@ -1060,8 +1060,10 @@ Each stage ends with tests and works under both execution engines.
    pass with no defect (including a 25-cycle window open/close/crayon
    stress run and a forced already-open error path), and
    `scripts/conformance`/`scripts/fuzz` are clean against both engines.
-   `examples/lumidessin_window_demo.lum` is the module's one interactive,
-   non-headless example. macOS and Windows window smoke tests are not yet
+   `examples/lumidessin_window_demo/main.lum` is the module's one interactive,
+   non-headless example -- its own `skip.tw`/`skip.vm` markers keep the
+   conformance corpus (which runs every example as an unattended CLI
+   subprocess) from hanging on it until it times out. macOS and Windows window smoke tests are not yet
    run from this environment -- left for a machine that can build and
    exercise those backends.
 
