@@ -234,11 +234,12 @@ TEST(CliIntegration, VmReadBuiltinsSupportOptionalPrompts)
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_read_prompt_test";
     const std::filesystem::path main_file = root / "main.lum";
     write_source(main_file,
-                 "fonction principal() {\n"
+                 "fonction principal() -> Résultat[Rien, ErreurEntrée] {\n"
                  "  soit champ = \"Nom\"\n"
-                 "  soit nom = lire(champ + \": \")\n"
-                 "  soit age = lire_entier(\"\")\n"
+                 "  soit nom = lire(champ + \": \") ou propager\n"
+                 "  soit age = lire_entier(\"\") ou propager\n"
                  "  afficher(nom, age)\n"
+                 "  retourne Succès(rien)\n"
                  "}\n");
 
     const CommandResult result = run_cli(
@@ -259,9 +260,9 @@ TEST(CliIntegration, VmReadBuiltinsRejectInvalidPrompts)
     };
 
     const std::vector<InvalidPromptCase> cases = {
-        {"lire(\"x\", \"y\")", "lire accepte au plus 1 argument"},
-        {"lire_entier(42)", "lire_entier attend une invite de type Texte"},
-        {"lire(invite: \"Nom: \")", "arguments nommes ne sont pas pris en charge pour 'lire'"},
+        {"lire(\"x\", \"y\")", "trop d'arguments positionnels"},
+        {"lire_entier(42)", "l'argument 'invite' attend Texte"},
+        {"lire(invite: \"Nom: \")", "cette fonction native n'accepte pas d'arguments nommés"},
     };
 
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "lumiere_cli_vm_invalid_read_prompt_test";
