@@ -12,6 +12,15 @@
 #include <sstream>
 #include <thread>
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace lumiere
 {
 
@@ -709,6 +718,37 @@ PosixFooter tz_parse_posix_footer(const std::string &s)
     return footer;
 }
 
+// The directory the running executable lives in, so the bundled
+// third_party/zoneinfo (see its README) can be found next to it regardless
+// of the current working directory or install location. This is what lets
+// named-timezone lookups work on Windows, which ships no tzdata of its own.
+std::filesystem::path executable_directory()
+{
+    std::error_code ec;
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH];
+    const DWORD length = ::GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length == 0 || length == MAX_PATH)
+    {
+        return {};
+    }
+    return std::filesystem::path(buffer).parent_path();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (size == 0 || _NSGetExecutablePath(buffer.data(), &size) != 0)
+    {
+        return {};
+    }
+    const auto resolved = std::filesystem::canonical(buffer, ec);
+    return ec ? std::filesystem::path() : resolved.parent_path();
+#else
+    const auto resolved = std::filesystem::canonical("/proc/self/exe", ec);
+    return ec ? std::filesystem::path() : resolved.parent_path();
+#endif
+}
+
 std::string tz_zoneinfo_root()
 {
     if (const char *dir = std::getenv("TZDIR"); dir != nullptr && *dir != '\0')
@@ -720,7 +760,31 @@ std::string tz_zoneinfo_root()
         }
         return root;
     }
+
+    // The bundled copy ships identically on every platform (see
+    // third_party/zoneinfo/README.md) so Fuseau() behaves the same
+    // regardless of what, if anything, the host OS provides -- computed
+    // once, since it never changes within a process's lifetime.
+    static const std::string bundled = []() -> std::string {
+        const std::filesystem::path candidate = executable_directory() / "zoneinfo";
+        std::error_code ec;
+        if (std::filesystem::is_directory(candidate, ec))
+        {
+            return candidate.generic_string() + "/";
+        }
+        return std::string();
+    }();
+    if (!bundled.empty())
+    {
+        return bundled;
+    }
+
+#ifdef _WIN32
+    // No bundled copy found and no system tzdata to fall back to.
+    return std::string();
+#else
     return "/usr/share/zoneinfo/";
+#endif
 }
 
 // Only IANA zone-name characters are accepted (letters, digits, '_' '+' '-'
