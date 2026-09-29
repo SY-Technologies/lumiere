@@ -215,6 +215,25 @@ std::string normalize_path_text(const std::filesystem::path &path)
     return path.generic_string();
 }
 
+// A path embedded in Lumière *source* text has to escape the Lumière
+// lexer's own \n/\t/\\/\" syntax: on Windows, path.string() contains
+// raw backslashes ("C:\Users\...") that the lexer otherwise tries to
+// parse as escape sequences (producing "échappement invalide" errors).
+std::string lumiere_string_literal_text(const std::string &raw)
+{
+    std::string escaped;
+    escaped.reserve(raw.size());
+    for (const char ch : raw)
+    {
+        if (ch == '\\' || ch == '"')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
+}
+
 std::pair<std::string, bool> execute_program(const std::string &source)
 {
     std::lock_guard<std::mutex> lock(g_stdio_capture_mutex);
@@ -1755,7 +1774,7 @@ TEST(InterpreterBuiltinModules, SupportsCheminAndFichierModules)
         "importer Chemin.{joindre, nom, nom_sans_extension, dossier}\n"
         "importer Fichier.{existe, lire_texte}\n"
         "fonction principal() {\n"
-        "  soit chemin = joindre(\"" + import_root.string() + "\", \"note.txt\")\n"
+        "  soit chemin = joindre(\"" + lumiere_string_literal_text(import_root.string()) + "\", \"note.txt\")\n"
         "  afficher(existe(chemin) ou propager)\n"
         "  afficher(nom(chemin))\n"
         "  afficher(nom_sans_extension(chemin))\n"
@@ -1851,10 +1870,10 @@ TEST(InterpreterBuiltinModules, SupportsExpandedFichierModuleOperations)
     const std::string source =
         "importer Fichier.{ajouter_texte, creer_dossiers, ecrire_texte, est_dossier, est_fichier, existe, lire_lignes, lire_texte, lister, modifie_le, taille}\n"
         "fonction principal() {\n"
-        "  soit dossier = \"" + (import_root / "crees" / "nested").string() + "\"\n"
-        "  soit texte = \"" + (import_root / "sortie.txt").string() + "\"\n"
-        "  soit source = \"" + source_file.string() + "\"\n"
-        "  soit liste = \"" + (import_root / "liste").string() + "\"\n"
+        "  soit dossier = \"" + lumiere_string_literal_text((import_root / "crees" / "nested").string()) + "\"\n"
+        "  soit texte = \"" + lumiere_string_literal_text((import_root / "sortie.txt").string()) + "\"\n"
+        "  soit source = \"" + lumiere_string_literal_text(source_file.string()) + "\"\n"
+        "  soit liste = \"" + lumiere_string_literal_text((import_root / "liste").string()) + "\"\n"
         "  ignorer creer_dossiers(dossier)\n"
         "  ignorer ecrire_texte(texte, \"alpha\")\n"
         "  ignorer ajouter_texte(texte, \"-beta\")\n"
@@ -1919,9 +1938,9 @@ TEST(InterpreterBuiltinModules, SupportsFichierWriteLinesCopyMoveAndDelete)
     const std::string source =
         "importer Fichier.{copier, deplacer, ecrire_lignes, existe, lire_lignes, lire_texte, supprimer}\n"
         "fonction principal() {\n"
-        "  soit source = \"" + (import_root / "source.txt").string() + "\"\n"
-        "  soit copie = \"" + (import_root / "copie.txt").string() + "\"\n"
-        "  soit deplace = \"" + (import_root / "deplace.txt").string() + "\"\n"
+        "  soit source = \"" + lumiere_string_literal_text((import_root / "source.txt").string()) + "\"\n"
+        "  soit copie = \"" + lumiere_string_literal_text((import_root / "copie.txt").string()) + "\"\n"
+        "  soit deplace = \"" + lumiere_string_literal_text((import_root / "deplace.txt").string()) + "\"\n"
         "  ignorer ecrire_lignes(source, [\"un\", \"deux\", \"trois\"])\n"
         "  ignorer copier(source, copie)\n"
         "  ignorer deplacer(copie, deplace)\n"
@@ -1960,8 +1979,8 @@ TEST(InterpreterBuiltinModules, SupportsRecursiveListingAndSplitDirectoryDeletio
     const std::string source =
         "importer Fichier.{est_dossier, existe, lister_recursif, supprimer_arbre, supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  soit arbre = \"" + (import_root / "arbre").string() + "\"\n"
-        "  soit vide = \"" + (import_root / "vide").string() + "\"\n"
+        "  soit arbre = \"" + lumiere_string_literal_text((import_root / "arbre").string()) + "\"\n"
+        "  soit vide = \"" + lumiere_string_literal_text((import_root / "vide").string()) + "\"\n"
         "  soit elements = lister_recursif(arbre) ou propager\n"
         "  afficher(elements.taille())\n"
         "  afficher(elements[0])\n"
@@ -2196,7 +2215,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output6, completed6, error6] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "non_vide").string() + "\") ou propager\n"
+        "  supprimer_dossier(\"" + lumiere_string_literal_text((import_root / "non_vide").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2207,7 +2226,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output7, completed7, error7] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "pas_dossier.txt").string() + "\") ou propager\n"
+        "  supprimer_dossier(\"" + lumiere_string_literal_text((import_root / "pas_dossier.txt").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2218,7 +2237,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output8, completed8, error8] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_arbre}\n"
         "fonction principal() {\n"
-        "  supprimer_arbre(\"" + (import_root / "introuvable").string() + "\") ou propager\n"
+        "  supprimer_arbre(\"" + lumiere_string_literal_text((import_root / "introuvable").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -3577,7 +3596,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
             "importer LumiNet\n"
             "soit serveur_global = rien\n"
             "fonction page(req: Universel, rep: Universel) {\n"
-            "  rep.envoyer_fichier(200, \"" + html_path.string() + "\")\n"
+            "  rep.envoyer_fichier(200, \"" + lumiere_string_literal_text(html_path.string()) + "\")\n"
             "  serveur_global.arreter()\n"
             "}\n"
             "fonction principal() {\n"
@@ -5558,13 +5577,13 @@ TEST(InterpreterBuiltinModules, LumiDessinSavesAndLoadsPngRoundTripAndDrawsImage
 
     const std::string program =
         "importer LumiDessin\nfonction principal() {\n  soit source = LumiDessin.canevas(4, 4)\n  source.effacer(LumiDessin.Couleurs.blanc)\n  source.remplir_rectangle(1.0, 1.0, 2.0, 2.0, LumiDessin.Couleurs.rouge)\n  agir selon source.enregistrer_png(\""
-        + png_path.string()
+        + lumiere_string_literal_text(png_path.string())
         + "\") {\n    Succès(_) -> afficher(\"sauvegarde: ok\")\n    Échec(e) -> afficher(\"BUG sauvegarde: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
-        + png_path.string()
+        + lumiere_string_literal_text(png_path.string())
         + "\") {\n    Succès(img) -> {\n      afficher(\"chargee: \" + img.largeur() + \"x\" + img.hauteur())\n      soit copie = LumiDessin.canevas(4, 4)\n      copie.effacer(LumiDessin.Couleurs.blanc)\n      copie.dessiner_image(img, 0.0, 0.0)\n      soit coin = copie.lire_pixel(0, 0)\n      soit centre = copie.lire_pixel(2, 2)\n      afficher(\"copie coin: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n      afficher(\"copie centre: \" + centre.rouge() + \",\" + centre.vert() + \",\" + centre.bleu())\n      soit agrandie = LumiDessin.canevas(8, 8)\n      agrandie.effacer(LumiDessin.Couleurs.blanc)\n      agrandie.dessiner_image_redimensionnée(img, 0.0, 0.0, 8.0, 8.0, 1.0)\n      soit p_agrandie = agrandie.lire_pixel(4, 4)\n      afficher(\"redim centre: \" + p_agrandie.rouge() + \",\" + p_agrandie.vert() + \",\" + p_agrandie.bleu())\n      soit demi_opacite = LumiDessin.canevas(8, 8)\n      demi_opacite.effacer(LumiDessin.Couleurs.blanc)\n      demi_opacite.dessiner_image_nette(img, 0.0, 0.0, 8.0, 8.0, 0.5)\n      soit p_demi = demi_opacite.lire_pixel(4, 4)\n      afficher(\"nette demi-opacite centre: \" + p_demi.rouge() + \",\" + p_demi.vert() + \",\" + p_demi.bleu())\n    }\n    Échec(e) -> afficher(\"BUG chargement: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
-        + (png_root / "absent.png").string()
+        + lumiere_string_literal_text((png_root / "absent.png").string())
         + "\") {\n    Succès(_) -> afficher(\"BUG: fichier absent charge\")\n    Échec(e) -> afficher(\"fichier absent: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
-        + non_png_path.string()
+        + lumiere_string_literal_text(non_png_path.string())
         + "\") {\n    Succès(_) -> afficher(\"BUG: non-png charge\")\n    Échec(e) -> afficher(\"non-png: \" + e.cause)\n  }\n}\n";
 
     const auto [output, completed] = execute_program(program);
