@@ -6476,16 +6476,49 @@ TEST(InterpreterStandardIO, SupportsAfficherInlineAndReadBuiltins)
     EXPECT_EQ(output, "Nom:\nAda\n36\n1.75\nvrai\n");
 }
 
+TEST(InterpreterStandardIO, SupportsOptionalReadPrompts)
+{
+    const auto [output, completed] = execute_program_with_input(
+        "fonction principal() {\n"
+        "  soit champ = \"Nom\"\n"
+        "  soit nom = lire(champ + \": \")\n"
+        "  soit age = lire_entier(\"\")\n"
+        "  afficher(nom, age)\n"
+        "}\n",
+        "Ada\n36\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "Nom: Ada 36\n");
+}
+
 TEST(InterpreterStandardIO, RejectsInvalidReadInputsAndArguments)
 {
     auto [output1, completed1, error1] = execute_program_with_error(
         "fonction principal() {\n"
-        "  lire(\"x\")\n"
+        "  lire(\"x\", \"y\")\n"
         "}\n");
 
     EXPECT_FALSE(completed1);
     EXPECT_TRUE(output1.empty());
-    EXPECT_NE(error1.find("lire n'accepte pas d'arguments"), std::string::npos);
+    EXPECT_NE(error1.find("lire accepte au plus 1 argument"), std::string::npos);
+
+    auto [invalid_prompt_output, invalid_prompt_completed, invalid_prompt_error] = execute_program_with_error(
+        "fonction principal() {\n"
+        "  lire_entier(42)\n"
+        "}\n");
+
+    EXPECT_FALSE(invalid_prompt_completed);
+    EXPECT_TRUE(invalid_prompt_output.empty());
+    EXPECT_NE(invalid_prompt_error.find("lire_entier attend une invite de type Texte"), std::string::npos);
+
+    auto [named_prompt_output, named_prompt_completed, named_prompt_error] = execute_program_with_error(
+        "fonction principal() {\n"
+        "  lire(invite: \"Nom: \")\n"
+        "}\n");
+
+    EXPECT_FALSE(named_prompt_completed);
+    EXPECT_TRUE(named_prompt_output.empty());
+    EXPECT_NE(named_prompt_error.find("lire n'accepte pas d'arguments nommes"), std::string::npos);
 
     auto [output2, completed2, error2] = execute_program_with_input_and_error(
         "fonction principal() {\n"
