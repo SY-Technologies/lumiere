@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_argument_membre/main.lum)
+  File "diagnostic_argument_membre/main.lum", line 4, column 21
+        nombres.ajouter("x")
+                        ^
+erreur d'exécution: Liste.ajouter attend une valeur de type Entier; type reçu : Texte

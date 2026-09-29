@@ -1,0 +1,5 @@
+// Le contrat d'un membre désigne l'argument qui le viole.
+fonction principal() {
+    soit nombres: Liste[Entier] = [1]
+    nombres.ajouter("x")
+}

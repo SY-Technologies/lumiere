@@ -1,0 +1,6 @@
+// 'soit fixe' veut dire fixe.
+fonction principal() {
+    soit fixe valeur = 1
+    valeur = 2
+    afficher(valeur)
+}

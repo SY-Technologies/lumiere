@@ -1,0 +1,22 @@
+// Un appel de méthode ne passe pas par le raccourci du compilateur : le
+// receveur n'est connu qu'à l'exécution, donc les arguments sont liés là.
+// C'est le chemin que les appels de fonction globale évitent, et le seul
+// endroit où une mesure voit le coût de cette liaison.
+classe Accumulateur {
+    total: Entier
+
+    fonction ajouter(valeur: Entier) -> Entier {
+        ici.total = ici.total + valeur
+        retourne ici.total
+    }
+}
+
+fonction principal() {
+    soit accumulateur = Accumulateur(total: 0)
+    soit index = 0
+    tant que index < 2000000 {
+        accumulateur.ajouter(index)
+        index = index + 1
+    }
+    afficher(accumulateur.total)
+}

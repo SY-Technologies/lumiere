@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_indice/main.lum)
+  File "diagnostic_indice/main.lum", line 4, column 22
+        afficher(nombres[9])
+                         ^
+erreur d'exécution: indice hors limites : 9 pour Liste de taille 1

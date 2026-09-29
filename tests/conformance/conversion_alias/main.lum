@@ -1,0 +1,10 @@
+// Un alias est transparent, y compris comme cible de 'en'. L'arbre comparait
+// le nom de l'alias à ceux des types de base et refusait la conversion ; la
+// machine virtuelle, qui reçoit l'alias déjà développé, la faisait.
+type Nombre = Entier
+type Drapeau = Logique
+
+fonction principal() {
+    afficher("42" en Nombre + 1)
+    afficher("vrai" en Drapeau)
+}

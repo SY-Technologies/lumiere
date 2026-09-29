@@ -8,6 +8,12 @@ cmake_args=(
     -B "$build_dir"
     -G Ninja
     -DBUILD_TESTING=ON
+    # This image has no X11/Wayland dev libraries -- it never opens a real
+    # window (LumiDessin's SDL backend falls back to the dummy driver here,
+    # which is all the test suite needs), so tell SDL not to fail its
+    # configure-time check for them. Real desktop Linux builds are
+    # unaffected: this flag is only passed in the CI container.
+    -DSDL_UNIX_CONSOLE_BUILD=ON
 )
 
 case "$suite" in

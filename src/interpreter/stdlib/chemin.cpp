@@ -24,7 +24,12 @@ bool is_lumiere_absolute(const std::filesystem::path &path)
 void register_chemin_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    stdlib_bind_public_value(module, "separateur", Value::texte(std::string(1, std::filesystem::path::preferred_separator)));
+    // path_to_text() above normalizes every Chemin output to forward-slash
+    // form so Lumiere programs do not depend on the host platform's
+    // separator spelling; this constant must match that convention rather
+    // than exposing the platform-native separator (which would be "\\" on
+    // Windows, contradicting every other value this module produces).
+    stdlib_bind_public_value(module, "separateur", Value::texte(std::string("/")));
 
     stdlib_bind_public_function(
         module,
@@ -48,18 +53,41 @@ void register_chemin_module(Module &module)
                 runtime.raise_runtime_error(call_site, "Chemin.joindre attend au moins un segment");
             }
 
+            // std::filesystem::path::operator/= replaces the whole accumulated path
+            // whenever the right-hand segment is itself absolute, so joindre("var",
+            // "lib", "/etc/passwd") would otherwise silently return "/etc/passwd",
+            // dropping "var/lib" without any error. Only the first segment may set
+            // the path's root; every later one must be relative to it.
             std::filesystem::path path;
-            for (const auto &arg : args)
+            for (std::size_t i = 0; i < args.size(); ++i)
             {
+                const auto &arg = args[i];
                 if (!arg.name.empty())
                 {
-                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas d'arguments nommes");
+                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas d'arguments nommés");
                 }
                 if (!arg.value.is_texte())
                 {
                     runtime.raise_runtime_error(call_site, "Chemin.joindre attend des segments de type Texte");
                 }
-                path /= arg.value.as_texte();
+                if (arg.value.as_texte().empty())
+                {
+                    // An empty segment is never a meaningful path component, and
+                    // operator/= appends a trailing separator with nothing after
+                    // it ("a/b" + "" -> "a/b/"), silently changing the joined
+                    // path's meaning (e.g. turning a file path into what looks
+                    // like a directory path) rather than being a no-op.
+                    runtime.raise_runtime_error(call_site, "Chemin.joindre n'accepte pas de segment vide");
+                }
+                const std::filesystem::path segment = arg.value.as_texte();
+                if (i > 0 && is_lumiere_absolute(segment))
+                {
+                    runtime.raise_runtime_error(
+                        call_site,
+                        "Chemin.joindre n'accepte un segment absolu qu'en première position : "
+                        "un segment absolu plus loin effacerait silencieusement ce qui précède");
+                }
+                path /= segment;
             }
 
             return Value::texte(path_to_text(path.lexically_normal()));
@@ -132,7 +160,7 @@ void register_chemin_module(Module &module)
             const auto &call_site = native_args.site;
             const auto path = stdlib_expect_path_arg(runtime, args, "Chemin.parties", call_site).lexically_normal();
 
-            auto parts = std::make_shared<ListeData>();
+            auto parts = make_ref<ListeData>();
             for (const auto &part : path)
             {
                 const std::string part_text = path_to_text(part);

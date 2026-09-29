@@ -1,0 +1,5 @@
+// Un indice invalide désigne l'expression de l'indice.
+fonction principal() {
+    soit nombres = [1]
+    afficher(nombres[9])
+}

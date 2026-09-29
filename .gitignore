@@ -20,4 +20,5 @@ compile_commands.json
 .envrc.private
 
 /cmake-build-debug
-/docs/
+/docs/__pycache__/
+__pycache__/

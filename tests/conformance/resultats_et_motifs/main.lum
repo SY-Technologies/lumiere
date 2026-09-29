@@ -1,0 +1,39 @@
+// 'agir selon' choisit la première branche qui correspond, dans l'ordre écrit,
+// et ne lie son motif que pour la branche retenue.
+classe ErreurDiv réalise Erreur {}
+
+fonction diviser(a: Entier, b: Entier) -> Résultat[Entier, ErreurDiv] {
+    si b == 0 { retourne Échec(ErreurDiv()) }
+    retourne Succès(a / b)
+}
+
+fonction principal() {
+    afficher(agir selon diviser(10, 2) {
+        Succès(v) -> v
+        Échec(_) -> -1
+    })
+    afficher(agir selon diviser(1, 0) {
+        Succès(v) -> v
+        Échec(_) -> -1
+    })
+
+    soit n = 5
+    agir selon n {
+        1 -> afficher("un")
+        5 -> afficher("cinq")
+        sinon -> afficher("autre")
+    }
+
+    soit inconnu: Universel = "texte"
+    agir selon inconnu {
+        x: Entier -> afficher("entier " + x)
+        x: Texte -> afficher("texte " + x)
+        sinon -> afficher("autre")
+    }
+
+    soit rien_du_tout: Universel = rien
+    agir selon rien_du_tout {
+        rien -> afficher("rien")
+        sinon -> afficher("autre")
+    }
+}

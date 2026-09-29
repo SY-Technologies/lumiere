@@ -1,0 +1,81 @@
+// Task 7 : lire T hors d'une Liste[T], d'un Dictionnaire[K, V] ou d'un texte,
+// et appeler une méthode sur `ici` ou sur une valeur d'interface, sont tous
+// typés maintenant, plutôt que Universel -- ce qui forçait un cast `en` ou un
+// rejet à la déclaration. Chaque liaison ci-dessous porte un type annoté sans
+// cast, pour que la case échoue si l'inférence en perd une.
+classe Compteur {
+    valeur: Entier
+
+    fonction courant() -> Entier {
+        retourne ici.valeur
+    }
+
+    fonction incremente() -> Résultat[Entier, ErreurDebordement] {
+        si ici.valeur >= 1000 {
+            retourne Échec(ErreurDebordement(limite: 1000))
+        }
+        ici.valeur = ici.valeur + 1
+        retourne Succès(ici.valeur)
+    }
+
+    fonction incremente_deux_fois() -> Résultat[Entier, ErreurDebordement] {
+        soit apres_un = ici.incremente() ou propager
+        retourne ici.incremente()
+    }
+}
+
+classe ErreurDebordement réalise Erreur {
+    limite: Entier
+}
+
+interface Forme {
+    fonction aire() -> Entier
+}
+
+classe Carre réalise Forme {
+    cote: Entier
+
+    fonction aire() -> Entier {
+        retourne ici.cote * ici.cote
+    }
+}
+
+fonction principal() {
+    soit nombres: Liste[Entier] = [10, 20, 30]
+    soit premier: Entier = nombres[0]
+    afficher(premier)
+
+    soit ages: Dictionnaire[Texte, Entier] = {"pierre": 40, "alice": 35}
+    soit age: Entier = ages["alice"]
+    afficher(age)
+
+    soit total = 0
+    pour chaque n dans nombres {
+        soit valeur: Entier = n
+        total = total + valeur
+    }
+    afficher(total)
+
+    pour chaque nom dans ages {
+        soit cle: Texte = nom
+        afficher(cle)
+    }
+
+    pour chaque lettre dans "ab" {
+        soit symbole: Symbole = lettre
+        afficher(symbole)
+    }
+
+    soit c = Compteur(valeur: 0)
+    soit vu_par_ici: Entier = c.courant()
+    afficher(vu_par_ici)
+
+    agir selon c.incremente_deux_fois() {
+        Succès(valeur) -> afficher(valeur)
+        Échec(erreur) -> afficher(erreur.limite)
+    }
+
+    soit forme: Forme = Carre(cote: 6)
+    soit aire: Entier = forme.aire()
+    afficher(aire)
+}

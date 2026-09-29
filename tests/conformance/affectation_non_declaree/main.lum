@@ -1,0 +1,6 @@
+// Une affectation à un nom que rien ne déclare.
+index = 42
+
+fonction principal() {
+    afficher(index)
+}

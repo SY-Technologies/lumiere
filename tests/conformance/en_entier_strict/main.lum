@@ -1,0 +1,22 @@
+// Texte.en_entier passait par std::stoll, qui ignore les espaces en tête et
+// les compte comme "consommés" -- "  42".en_entier() rendait Succès(42) au
+// lieu d'un Échec, alors que Texte.en_decimal avait déjà été corrigé pour ce
+// même piège (voir decisions/cross-engine-conformance.md). Il s'agit
+// vraiment de std::from_chars contre std::stoll : ce dernier saute les
+// espaces, l'autre non.
+fonction principal() {
+    afficher("42".en_entier())
+    afficher("-17".en_entier())
+    afficher("+17".en_entier())
+    afficher("9223372036854775807".en_entier())
+
+    afficher("  42".en_entier())
+    afficher("42  ".en_entier())
+    afficher("abc".en_entier())
+    afficher("".en_entier())
+    afficher("99999999999999999999".en_entier())
+
+    // Les séparateurs de chiffres n'existent que dans les littéraux du
+    // code source, pas dans un texte fourni par l'utilisateur.
+    afficher("1_000".en_entier())
+}

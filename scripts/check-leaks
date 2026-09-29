@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Runs programs under a leak-detecting build and reports which ones retain memory.
+#
+# Both engines must run clean, cycles included. The runtime owns its heap values
+# through its own reference counts, so a value's last reference destroys it, and
+# what reference counting cannot reclaim on its own -- a cycle -- the collector
+# reclaims once the last outside reference is gone.
+#
+# This script pins that down. Every program listed here must run clean under
+# both backends, so a regression in ownership shows up as a leak here rather
+# than as slow growth in a long-running process.
+#
+#   cmake -S . -B build_asan -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+#     -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined" \
+#     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+#   cmake --build build_asan
+#   scripts/check-leaks build_asan/lumiere
+
+set -u
+
+binary=${1:-build_asan/lumiere}
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+if [ ! -x "$binary" ]; then
+    echo "usage: scripts/check-leaks <chemin/vers/lumiere>  (build with -fsanitize=address)" >&2
+    exit 2
+fi
+
+# Programs that run to completion, and programs that die part way through. The
+# second group is not an afterthought: a run that ends in an error leaves the
+# runtime mid-flight, and for a while the CLI collected cycles only on the path
+# where nothing went wrong, so every failing program leaked everything it had
+# built. A list of programs that all succeed cannot notice that.
+programs=(
+    examples/bonjour.lum
+    examples/analyse_collections.lum
+    examples/tri_rapide.lum
+    examples/objets.lum
+    examples/collections_demo.lum
+    examples/json_demo.lum
+    examples/regex_demo.lum
+    examples/temps_demo.lum
+    examples/lumidessin_demo.lum
+    benchmarks/integer_loop.lum
+    benchmarks/typed_list.lum
+    benchmarks/dictionary_lookup.lum
+    benchmarks/text_iteration.lum
+    benchmarks/function_calls.lum
+    tests/conformance/captures_de_boucle/main.lum
+    tests/conformance/diagnostic_annotation/main.lum
+    tests/conformance/diagnostic_membre_texte/main.lum
+    tests/conformance/diagnostic_portee_module/main.lum
+    tests/fixtures/interpreter/error_traceback/main.lum
+    tests/fixtures/interpreter/interface_contract_violation/main.lum
+)
+
+failures=0
+for program in "${programs[@]}"; do
+    printf '%-42s ' "$program"
+
+    for backend in --vm --tw; do
+        label=${backend#--}
+        output=$(ASAN_OPTIONS=detect_leaks=1 "$binary" "$backend" "$root/$program" 2>&1)
+        if printf '%s' "$output" | grep -q 'leak of'; then
+            printf '%s=FUITE  ' "$label"
+            printf '%s\n' "$output" | grep -E 'SUMMARY|leak of' | head -2
+            failures=$((failures + 1))
+        else
+            printf '%s=propre  ' "$label"
+        fi
+    done
+    echo
+done
+
+echo
+if [ "$failures" -ne 0 ]; then
+    echo "$failures exécution(s) retiennent de la mémoire."
+    exit 1
+fi
+
+echo "Aucune fuite sur les deux moteurs, cycles compris."

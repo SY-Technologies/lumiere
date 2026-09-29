@@ -108,29 +108,35 @@ namespace lumiere
     {
         TokenType type;
         std::string lexeme;
+        // Where the token begins. A token used to carry both this and the
+        // position just past its last character, and everything that draws a
+        // caret reached for the wrong one: an error about `valeur` pointed at
+        // the space after it. The span is start_offset..end_offset; there is
+        // one line and column, and it is the first one.
         uint32_t line;
         uint32_t column;
         std::size_t start_offset;
         std::size_t end_offset;
-        uint32_t start_line;
-        uint32_t start_column;
+        // For TEXTE_LIT and SYMBOLE_LIT only: the literal's body with quotes
+        // stripped and escape sequences resolved (see Tokenizer::scan_string /
+        // scan_symbol). `lexeme` stays the raw source slice, quotes included,
+        // for diagnostics and round-tripping; `decoded` is what the two
+        // execution engines turn into a runtime Value. Empty and unused for
+        // every other token type.
+        std::string decoded;
 
         Token(TokenType type,
               std::string lexeme,
               uint32_t line,
               uint32_t column,
               std::size_t start_offset = 0,
-              std::size_t end_offset = 0,
-              uint32_t start_line = 0,
-              uint32_t start_column = 0)
+              std::size_t end_offset = 0)
             : type(type),
               lexeme(std::move(lexeme)),
               line(line),
               column(column),
               start_offset(start_offset),
-              end_offset(end_offset),
-              start_line(start_line == 0 ? line : start_line),
-              start_column(start_column == 0 ? column : start_column) {}
+              end_offset(end_offset) {}
         // A std::string internally owns a heap-allocated buffer.
         //  I choose to move it to avoid allocating a new buffer and copying every character into it.
 

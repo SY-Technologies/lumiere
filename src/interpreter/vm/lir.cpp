@@ -87,6 +87,11 @@ LirOperand LirOperand::type(const std::size_t index) noexcept
     return {LirOperandKind::IR_OPERAND_TYPE, index};
 }
 
+LirOperand LirOperand::annotation(const std::size_t index) noexcept
+{
+    return {LirOperandKind::IR_OPERAND_ANNOTATION, index};
+}
+
 LirOperand LirOperand::member(const std::size_t index) noexcept
 {
     return {LirOperandKind::IR_OPERAND_MEMBER, index};
@@ -120,9 +125,10 @@ LirOperand LirOperand::name_space(const std::size_t index) noexcept
 LirInstruction LirInstruction::make(const LirOpcode opcode,
                                     const LirOperand destination,
                                     std::vector<LirOperand> operands,
-                                    const LirSourceLocation source)
+                                    const LirSourceLocation source,
+                                    std::vector<LirSourceLocation> argument_sources)
 {
-    return {opcode, destination, std::move(operands), source};
+    return {opcode, destination, std::move(operands), source, std::move(argument_sources)};
 }
 
 LirTerminator LirTerminator::jump(const std::size_t target_block,
@@ -169,7 +175,7 @@ LirInstruction &LirFunction::append_instruction(const std::size_t block_index,
     LirBlock &target_block = block(block_index);
     if (target_block.is_terminated())
     {
-        throw std::logic_error("LIR: impossible d'ajouter une instruction apres un terminateur");
+        throw std::logic_error("LIR: impossible d'ajouter une instruction après un terminateur");
     }
 
     target_block.instructions.push_back(std::move(instruction));
@@ -237,6 +243,21 @@ std::size_t LirModule::add_global(std::string name)
 
     const std::size_t index = globals.size();
     globals.push_back({index, std::move(name)});
+    return index;
+}
+
+std::size_t LirModule::add_annotation(const std::size_t type_index, std::string context)
+{
+    for (const LirAnnotation &annotation : annotations)
+    {
+        if (annotation.type_index == type_index && annotation.context == context)
+        {
+            return annotation.index;
+        }
+    }
+
+    const std::size_t index = annotations.size();
+    annotations.push_back({index, type_index, std::move(context)});
     return index;
 }
 
@@ -315,6 +336,9 @@ std::string to_string(const LirOperand &operand)
     case LirOperandKind::IR_OPERAND_TYPE:
         out << "TYPE";
         break;
+    case LirOperandKind::IR_OPERAND_ANNOTATION:
+        out << "ANNOTATION";
+        break;
     case LirOperandKind::IR_OPERAND_MEMBER:
         out << "MEMBER";
         break;
@@ -354,6 +378,8 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_LOAD_LOCAL";
     case LirOpcode::IR_OP_STORE_LOCAL:
         return "IR_OP_STORE_LOCAL";
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        return "IR_OP_CLEAR_LOCALS";
     case LirOpcode::IR_OP_MOVE:
         return "IR_OP_MOVE";
     case LirOpcode::IR_OP_ADD:
@@ -412,6 +438,10 @@ std::string to_string(const LirOpcode opcode)
         return "IR_OP_LIST";
     case LirOpcode::IR_OP_DICTIONARY:
         return "IR_OP_DICTIONARY";
+    case LirOpcode::IR_OP_ENSEMBLE:
+        return "IR_OP_ENSEMBLE";
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
+        return "IR_OP_ITERATION_SNAPSHOT";
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
         return "IR_OP_SEQUENCE_LENGTH";
     case LirOpcode::IR_OP_INDEX_GET:
@@ -448,6 +478,7 @@ std::string to_string(const LirInstruction &instruction)
     std::ostringstream out;
 
     if (instruction.opcode == LirOpcode::IR_OP_STORE_LOCAL ||
+        instruction.opcode == LirOpcode::IR_OP_CLEAR_LOCALS ||
         instruction.opcode == LirOpcode::IR_OP_STORE_GLOBAL ||
         instruction.opcode == LirOpcode::IR_OP_INIT_GLOBAL ||
         instruction.opcode == LirOpcode::IR_OP_SET_MEMBER ||

@@ -1,0 +1,15 @@
+fonction calculer(n: Entier) -> Entier {
+    soit double = n * 2
+    soit suivant = n + 1
+    retourne double + suivant
+}
+
+fonction principal() {
+    soit index = 0
+    soit total = 0
+    tant que index < 100000 {
+        total = total + calculer(index)
+        index = index + 1
+    }
+    afficher(total)
+}

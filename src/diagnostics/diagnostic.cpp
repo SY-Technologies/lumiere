@@ -4,8 +4,6 @@
 
 namespace lumiere
 {
-namespace
-{
 
 std::string json_string(const std::string_view value)
 {
@@ -52,8 +50,6 @@ std::string json_string(const std::string_view value)
     out << '"';
     return out.str();
 }
-
-} // namespace
 
 std::string_view diagnostic_severity_name(const DiagnosticSeverity severity)
 {

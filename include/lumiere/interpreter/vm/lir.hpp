@@ -38,6 +38,7 @@ enum class LirOperandKind : std::uint8_t
     IR_OPERAND_FUNCTION,
     IR_OPERAND_BLOCK,
     IR_OPERAND_TYPE,
+    IR_OPERAND_ANNOTATION,
     IR_OPERAND_MEMBER,
     IR_OPERAND_CAPTURE,
     IR_OPERAND_CLASS,
@@ -60,6 +61,7 @@ struct LirOperand
     [[nodiscard]] static LirOperand function(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand block(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand type(std::size_t index) noexcept;
+    [[nodiscard]] static LirOperand annotation(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand member(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand capture(std::size_t index) noexcept;
     [[nodiscard]] static LirOperand klass(std::size_t index) noexcept;
@@ -78,6 +80,7 @@ enum class LirOpcode : std::uint8_t
     IR_OP_INIT_GLOBAL,
     IR_OP_LOAD_LOCAL,
     IR_OP_STORE_LOCAL,
+    IR_OP_CLEAR_LOCALS,
     IR_OP_MOVE,
     IR_OP_ADD,
     IR_OP_SUBTRACT,
@@ -107,6 +110,8 @@ enum class LirOpcode : std::uint8_t
     IR_OP_CLOSURE,
     IR_OP_LIST,
     IR_OP_DICTIONARY,
+    IR_OP_ENSEMBLE,
+    IR_OP_ITERATION_SNAPSHOT,
     IR_OP_SEQUENCE_LENGTH,
     IR_OP_INDEX_GET,
     IR_OP_INDEX_SET,
@@ -140,11 +145,15 @@ struct LirInstruction
     LirOperand destination = LirOperand::temp(0);
     std::vector<LirOperand> operands;
     LirSourceLocation source {};
+    // Calls keep one source position per source-level argument. These become
+    // RuntimeArgument sites after the values have left the VM stack.
+    std::vector<LirSourceLocation> argument_sources;
 
     [[nodiscard]] static LirInstruction make(LirOpcode opcode,
                                              LirOperand destination,
                                              std::vector<LirOperand> operands = {},
-                                             LirSourceLocation source = {});
+                                             LirSourceLocation source = {},
+                                             std::vector<LirSourceLocation> argument_sources = {});
 };
 
 // Terminators own the outgoing control-flow decision for a block.
@@ -204,6 +213,14 @@ struct LirType
     std::string name;
 };
 
+// See VmAnnotation: a type plus what required it.
+struct LirAnnotation
+{
+    std::size_t index = 0;
+    std::size_t type_index = 0;
+    std::string context;
+};
+
 struct LirMember
 {
     std::size_t index = 0;
@@ -232,6 +249,7 @@ struct LirMethodDescriptor
 struct LirClassDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::string parent;
     std::vector<std::string> interfaces;
     std::vector<LirFieldDescriptor> fields;
@@ -248,6 +266,7 @@ struct LirInterfaceMethodDescriptor
 struct LirInterfaceDescriptor
 {
     std::string name;
+    std::string type_identity;
     std::vector<LirInterfaceMethodDescriptor> methods;
 };
 
@@ -286,7 +305,12 @@ struct LirFunction
     std::vector<LirNamedValue> locals;
     std::vector<LirCapture> captures;
     std::size_t source_arity = 0;
+    // Parallel to each other and to the source-level parameter list: entry i
+    // is the name the caller may use for parameter i and whether it has a
+    // default. Names are kept because a call whose callee is only known at run
+    // time has to bind `f(b: 1, a: 2)` by name, like the tree walker does.
     std::vector<bool> optional_params;
+    std::vector<std::string> parameter_names;
     std::vector<std::size_t> temps;
     std::size_t entry_block = 0;
     std::vector<LirBlock> blocks;
@@ -315,6 +339,7 @@ struct LirModule
     std::vector<LirConstant> constants;
     std::vector<LirGlobal> globals;
     std::vector<LirType> types;
+    std::vector<LirAnnotation> annotations;
     std::vector<LirMember> members;
     std::vector<LirClassDescriptor> classes;
     std::vector<LirInterfaceDescriptor> interfaces;
@@ -331,6 +356,7 @@ struct LirModule
     [[nodiscard]] std::size_t add_global(std::string name);
 
     [[nodiscard]] std::size_t add_type(std::string name);
+    [[nodiscard]] std::size_t add_annotation(std::size_t type_index, std::string context);
     [[nodiscard]] std::size_t add_member(std::string name);
     [[nodiscard]] std::size_t add_argument_name(std::string name);
 

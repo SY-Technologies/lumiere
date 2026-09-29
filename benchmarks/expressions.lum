@@ -1,0 +1,205 @@
+// Un petit interpréteur d'expressions : découper un texte en lexèmes, en
+// construire l'arbre par descente récursive, puis l'évaluer par envoi
+// dynamique. C'est la forme de tout programme qui lit un langage --
+// configuration, règles métier, requêtes -- et elle réunit ce que les
+// microbenchmarks isolent un à un : parcours de texte, objets, appels par
+// interface, récursion et échecs typés.
+//
+// L'arithmétique est modulo un nombre premier, pour que les valeurs restent
+// des Entier sans dépassement et que la soustraction donne le même reste dans
+// les deux langages, dont les % ne s'accordent pas sur les négatifs.
+
+soit MODULE = 1000003
+
+// Le générateur congruentiel classique de rand(). Ses bits de poids faible
+// alternent, donc on tire dans les bits 16 à 30, comme le fait rand().
+classe Hasard {
+    etat: Entier
+
+    fonction suivant(borne: Entier) -> Entier {
+        ici.etat = (ici.etat * 1103515245 + 12345) % 2147483648
+        retourne ici.etat / 65536 % borne
+    }
+}
+
+classe ErreurSyntaxe réalise Erreur {
+    position: Entier
+}
+
+interface Noeud {
+    fonction evaluer()
+}
+
+classe Nombre réalise Noeud {
+    valeur: Entier
+
+    fonction evaluer() {
+        retourne ici.valeur
+    }
+}
+
+classe Operation réalise Noeud {
+    operateur: Texte
+    gauche: Noeud
+    droite: Noeud
+
+    fonction evaluer() {
+        soit a = ici.gauche.evaluer()
+        soit b = ici.droite.evaluer()
+        retourne agir selon ici.operateur {
+            "+" -> (a + b) % MODULE
+            "-" -> ((a - b) % MODULE + MODULE) % MODULE
+            sinon -> a * b % MODULE
+        }
+    }
+}
+
+classe Lexeme {
+    genre: Texte
+    valeur: Entier
+    position: Entier
+}
+
+fonction decouper(texte: Texte) -> Liste[Lexeme] {
+    soit lexemes: Liste[Lexeme] = []
+    soit nombre = -1
+    soit position = 0
+    pour chaque caractere dans texte {
+        soit code = caractere en Entier
+        si code >= 48 et code <= 57 {
+            si nombre < 0 {
+                nombre = 0
+            }
+            nombre = nombre * 10 + code - 48
+        } sinon {
+            si nombre >= 0 {
+                lexemes.ajouter(Lexeme(genre: "n", valeur: nombre, position: position))
+                nombre = -1
+            }
+            si code != 32 {
+                lexemes.ajouter(Lexeme(genre: "" + caractere, valeur: 0, position: position))
+            }
+        }
+        position = position + 1
+    }
+    si nombre >= 0 {
+        lexemes.ajouter(Lexeme(genre: "n", valeur: nombre, position: position))
+    }
+    lexemes.ajouter(Lexeme(genre: "fin", valeur: 0, position: position))
+    retourne lexemes
+}
+
+// expression := terme (('+' | '-') terme)*
+// terme      := facteur ('*' facteur)*
+// facteur    := nombre | '(' expression ')'
+//
+// The three rules are methods on the analyzer: `ici.terme()` now carries the
+// same type `terme` declares, so `ou propager` reads it -- a value out of a
+// typed field (`ici.lexemes[ici.position]`) and the result of an `ici` call
+// are both typed since Task 7, where they used to be `Universel` and forced
+// these into free functions instead.
+classe Analyseur {
+    lexemes: Liste[Lexeme]
+    position: Entier
+
+    fonction courant() {
+        retourne ici.lexemes[ici.position]
+    }
+
+    fonction avancer() {
+        ici.position = ici.position + 1
+    }
+
+    fonction expression() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit gauche = ici.terme() ou propager
+        tant que ici.courant().genre == "+" ou ici.courant().genre == "-" {
+            soit operateur = ici.courant().genre
+            ici.avancer()
+            soit droite = ici.terme() ou propager
+            gauche = Operation(operateur: operateur, gauche: gauche, droite: droite)
+        }
+        retourne Succès(gauche)
+    }
+
+    fonction terme() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit gauche = ici.facteur() ou propager
+        tant que ici.courant().genre == "*" {
+            ici.avancer()
+            soit droite = ici.facteur() ou propager
+            gauche = Operation(operateur: "*", gauche: gauche, droite: droite)
+        }
+        retourne Succès(gauche)
+    }
+
+    fonction facteur() -> Résultat[Noeud, ErreurSyntaxe] {
+        soit lexeme = ici.courant()
+        si lexeme.genre == "n" {
+            ici.avancer()
+            retourne Succès(Nombre(valeur: lexeme.valeur))
+        }
+        si lexeme.genre == "(" {
+            ici.avancer()
+            soit interieur = ici.expression() ou propager
+            si ici.courant().genre != ")" {
+                retourne Échec(ErreurSyntaxe(position: ici.courant().position))
+            }
+            ici.avancer()
+            retourne Succès(interieur)
+        }
+        retourne Échec(ErreurSyntaxe(position: lexeme.position))
+    }
+}
+
+fonction analyser(texte: Texte) -> Résultat[Noeud, ErreurSyntaxe] {
+    soit analyseur = Analyseur(lexemes: decouper(texte), position: 0)
+    soit arbre = analyseur.expression() ou propager
+    si analyseur.courant().genre != "fin" {
+        retourne Échec(ErreurSyntaxe(position: analyseur.courant().position))
+    }
+    retourne Succès(arbre)
+}
+
+fonction generer(profondeur: Entier, hasard: Hasard) -> Texte {
+    si profondeur == 0 ou hasard.suivant(4) == 0 {
+        retourne "" + hasard.suivant(100)
+    }
+    soit operateurs = ["+", "-", "*"]
+    soit gauche = generer(profondeur - 1, hasard)
+    soit operateur = operateurs[hasard.suivant(3)]
+    soit droite = generer(profondeur - 1, hasard)
+    soit texte = gauche + " " + operateur + " " + droite
+    si hasard.suivant(3) == 0 {
+        retourne "(" + texte + ")"
+    }
+    retourne texte
+}
+
+fonction principal() {
+    soit hasard = Hasard(etat: 7)
+    soit total = 0
+    soit erreurs = 0
+    soit positions = 0
+    soit index = 0
+    tant que index < 4000 {
+        soit texte = generer(6, hasard)
+        // Une expression sur vingt-cinq perd sa dernière parenthèse fermante
+        // ou gagne un opérateur de trop, pour que l'échec soit un chemin
+        // parcouru et pas seulement déclaré.
+        si index % 25 == 0 {
+            texte = texte + " *"
+        }
+        agir selon analyser(texte) {
+            Succès(arbre) -> {
+                total = (total + arbre.evaluer()) % MODULE
+            }
+            Échec(erreur) -> {
+                erreurs = erreurs + 1
+                positions = positions + erreur.position
+            }
+        }
+        index = index + 1
+    }
+    afficher(total)
+    afficher(erreurs)
+    afficher(positions)
+}

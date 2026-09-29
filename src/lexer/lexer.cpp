@@ -32,7 +32,7 @@ namespace lumiere
                     DiagnosticSeverity::ERROR_LEVEL,
                     token.lexeme,
                     "",
-                    {token.start_offset, token.end_offset, token.start_line, token.start_column},
+                    {token.start_offset, token.end_offset, token.line, token.column},
                 });
             }
             tokens.push_back(std::move(token));

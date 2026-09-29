@@ -6,13 +6,24 @@
 namespace lumiere
 {
 
-Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state,
+namespace
+{
+    // Matches kMaxHttpBodyBytes in protocol.cpp / kMaxWebSocketMessageBytes in
+    // canal_runtime.cpp: a caller-controlled read size (often derived from a
+    // length prefix read off the wire) must not drive an unbounded allocation.
+    constexpr std::size_t kMaxTcpReadBytes = 10 * 1024 * 1024;
+}
+
+Value make_tcp_connection_value(const Ref<TcpConnectionState> &state_ref,
                                 const std::string &address,
                                 int64_t port,
                                 const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ConnexionTCP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
     object->fields["adresse"] = Value::texte(address);
     object->fields["port"] = Value::entier(port);
 
@@ -136,6 +147,10 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
             {
                 runtime.raise_runtime_error(native_args.site, "ConnexionTCP.lire_octets requiert un nombre non négatif");
             }
+            if (count > static_cast<int64_t>(kMaxTcpReadBytes))
+            {
+                throw NetworkFailure("ConnexionTCP.lire_octets ne peut pas lire plus de 10 Mo en un seul appel");
+            }
             std::vector<unsigned char> buffer(static_cast<std::size_t>(count));
             const SocketSize received = socket_recv_bytes(state->fd, buffer.data(), buffer.size());
             if (received < 0)
@@ -156,11 +171,14 @@ Value make_tcp_connection_value(const std::shared_ptr<TcpConnectionState> &state
     return Value::objet(std::move(object));
 }
 
-Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
+Value make_tcp_server_value(const Ref<TcpServerState> &state_ref,
                             const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ServeurTCP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
 
     object->fields["quand_connexion"] = Value::fonction(make_native_function(
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
@@ -210,7 +228,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
 
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(port);
-            const int rc = ::getaddrinfo(host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "ServeurTCP.écouter", gai_strerror(rc));
@@ -262,7 +280,7 @@ Value make_tcp_server_value(const std::shared_ptr<TcpServerState> &state,
                     raise_network_error(runtime, native_args.site, "ServeurTCP.écouter", socket_error_text("acceptation"));
                 }
 
-                auto client_state = std::make_shared<TcpConnectionState>();
+                auto client_state = make_ref<TcpConnectionState>();
                 client_state->fd = client_fd;
                 try
                 {

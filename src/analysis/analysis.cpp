@@ -131,10 +131,17 @@ SemanticImportEnvironment build_import_environment(
             module_path(source_path, import->module_name.lexeme);
         if (path.empty())
         {
-            environment.emplace(
-                import->module_name.lexeme,
-                native_module_exports(import->module_name.lexeme)
-                    .value_or(SemanticModuleExports{}));
+            // A builtin module has no file. Anything else that resolves to no
+            // file is a module that does not exist, and leaving it out of the
+            // environment is what makes the analyzer say so (LUM-S0012). It
+            // used to be entered as an empty set of exports, so the analyzer
+            // accepted the import and each engine discovered the missing module
+            // on its own -- the tree walker with a traceback, the VM with a
+            // bare line.
+            if (auto native = native_module_exports(import->module_name.lexeme))
+            {
+                environment.emplace(import->module_name.lexeme, std::move(*native));
+            }
             continue;
         }
 
@@ -224,7 +231,7 @@ SemanticImportEnvironment build_import_environment(
             path.string());
 
         SemanticModuleExports exports =
-            collect_semantic_exports(module_statements);
+            collect_semantic_exports(module_statements, module_analysis.model);
         module_cache.emplace(module_key, exports);
         environment.emplace(import->module_name.lexeme,
                             std::move(exports));
@@ -245,7 +252,8 @@ bool AnalysisResult::has_errors() const noexcept
 
 AnalysisResult analyze_source(std::string source,
                               std::string source_path,
-                              const AnalysisOptions options)
+                              const AnalysisOptions options,
+                              const SemanticModel *previous)
 {
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.tokenise();
@@ -285,11 +293,14 @@ AnalysisResult analyze_source(std::string source,
                     source_path,
                     imports,
                     SemanticAnalysisOptions{
-                        options.consume_last_expression});
+                        options.consume_last_expression,
+                        options.require_entry_point},
+                    previous);
             result.diagnostics.insert(
                 result.diagnostics.end(),
                 std::make_move_iterator(semantics.diagnostics.begin()),
                 std::make_move_iterator(semantics.diagnostics.end()));
+            result.model = std::make_shared<SemanticModel>(std::move(semantics.model));
         }
     }
     return result;

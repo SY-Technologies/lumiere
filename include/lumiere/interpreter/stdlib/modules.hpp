@@ -11,8 +11,8 @@
 namespace lumiere
 {
 
-using NativeFunctionFactory = std::function<std::shared_ptr<LumiereFunction>(LumiereFunction::NativeHandler)>;
-using NativeMethodFactory = std::function<std::shared_ptr<LumiereFunction>(Value, LumiereFunction::NativeHandler)>;
+using NativeFunctionFactory = std::function<Ref<LumiereFunction>(LumiereFunction::NativeHandler)>;
+using NativeMethodFactory = std::function<Ref<LumiereFunction>(Value, LumiereFunction::NativeHandler)>;
 
 const NativeFunctionFactory &native_function_factory();
 void register_chemin_module(Module &module);
@@ -22,6 +22,10 @@ void register_maths_module(Module &module);
 void register_temps_module(Module &module);
 void register_aleatoire_module(Module &module);
 void register_luminet_module(Module &module);
+void register_collections_module(Module &module);
+void register_json_module(Module &module);
+void register_regex_module(Module &module);
+void register_lumidessin_module(Module &module);
 Value execute_texte_member(IRuntime &runtime,
                            const Value &receiver,
                            std::string_view member_name,
@@ -70,12 +74,17 @@ struct LumiTestModuleState : RuntimeModuleState
     std::vector<std::string> group_stack;
     std::vector<GroupContext> group_contexts;
     bool abort_requested = false;
+
+    // The hooks are Lumière functions, so a hook closing over the group that
+    // holds it would otherwise be a cycle out of the collector's reach.
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
 };
 
 void register_lumitest_module(Module &module,
-                              std::shared_ptr<LumiTestModuleState> state);
+                              Ref<LumiTestModuleState> state);
 bool register_builtin_module(Module &module,
-                             std::shared_ptr<LumiTestModuleState> lumitest_state = nullptr);
+                             Ref<LumiTestModuleState> lumitest_state = nullptr);
 bool try_resolve_texte_native_member(const Value &object,
                                      std::string_view member_name,
                                      const NativeMethodFactory &make_native_method,

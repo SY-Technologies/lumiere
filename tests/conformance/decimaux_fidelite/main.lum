@@ -1,0 +1,52 @@
+// Un nombre affiché doit pouvoir être relu tel quel. Le formatage par défaut
+// s'arrêtait à six chiffres significatifs : 123456789.125 sortait en
+// 1.23457e+08 et 0.1 + 0.2 en 0.3, autrement dit le langage rapportait autre
+// chose que ce qu'il avait calculé.
+importer Maths
+importer Texte
+
+fonction principal() {
+    afficher(0.1 + 0.2)
+    afficher(123456789.125)
+    afficher(1.0 / 3.0)
+    afficher(Maths.pi)
+
+    // tan(pi/4) n'est pas exactement 1 en virgule flottante, et le dire est
+    // le comportement correct.
+    afficher(Maths.tan(Maths.pi / 4))
+
+    // Les deux valeurs qui ne sont pas des nombres portent leurs noms français.
+    afficher(Maths.infini)
+    afficher(-Maths.infini)
+    afficher(Maths.non_nombre)
+
+    // Un subnormal est un Décimal représentable comme un autre.
+    afficher(5e-324)
+
+    // Un Décimal de valeur entière garde son point : Entier et Décimal sont des
+    // types distincts — ils ne sont même pas égaux comme clés de dictionnaire —
+    // donc 2.0 affiché « 2 » ferait afficher identiquement deux valeurs qui ne
+    // sont pas égales, et le texte ne se relirait plus dans son type d'origine.
+    afficher(2.0)
+    afficher(-0.0)
+    afficher(100.0)
+    afficher(2.0 == 2)
+    afficher("x" + 2.0)
+
+    // Un exposant marque déjà la valeur comme Décimal.
+    afficher(1e10)
+
+    // Ce qui est affiché se relit à l'identique.
+    afficher((0.1 + 0.2) == 0.30000000000000004)
+    afficher("1.7976931348623157e+308".en_decimal())
+
+    // Le langage n'a qu'une façon d'écrire un Décimal. Texte.convertir_decimal
+    // en avait une seconde : un flux, avec ses six chiffres significatifs par
+    // défaut, qui rendait "1.23457e+08", "0.3" et "2" là où afficher rendait
+    // les trois correctement. Les deux moteurs se trompaient pareil, donc leur
+    // comparaison ne pouvait rien voir.
+    afficher(Texte.convertir_decimal(123456789.125))
+    afficher(Texte.convertir_decimal(0.1 + 0.2))
+    afficher(Texte.convertir_decimal(2.0))
+    afficher(Texte.convertir_entier(42))
+}

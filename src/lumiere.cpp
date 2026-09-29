@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -9,11 +10,13 @@
 
 #include "lumiere/analysis/analysis.hpp"
 #include "lumiere/analysis/inspection.hpp"
+#include "lumiere/diagnostics/runtime_stats.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/interpreter/vm/vm.hpp"
+#include "lumiere/interpreter/runtime/cycles.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -33,6 +36,7 @@ struct CliOptions
     bool execute = false;
     bool print_help = false;
     bool print_version = false;
+    bool print_stats = false;
 };
 
 struct TestCliOptions
@@ -45,7 +49,7 @@ struct TestCliOptions
 
 void print_usage()
 {
-    std::cerr << "usage: lumiere [--vm | --tw] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
+    std::cerr << "usage: lumiere [--vm | --tw] [--stats] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere ir <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere bytecode <fichier" << SOURCE_FILE_EXTENSION << ">\n";
     std::cerr << "       lumiere check [--format=json] <fichier" << SOURCE_FILE_EXTENSION << ">\n";
@@ -93,16 +97,30 @@ std::string read_file_text(const std::filesystem::path &path)
     return buffer.str();
 }
 
+/**
+ * @param previous What an earlier analysis of this session settled, or nullptr.
+ * @param out_model Receives what this analysis settles, for the next one.
+ *
+ * Both are for the shell, which analyzes one line at a time.
+ */
 std::unique_ptr<lumiere::Program> parse_program(
     std::string source,
     std::string source_path,
-    const bool consume_last_expression = false)
+    const bool consume_last_expression = false,
+    const bool require_entry_point = false,
+    const lumiere::SemanticModel *previous = nullptr,
+    std::shared_ptr<lumiere::SemanticModel> *out_model = nullptr)
 {
     lumiere::AnalysisResult analysis =
         lumiere::analyze_source(
             source,
             source_path,
-            lumiere::AnalysisOptions{consume_last_expression});
+            lumiere::AnalysisOptions{consume_last_expression, require_entry_point},
+            previous);
+    if (out_model != nullptr)
+    {
+        *out_model = analysis.model;
+    }
     if (analysis.has_errors())
     {
         for (const lumiere::Diagnostic &diagnostic : analysis.diagnostics)
@@ -262,7 +280,8 @@ int inspect_source_at_offset(const InspectOptions &options)
 {
     std::ostringstream buffer;
     buffer << std::cin.rdbuf();
-    std::cout << lumiere::inspection_to_json(lumiere::inspect_source(buffer.str(), options.byte_offset));
+    std::cout << lumiere::inspection_to_json(
+        lumiere::inspect_source(buffer.str(), options.byte_offset, options.source_path));
     return 0;
 }
 
@@ -285,6 +304,41 @@ int inspect_program(const std::string &command, const std::string &file_argument
         std::cout << lumiere::disassemble(compiler.compile_for_inspection(*program));
     }
     return 0;
+}
+
+/**
+ * @brief Reports what the run cost, other than time.
+ *
+ * On stderr, so a program's own output stays exactly what it printed and the
+ * benchmark harness -- which rejects any run that writes to stderr -- has to be
+ * asked for this explicitly.
+ */
+void print_run_statistics()
+{
+    const auto mebibytes = [](const std::uint64_t bytes) {
+        return static_cast<double>(bytes) / (1024.0 * 1024.0);
+    };
+    std::cerr << "statistiques :";
+    if (lumiere::stats::counting_allocations())
+    {
+        std::cerr << ' ' << lumiere::stats::allocations() << " allocations, "
+                  << std::fixed << std::setprecision(1)
+                  << mebibytes(lumiere::stats::allocated_bytes()) << " Mio demandés,";
+    }
+    else
+    {
+        std::cerr << " allocations non comptées dans cette build,";
+    }
+    if (const std::uint64_t peak = lumiere::stats::peak_resident_bytes(); peak != 0)
+    {
+        std::cerr << " pic de résidence " << std::fixed << std::setprecision(1)
+                  << mebibytes(peak) << " Mio";
+    }
+    else
+    {
+        std::cerr << " pic de résidence inconnu";
+    }
+    std::cerr << '\n';
 }
 
 bool submission_is_complete(const std::string &source)
@@ -347,7 +401,10 @@ int run_repl()
               << "Tapez :aide pour l'aide, :quitter pour sortir.\n";
 
     lumiere::TreeWalker interpreter;
+    // Every accepted submission is kept because the interpreter's values point
+    // into their statements -- and so does the model below.
     std::vector<std::unique_ptr<lumiere::Program>> submissions;
+    std::shared_ptr<lumiere::SemanticModel> session_model;
     std::string source;
     std::string line;
     while (true)
@@ -381,7 +438,12 @@ int run_repl()
             continue;
         }
 
-        auto program = parse_program(source, "<repl>", true);
+        // One line at a time, but not one line in isolation: each submission is
+        // analyzed starting from what the last accepted one established, so a
+        // name declared earlier is a name that resolves.
+        std::shared_ptr<lumiere::SemanticModel> submission_model;
+        auto program = parse_program(source, "<repl>", true, false,
+                                     session_model.get(), &submission_model);
         source.clear();
         if (program == nullptr)
         {
@@ -393,6 +455,10 @@ int run_repl()
             {
                 std::cout << result->to_string() << '\n';
             }
+            // Only a submission that ran contributes what it declared. One that
+            // raised part-way may never have made the binding its declaration
+            // promised, and the next line must not be told otherwise.
+            session_model = std::move(submission_model);
             submissions.push_back(std::move(program));
         }
         catch (const lumiere::RuntimeError &error)
@@ -438,6 +504,12 @@ CliOptions parse_run_args(int argc, char *argv[])
             continue;
         }
 
+        if (arg == "--stats")
+        {
+            options.print_stats = true;
+            continue;
+        }
+
         if (arg == "--help" || arg == "-h")
         {
             options.print_help = true;
@@ -459,7 +531,7 @@ CliOptions parse_run_args(int argc, char *argv[])
         if (!options.file_argument.empty())
         {
             print_usage();
-            throw std::runtime_error("plus d'un fichier a ete fourni");
+            throw std::runtime_error("plus d'un fichier a été fourni");
         }
 
         options.file_argument = arg;
@@ -467,7 +539,8 @@ CliOptions parse_run_args(int argc, char *argv[])
 
     if (options.print_help || options.print_version)
     {
-        if (!options.file_argument.empty() || options.execute || !options.backend.empty())
+        if (!options.file_argument.empty() || options.execute || !options.backend.empty() ||
+            options.print_stats)
         {
             print_usage();
             throw std::runtime_error("--help et --version ne prennent pas d'autre argument");
@@ -530,7 +603,7 @@ TestCliOptions parse_test_args(int argc, char *argv[])
         if (!options.path_argument.empty())
         {
             print_usage();
-            throw std::runtime_error("plus d'un chemin de test a ete fourni");
+            throw std::runtime_error("plus d'un chemin de test a été fourni");
         }
 
         options.path_argument = arg;
@@ -696,6 +769,10 @@ int run_tester_command(const TestCliOptions &options)
     for (const auto &file_path : files)
     {
         const int file_status = run_test_file(file_path, options, aggregate);
+        // The file's tree walker is gone by now, so anything it kept alive in a
+        // cycle -- a test context object holding the very methods bound onto
+        // it, for one -- is unreachable, and this is where it is reclaimed.
+        lumiere::collect_cycles();
         if (file_status != 0)
         {
             return file_status;
@@ -737,7 +814,11 @@ int main(int argc, char *argv[])
     {
         if (argc == 1)
         {
-            return run_repl();
+            const int status = run_repl();
+            // Same reason as the tester loop: the session's interpreter is gone,
+            // so its cycles are collectable now and not before.
+            lumiere::collect_cycles();
+            return status;
         }
 
         if (argc >= 2 && std::string(argv[1]) == "tester")
@@ -779,7 +860,9 @@ int main(int argc, char *argv[])
         }
 
         const std::filesystem::path file_path = resolve_input_file(options.file_argument);
-        auto program = parse_program(read_file_text(file_path), file_path.string());
+        // A file that is only being parsed or dumped is not being run, so it is
+        // not required to be a program.
+        auto program = parse_program(read_file_text(file_path), file_path.string(), false, options.execute);
         if (program == nullptr)
         {
             return 1;
@@ -787,8 +870,24 @@ int main(int argc, char *argv[])
 
         if (options.execute)
         {
+            // The backend is destroyed first -- locals go in reverse order of
+            // declaration -- so by the time this guard runs, whatever the
+            // backend held in a cycle is unreachable and collectable. A guard
+            // rather than a statement after the block because the program may
+            // leave by throwing, and a program that ends in an error has no
+            // less right to be cleaned up than one that ends well.
+            struct CollectWhenDone
+            {
+                ~CollectWhenDone() { lumiere::collect_cycles(); }
+            } collect_when_done;
+
             auto backend = make_backend(options.backend);
             backend->execute(*program);
+        }
+
+        if (options.print_stats)
+        {
+            print_run_statistics();
         }
 
         return 0;

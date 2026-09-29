@@ -1,0 +1,17 @@
+// Task 7, second half : un littéral vide n'a pas de type tant que rien ne le
+// dit -- ni Universel (qui refuserait ensuite Liste[Texte]), ni un type
+// concret (qui refuserait Liste[Entier] juste après). `Liste[⊥]` accepte
+// n'importe quel `Liste[T]`, puisqu'un littéral vide n'a aucune valeur à se
+// tromper de type ; `Ensemble[⊥]` pareillement, y compris à travers
+// `en_ensemble()`, qui n'a pas de syntaxe littérale propre.
+fonction principal() {
+    soit lignes: Liste[Texte] = []
+    soit noms: Ensemble[Texte] = [].en_ensemble()
+    soit index: Dictionnaire[Texte, Entier] = {}
+    lignes.ajouter("premiere")
+    noms.ajouter("alice")
+    index["a"] = 1
+    afficher(lignes.taille())
+    afficher(noms.taille())
+    afficher(index.taille())
+}

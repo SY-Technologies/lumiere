@@ -1,6 +1,10 @@
 #include "lumiere/interpreter/vm/vm.hpp"
+#include "lumiere/interpreter/runtime/conversions.hpp"
+#include "lumiere/interpreter/runtime/members.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
+#include "lumiere/interpreter/vm/verifier.hpp"
+#include "lumiere/interpreter/runtime/cycles.hpp"
 #include "native_globals.hpp"
 #include "vm_error.hpp"
 #include "lumiere/interpreter/runtime/iruntime.hpp"
@@ -8,9 +12,16 @@
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
+#include "lumiere/interpreter/runtime/runtime_type.hpp"
+#include "lumiere/interpreter/runtime/collection_constraints.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
+#include <cassert>
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -24,12 +35,20 @@ namespace lumiere
 namespace
 {
 
+Value checked_integer(std::optional<int64_t> value)
+{
+    if (!value)
+        throw VmRuntimeError("VM: valeur hors limites pour Entier");
+    return Value::entier(*value);
+}
+
 std::uint8_t read_byte(const Chunk &chunk, std::size_t &ip)
 {
-    if (ip >= chunk.code.size())
-    {
-        throw VmRuntimeError("VM: lecture hors limites du bytecode");
-    }
+    // verify_module has already proved that every operand this reads is present,
+    // so the bound is not re-tested here: it was two comparisons per instruction
+    // on the hottest path in the runtime. The assertion keeps the guarantee under
+    // test, where the Debug and sanitizer builds run the whole suite.
+    assert(ip < chunk.code.size());
     return chunk.code[ip++];
 }
 
@@ -46,6 +65,56 @@ std::size_t read_u24(const Chunk &chunk, std::size_t &ip)
     return (byte2 << 16) | (byte1 << 8) | byte0;
 }
 
+/**
+ * @brief The argument names of a call, read from the bytecode where they lie.
+ *
+ * A call used to copy them into a vector of std::string before touching the
+ * stack -- one allocation and one string copy per call, on the path that was
+ * measured at four allocations per call and 3.5x CPython. The operands are
+ * contiguous and the verifier has already proved they are present, so the
+ * instruction can simply remember where they start and read the one it needs.
+ */
+class ArgumentNames
+{
+public:
+    // Consumes the operands: `ip` is left after the last one.
+    ArgumentNames(const Chunk &chunk, std::size_t &ip, const std::size_t count)
+        : m_chunk(chunk), m_offset(ip)
+    {
+        ip += count * 2;
+    }
+
+    [[nodiscard]] std::size_t index(const std::size_t argument) const
+    {
+        const std::size_t at = m_offset + argument * 2;
+        return (static_cast<std::size_t>(m_chunk.code[at]) << 8) | m_chunk.code[at + 1];
+    }
+
+    [[nodiscard]] SourceLocation location(const std::size_t argument) const
+    {
+        return m_chunk.locations[m_offset + argument * 2];
+    }
+
+private:
+    const Chunk &m_chunk;
+    std::size_t m_offset;
+};
+
+// Where one argument of a call was written, for a diagnostic that has to say
+// which argument it means.
+//
+// No path: the frame that raises is the one that wrote the argument -- a native
+// member pushes no frame of its own, and every argument-binding failure is
+// thrown before the callee's frame exists -- so the path is the one the
+// diagnostic already falls back to. Carrying a copy of it per argument cost an
+// allocation per argument per call, which doubled the count in method_calls and
+// in typed_list.
+RuntimeSite argument_site(const ArgumentNames &names, const std::size_t argument)
+{
+    const SourceLocation location = names.location(argument);
+    return {{}, static_cast<int>(location.line), static_cast<int>(location.column)};
+}
+
 std::size_t read_u16(const Chunk &chunk, std::size_t &ip)
 {
     const std::size_t byte1 = read_byte(chunk, ip);
@@ -60,7 +129,10 @@ Value pop_value(std::vector<Value> &stack)
         throw VmRuntimeError("VM: pile vide");
     }
 
-    Value value = stack.back();
+    // Arithmetic-heavy loops need only the integer payload, not a variant move.
+    Value value = stack.back().is_entier()
+                      ? Value::entier(stack.back().as_entier())
+                      : std::move(stack.back());
     stack.pop_back();
     return value;
 }
@@ -75,7 +147,7 @@ double numeric_value(const Value &value)
     {
         return static_cast<double>(value.as_entier());
     }
-    throw VmRuntimeError("VM: operation arithmetique attend des valeurs numeriques");
+    throw VmRuntimeError("VM: opération arithmétique attend des valeurs numériques");
 }
 
 bool is_truthy(const Value &value)
@@ -93,26 +165,29 @@ bool is_truthy(const Value &value)
 
 bool values_equal(const Value &left, const Value &right)
 {
-    if (left.is_liste_fixe() && right.is_liste_fixe())
-    {
-        const auto left_elements = left.as_liste_fixe();
-        const auto right_elements = right.as_liste_fixe();
-        if (left_elements->elements.size() != right_elements->elements.size())
-        {
-            return false;
-        }
-        for (std::size_t i = 0; i < left_elements->elements.size(); ++i)
-        {
-            if (!values_equal(left_elements->elements[i], right_elements->elements[i]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
     return left == right;
 }
+
+void require_dictionary_key(const Value &key)
+{
+    if (const auto rejection = dictionary_key_rejection(key))
+    {
+        throw VmRuntimeError("VM: " + *rejection);
+    }
+}
+
+using VmType = RuntimeType;
+
+/**
+ * @brief The VM's type cache, and its class-satisfaction check: both moved
+ * to `src/interpreter/runtime/runtime_type.hpp` so the tree walker reads a
+ * type once the same way. `VmType`, `VmTypeTable`, `matches`, `annotate` and
+ * `class_satisfies` are aliases onto the shared `RuntimeType`,
+ * `RuntimeTypeCache`, `matches`, `annotate` and `class_satisfies` -- nothing
+ * below this line changes what any of them do.
+ */
+using VmTypeTable = RuntimeTypeCache;
+
 
 class VmRuntimeServices final : public IRuntime
 {
@@ -126,9 +201,9 @@ public:
         m_callback_executor = std::move(executor);
     }
 
-    [[noreturn]] void raise_runtime_error(const RuntimeSite &, const std::string &message) const override
+    [[noreturn]] void raise_runtime_error(const RuntimeSite &site, const std::string &message) const override
     {
-        throw VmRuntimeError("VM: " + message);
+        throw VmRuntimeError("VM: " + message, site);
     }
 
     bool is_equal(const Value &left, const Value &right) const override
@@ -141,503 +216,107 @@ public:
         return value.to_string();
     }
 
-    void annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &) const override;
+    bool matches_declared_type(const Value &value, std::string_view type_name) const override
+    {
+        return matches(value, types[type_name]);
+    }
 
-    void enforce_list_element(const std::shared_ptr<ListeData> &list,
+    void annotate_value(const Value &value, std::string_view type_name, const RuntimeSite &) const override
+    {
+        if (!annotate(value, types[type_name]))
+            throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
+    }
+
+    void enforce_declared_type(const Value &value,
+                               const std::string &type_name,
+                               const std::string &context) const;
+    void enforce_list_element(const Ref<ListeData> &list,
                               const Value &value,
                               const std::string &context) const;
-    void enforce_fixed_list_element(const std::shared_ptr<ListeFixeData> &list,
-                                    const Value &value,
-                                    const std::string &context) const;
-    void enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
+    void enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                   const Value &key,
                                   const Value &value,
                                   const std::string &context) const;
 
-    [[nodiscard]] std::optional<std::string> list_element_type(const std::shared_ptr<ListeData> &list) const;
-    [[nodiscard]] std::optional<std::string> fixed_list_element_type(const std::shared_ptr<ListeFixeData> &list) const;
-    [[nodiscard]] std::optional<std::pair<std::string, std::string>> dictionary_types(
-        const std::shared_ptr<DictData> &dictionary) const;
+    VmTypeTable types;
 
 private:
     CallbackExecutor m_callback_executor;
-    mutable std::unordered_map<const ListeData *, std::string> m_list_types;
-    mutable std::unordered_map<const ListeFixeData *, std::string> m_fixed_list_types;
-    mutable std::unordered_map<const DictData *, std::pair<std::string, std::string>> m_dictionary_types;
 };
 
-std::vector<std::string_view> split_generic_arguments(const std::string_view specification)
+// The two element checks say the same thing about different containers, so they
+// say it once: refuse a value the contract does not admit, and record the
+// contract on one it does.
+void VmRuntimeServices::enforce_declared_type(const Value &value,
+                                              const std::string &type_name,
+                                              const std::string &context) const
 {
-    std::vector<std::string_view> arguments;
-    std::size_t start = 0;
-    std::size_t depth = 0;
-    for (std::size_t i = 0; i < specification.size(); ++i)
+    const VmType &type = types[type_name];
+    if (!matches(value, type))
     {
-        if (specification[i] == '[')
-        {
-            ++depth;
-        }
-        else if (specification[i] == ']')
-        {
-            --depth;
-        }
-        else if (specification[i] == ',' && depth == 0)
-        {
-            arguments.push_back(specification.substr(start, i - start));
-            start = i + 1;
-        }
+        throw VmRuntimeError("VM: " + messages::type_attendu(context, display_runtime_type(type_name), value.type_name()));
     }
-    arguments.push_back(specification.substr(start));
-    return arguments;
+    if (!annotate(value, type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
-std::string_view trim_type_name(std::string_view name)
-{
-    const std::size_t first = name.find_first_not_of(" \t\r\n");
-    if (first == std::string_view::npos)
-    {
-        return {};
-    }
-    return name.substr(first, name.find_last_not_of(" \t\r\n") - first + 1);
-}
-
-bool matches_type_name(const Value &value, std::string_view full_name)
-{
-    full_name = trim_type_name(full_name);
-    std::size_t depth = 0;
-    for (std::size_t i = 0; i < full_name.size(); ++i)
-    {
-        if (full_name[i] == '[')
-        {
-            ++depth;
-        }
-        else if (full_name[i] == ']')
-        {
-            --depth;
-        }
-        else if (full_name[i] == '|' && depth == 0)
-        {
-            return matches_type_name(value, full_name.substr(0, i)) ||
-                   matches_type_name(value, full_name.substr(i + 1));
-        }
-    }
-
-    const std::size_t generic_start = full_name.find('[');
-    const std::string_view name = full_name.substr(0, generic_start);
-    const std::string_view generic_spec = generic_start == std::string_view::npos
-                                              ? std::string_view{}
-                                              : full_name.substr(generic_start + 1, full_name.size() - generic_start - 2);
-
-    if (name == "Entier")
-    {
-        return value.is_entier();
-    }
-    if (name == "Décimal" || name == "Decimal")
-    {
-        return value.is_decimal() || value.is_entier();
-    }
-    if (name == "Logique")
-    {
-        return value.is_logique();
-    }
-    if (name == "Symbole")
-    {
-        return value.is_symbole();
-    }
-    if (name == "Texte")
-    {
-        return value.is_texte();
-    }
-    if (name == "Rien")
-    {
-        return value.is_rien();
-    }
-    if (name == "Universel")
-    {
-        return true;
-    }
-    if (name == "Résultat")
-    {
-        if (!value.is_resultat())
-        {
-            return false;
-        }
-        if (generic_spec.empty())
-        {
-            return true;
-        }
-        const auto arguments = split_generic_arguments(generic_spec);
-        if (arguments.size() != 2)
-        {
-            return false;
-        }
-        const auto result = value.as_resultat();
-        return matches_type_name(
-            result->payload,
-            arguments[result->success ? 0 : 1]);
-    }
-    if (name == "Classe")
-    {
-        return value.is_classe();
-    }
-    if (name == "Interface")
-    {
-        return value.is_interface();
-    }
-
-    if (value.is_objet())
-    {
-        std::shared_ptr<LumiereClass> klass = value.as_objet()->klass;
-        while (klass != nullptr)
-        {
-            if (klass->name == name || klass->interfaces.contains(std::string(name)))
-            {
-                return true;
-            }
-            klass = klass->parent;
-        }
-    }
-
-    if (name == "Liste")
-    {
-        if (!value.is_liste())
-        {
-            return false;
-        }
-        if (generic_spec.empty())
-        {
-            return true;
-        }
-        const auto arguments = split_generic_arguments(generic_spec);
-        if (arguments.size() != 1)
-        {
-            return false;
-        }
-        for (const Value &element : value.as_liste()->elements)
-        {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    if (name == "ListeFixe")
-    {
-        if (!value.is_liste_fixe())
-        {
-            return false;
-        }
-        if (generic_spec.empty())
-        {
-            return true;
-        }
-        const auto arguments = split_generic_arguments(generic_spec);
-        if (arguments.size() != 2)
-        {
-            return false;
-        }
-        std::size_t expected_length = 0;
-        try
-        {
-            expected_length = static_cast<std::size_t>(std::stoll(std::string(arguments[1])));
-        }
-        catch (...)
-        {
-            return false;
-        }
-        if (value.as_liste_fixe()->elements.size() != expected_length)
-        {
-            return false;
-        }
-        for (const Value &element : value.as_liste_fixe()->elements)
-        {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    if (name == "Dictionnaire")
-    {
-        if (!value.is_dictionnaire())
-        {
-            return false;
-        }
-        if (generic_spec.empty())
-        {
-            return true;
-        }
-        const auto arguments = split_generic_arguments(generic_spec);
-        if (arguments.size() != 2)
-        {
-            return false;
-        }
-        for (const auto &[key, entry_value] : value.as_dictionnaire()->entries)
-        {
-            if (!matches_type_name(key, arguments[0]) || !matches_type_name(entry_value, arguments[1]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    if (name == "Ensemble")
-    {
-        if (!value.is_ensemble())
-        {
-            return false;
-        }
-        if (generic_spec.empty())
-        {
-            return true;
-        }
-        const auto arguments = split_generic_arguments(generic_spec);
-        if (arguments.size() != 1)
-        {
-            return false;
-        }
-        for (const Value &element : value.as_ensemble()->elements)
-        {
-            if (!matches_type_name(element, arguments[0]))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    return false;
-}
-
-std::vector<std::string_view> annotation_arguments(const std::string_view annotation)
-{
-    const std::size_t begin = annotation.find('[');
-    if (begin == std::string_view::npos || annotation.back() != ']')
-    {
-        return {};
-    }
-    return split_generic_arguments(annotation.substr(begin + 1, annotation.size() - begin - 2));
-}
-
-void VmRuntimeServices::annotate_value(const Value &value,
-                                     const std::string_view type_name,
-                                     const RuntimeSite &) const
-{
-    const auto arguments = annotation_arguments(type_name);
-    if (value.is_liste() && arguments.size() == 1)
-    {
-        m_list_types[value.as_liste().get()] = std::string(arguments[0]);
-    }
-    else if (value.is_liste_fixe() && arguments.size() == 2)
-    {
-        m_fixed_list_types[value.as_liste_fixe().get()] = std::string(arguments[0]);
-    }
-    else if (value.is_dictionnaire() && arguments.size() == 2)
-    {
-        m_dictionary_types[value.as_dictionnaire().get()] = {std::string(arguments[0]), std::string(arguments[1])};
-    }
-}
-
-void VmRuntimeServices::enforce_list_element(const std::shared_ptr<ListeData> &list,
+void VmRuntimeServices::enforce_list_element(const Ref<ListeData> &list,
                                            const Value &value,
                                            const std::string &context) const
 {
-    if (const auto type = list_element_type(list); type.has_value() && !matches_type_name(value, *type))
-    {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + *type);
-    }
+    if (list->constraint)
+        enforce_declared_type(value, list->constraint->element_type, context);
 }
 
-void VmRuntimeServices::enforce_fixed_list_element(const std::shared_ptr<ListeFixeData> &list,
-                                                 const Value &value,
-                                                 const std::string &context) const
-{
-    if (const auto type = fixed_list_element_type(list); type.has_value() && !matches_type_name(value, *type))
-    {
-        throw VmRuntimeError("VM: " + context + " attend une valeur " + *type);
-    }
-}
-
-void VmRuntimeServices::enforce_dictionary_entry(const std::shared_ptr<DictData> &dictionary,
+void VmRuntimeServices::enforce_dictionary_entry(const Ref<DictData> &dictionary,
                                                const Value &key,
                                                const Value &value,
                                                const std::string &context) const
 {
-    const auto types = dictionary_types(dictionary);
-    if (!types.has_value())
+    const auto &constraint = dictionary->constraint;
+    if (!constraint)
     {
         return;
     }
-    if (!matches_type_name(key, types->first) || !matches_type_name(value, types->second))
+    const VmType &key_type = types[constraint->key_type];
+    const VmType &value_type = types[constraint->value_type];
+    if (!matches(key, key_type))
     {
-        throw VmRuntimeError("VM: " + context + " attend " + types->first + " -> " + types->second);
+        throw VmRuntimeError("VM: " + messages::type_attendu(context + " (clé)",
+                                                             display_runtime_type(constraint->key_type),
+                                                             key.type_name()));
     }
+    if (!matches(value, value_type))
+    {
+        throw VmRuntimeError("VM: " + messages::type_attendu(context + " (valeur)",
+                                                             display_runtime_type(constraint->value_type),
+                                                             value.type_name()));
+    }
+    if (!annotate(key, key_type) || !annotate(value, value_type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
-std::optional<std::string> VmRuntimeServices::list_element_type(const std::shared_ptr<ListeData> &list) const
+void execute_type_check(std::vector<Value> &stack, const VmType &type)
 {
-    const auto it = m_list_types.find(list.get());
-    return it == m_list_types.end() ? std::nullopt : std::optional<std::string>(it->second);
-}
-
-std::optional<std::string> VmRuntimeServices::fixed_list_element_type(
-    const std::shared_ptr<ListeFixeData> &list) const
-{
-    const auto it = m_fixed_list_types.find(list.get());
-    return it == m_fixed_list_types.end() ? std::nullopt : std::optional<std::string>(it->second);
-}
-
-std::optional<std::pair<std::string, std::string>> VmRuntimeServices::dictionary_types(
-    const std::shared_ptr<DictData> &dictionary) const
-{
-    const auto it = m_dictionary_types.find(dictionary.get());
-    return it == m_dictionary_types.end()
-               ? std::nullopt
-               : std::optional<std::pair<std::string, std::string>>(it->second);
-}
-
-void execute_cast(std::vector<Value> &stack, const std::string &target)
-{
-    const Value operand = pop_value(stack);
-
-    if (target == "Entier")
-    {
-        if (operand.is_entier())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_decimal())
-        {
-            stack.push_back(Value::entier(static_cast<std::int64_t>(operand.as_decimal())));
-        }
-        else if (operand.is_symbole())
-        {
-            stack.push_back(Value::entier(static_cast<std::int64_t>(operand.as_symbole())));
-        }
-        else if (operand.is_texte())
-        {
-            try { stack.push_back(Value::entier(std::stoll(operand.as_texte()))); }
-            catch (...) { throw VmRuntimeError("VM: conversion vers Entier impossible pour une valeur de type Texte"); }
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Entier");
-        }
-        return;
-    }
-
-    if (target == "Décimal" || target == "Decimal")
-    {
-        if (operand.is_decimal())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_entier())
-        {
-            stack.push_back(Value::decimal(static_cast<double>(operand.as_entier())));
-        }
-        else if (operand.is_texte())
-        {
-            try { stack.push_back(Value::decimal(std::stod(operand.as_texte()))); }
-            catch (...) { throw VmRuntimeError("VM: conversion vers Decimal impossible pour une valeur de type Texte"); }
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Decimal");
-        }
-        return;
-    }
-
-    if (target == "Logique")
-    {
-        if (operand.is_logique())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_texte() && operand.as_texte() == "vrai")
-        {
-            stack.push_back(Value::logique(true));
-        }
-        else if (operand.is_texte() && operand.as_texte() == "faux")
-        {
-            stack.push_back(Value::logique(false));
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
-        }
-        return;
-    }
-
-    if (target == "Symbole")
-    {
-        if (operand.is_symbole())
-        {
-            stack.push_back(operand);
-        }
-        else if (operand.is_entier())
-        {
-            const std::int64_t code_point = operand.as_entier();
-            if (code_point < 0 || code_point > 0x10FFFF)
-            {
-                throw VmRuntimeError("VM: conversion vers Symbole impossible: le point de code Unicode est invalide");
-            }
-            stack.push_back(Value::symbole(static_cast<char32_t>(code_point)));
-        }
-        else if (operand.is_texte())
-        {
-            const auto character = utf8::decode_single_character(operand.as_texte());
-            if (!character.has_value())
-            {
-                throw VmRuntimeError("VM: conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
-            }
-            stack.push_back(Value::symbole(*character));
-        }
-        else
-        {
-            throw VmRuntimeError("VM: conversion explicite non prise en charge vers Symbole");
-        }
-        return;
-    }
-
-    if (target == "Texte")
-    {
-        stack.push_back(Value::texte(operand.to_string()));
-        return;
-    }
-    if (target == "Universel")
-    {
-        stack.push_back(operand);
-        return;
-    }
-
-    throw VmRuntimeError("VM: conversion explicite non prise en charge vers le type '" + target + "'");
-}
-
-void execute_type_check(std::vector<Value> &stack, const std::string &type_name)
-{
-    stack.push_back(Value::logique(matches_type_name(pop_value(stack), type_name)));
+    stack.push_back(Value::logique(matches(pop_value(stack), type)));
 }
 
 void execute_type_assertion(std::vector<Value> &stack,
-                            const std::string &type_name,
-                            VmRuntimeServices &runtime)
+                            const VmType &type,
+                            const std::string &context)
 {
     if (stack.empty())
     {
         throw VmRuntimeError("VM: pile vide pendant la verification de type");
     }
-    if (!matches_type_name(stack.back(), type_name))
+    if (!matches(stack.back(), type))
     {
-        throw VmRuntimeError("VM: valeur de type " + stack.back().type_name() +
-                             " incompatible avec " + type_name);
+        throw VmRuntimeError("VM: " + messages::type_attendu(context,
+                                                             display_runtime_type(type.text),
+                                                             stack.back().type_name()));
     }
-    runtime.annotate_value(stack.back(), type_name, {});
+    if (!annotate(stack.back(), type))
+        throw VmRuntimeError("annotation de collection incompatible avec le contrat existant");
 }
 
 void execute_add(std::vector<Value> &stack)
@@ -647,7 +326,7 @@ void execute_add(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() + right.as_entier()));
+        stack.push_back(checked_integer(numeric::add(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -663,7 +342,9 @@ void execute_add(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: addition attend deux valeurs numeriques ou au moins un Texte");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "l'addition", "deux valeurs numériques ou au moins un Texte",
+        left.type_name(), right.type_name()));
 }
 
 void execute_subtract(std::vector<Value> &stack)
@@ -673,7 +354,7 @@ void execute_subtract(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() - right.as_entier()));
+        stack.push_back(checked_integer(numeric::subtract(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -683,7 +364,8 @@ void execute_subtract(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: soustraction attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la soustraction", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_multiply(std::vector<Value> &stack)
@@ -693,7 +375,7 @@ void execute_multiply(std::vector<Value> &stack)
 
     if (left.is_entier() && right.is_entier())
     {
-        stack.push_back(Value::entier(left.as_entier() * right.as_entier()));
+        stack.push_back(checked_integer(numeric::multiply(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -703,7 +385,8 @@ void execute_multiply(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: multiplication attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la multiplication", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_divide(std::vector<Value> &stack)
@@ -715,9 +398,9 @@ void execute_divide(std::vector<Value> &stack)
     {
         if (right.as_entier() == 0)
         {
-            throw VmRuntimeError("VM: division par zero");
+            throw VmRuntimeError("VM: " + messages::division_par_zero());
         }
-        stack.push_back(Value::entier(left.as_entier() / right.as_entier()));
+        stack.push_back(checked_integer(numeric::divide(left.as_entier(), right.as_entier())));
         return;
     }
 
@@ -726,13 +409,14 @@ void execute_divide(std::vector<Value> &stack)
         const double divisor = numeric_value(right);
         if (divisor == 0.0)
         {
-            throw VmRuntimeError("VM: division par zero");
+            throw VmRuntimeError("VM: " + messages::division_par_zero());
         }
         stack.push_back(Value::decimal(numeric_value(left) / divisor));
         return;
     }
 
-    throw VmRuntimeError("VM: division attend deux valeurs numeriques");
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(
+        "la division", "deux valeurs numériques", left.type_name(), right.type_name()));
 }
 
 void execute_modulo(std::vector<Value> &stack)
@@ -741,13 +425,14 @@ void execute_modulo(std::vector<Value> &stack)
     const Value left = pop_value(stack);
     if (!left.is_entier() || !right.is_entier())
     {
-        throw VmRuntimeError("VM: modulo attend deux valeurs de type Entier");
+        throw VmRuntimeError("VM: " + messages::operandes_attendues(
+            "le modulo", "deux valeurs de type Entier", left.type_name(), right.type_name()));
     }
     if (right.as_entier() == 0)
     {
-        throw VmRuntimeError("VM: modulo par zero");
+        throw VmRuntimeError("VM: " + messages::modulo_par_zero());
     }
-    stack.push_back(Value::entier(left.as_entier() % right.as_entier()));
+    stack.push_back(checked_integer(numeric::remainder(left.as_entier(), right.as_entier())));
 }
 
 void execute_negate(std::vector<Value> &stack)
@@ -756,7 +441,7 @@ void execute_negate(std::vector<Value> &stack)
 
     if (operand.is_entier())
     {
-        stack.push_back(Value::entier(-operand.as_entier()));
+        stack.push_back(checked_integer(numeric::negate(operand.as_entier())));
         return;
     }
 
@@ -766,7 +451,7 @@ void execute_negate(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: negation attend une valeur numerique");
+    throw VmRuntimeError("VM: négation attend une valeur numérique");
 }
 
 void execute_not(std::vector<Value> &stack)
@@ -790,7 +475,7 @@ void execute_not_equal(std::vector<Value> &stack)
 }
 
 template <typename Predicate>
-void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, const char *message)
+void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, const char *operation)
 {
     const Value right = pop_value(stack);
     const Value left = pop_value(stack);
@@ -807,7 +492,8 @@ void execute_numeric_compare(std::vector<Value> &stack, Predicate predicate, con
         return;
     }
 
-    throw VmRuntimeError(message);
+    throw VmRuntimeError("VM: " + messages::operandes_attendues(operation, "deux valeurs numériques",
+                                                                left.type_name(), right.type_name()));
 }
 
 void execute_list(std::vector<Value> &stack, const std::size_t length)
@@ -817,13 +503,13 @@ void execute_list(std::vector<Value> &stack, const std::size_t length)
         throw VmRuntimeError("VM: pile insuffisante pour construire une liste");
     }
 
-    auto data = std::make_shared<ListeData>();
+    auto data = make_ref<ListeData>();
     data->elements.reserve(length);
 
     const std::size_t start = stack.size() - length;
     for (std::size_t i = start; i < stack.size(); ++i)
     {
-        data->elements.push_back(stack[i]);
+        data->elements.push_back(std::move(stack[i]));
     }
 
     stack.resize(start);
@@ -838,17 +524,76 @@ void execute_dictionary(std::vector<Value> &stack, const std::size_t entry_count
         throw VmRuntimeError("VM: pile insuffisante pour construire un dictionnaire");
     }
 
-    auto data = std::make_shared<DictData>();
-    data->entries.reserve(entry_count);
+    auto data = make_ref<DictData>();
+    data->reserve(entry_count);
 
     const std::size_t start = stack.size() - value_count;
     for (std::size_t i = start; i < stack.size(); i += 2)
     {
-        data->entries.emplace_back(stack[i], stack[i + 1]);
+        require_dictionary_key(stack[i]);
+        data->set(std::move(stack[i]), std::move(stack[i + 1]));
     }
 
     stack.resize(start);
     stack.push_back(Value::dictionnaire(std::move(data)));
+}
+
+void execute_ensemble(std::vector<Value> &stack, const std::size_t element_count)
+{
+    if (stack.size() < element_count)
+    {
+        throw VmRuntimeError("VM: pile insuffisante pour construire un ensemble");
+    }
+
+    auto data = make_ref<EnsembleData>();
+    data->reserve(element_count);
+
+    const std::size_t start = stack.size() - element_count;
+    for (std::size_t i = start; i < stack.size(); ++i)
+    {
+        require_dictionary_key(stack[i]);
+        data->insert(std::move(stack[i]));
+    }
+
+    stack.resize(start);
+    stack.push_back(Value::ensemble(std::move(data)));
+}
+
+void execute_iteration_snapshot(std::vector<Value> &stack)
+{
+    const Value iterable = pop_value(stack);
+    auto snapshot = make_ref<ListeData>();
+    // Match the tree walker: membership is fixed before the first iteration.
+    if (iterable.is_liste())
+        snapshot->elements = iterable.as_liste()->elements;
+    else if (iterable.is_liste_fixe())
+        snapshot->elements = iterable.as_liste_fixe()->elements;
+    else if (iterable.is_ensemble())
+        snapshot->elements = iterable.as_ensemble()->items();
+    else if (iterable.is_dictionnaire())
+    {
+        // Walking a dictionary walks its keys, matching the tree walker.
+        snapshot->elements.reserve(iterable.as_dictionnaire()->size());
+        for (const auto &entry : iterable.as_dictionnaire()->items())
+            snapshot->elements.push_back(entry.first);
+    }
+    else if (iterable.is_texte())
+    {
+        const auto &text = iterable.as_texte();
+        std::size_t offset = 0;
+        while (offset < text.size())
+        {
+            char32_t character = 0;
+            const auto next = utf8::decode_one(text, offset, character);
+            if (!next)
+                throw VmRuntimeError("VM: texte UTF-8 invalide");
+            snapshot->elements.push_back(Value::symbole(character));
+            offset = *next;
+        }
+    }
+    else
+        throw VmRuntimeError("VM: " + messages::valeur_non_iterable(iterable.type_name()));
+    stack.push_back(Value::liste(std::move(snapshot)));
 }
 
 void execute_sequence_length(std::vector<Value> &stack)
@@ -875,7 +620,7 @@ void execute_sequence_length(std::vector<Value> &stack)
         return;
     }
 
-    throw VmRuntimeError("VM: longueur demandee sur une valeur non iterable");
+    throw VmRuntimeError("VM: longueur demandee sur une valeur non itérable");
 }
 
 void execute_index_get(std::vector<Value> &stack)
@@ -884,59 +629,55 @@ void execute_index_get(std::vector<Value> &stack)
     const Value sequence = pop_value(stack);
     if (sequence.is_dictionnaire())
     {
-        for (const auto &entry : sequence.as_dictionnaire()->entries)
+        if (const DictEntry *entry = sequence.as_dictionnaire()->find(index))
         {
-            if (values_equal(entry.first, index))
-            {
-                stack.push_back(entry.second);
-                return;
-            }
+            stack.push_back(entry->second);
+            return;
         }
-        throw VmRuntimeError("VM: cle introuvable dans le Dictionnaire");
+        throw VmRuntimeError("VM: " + messages::cle_introuvable());
     }
 
     if (!index.is_entier())
     {
-        throw VmRuntimeError("VM: l'index de sequence doit etre un Entier");
+        throw VmRuntimeError("VM: " + messages::indice_non_entier("une séquence"));
     }
 
     const int64_t raw_index = index.as_entier();
-    if (raw_index < 0)
-    {
-        throw VmRuntimeError("VM: indice negatif");
-    }
-    const std::size_t offset = static_cast<std::size_t>(raw_index);
+    const std::size_t offset = raw_index < 0 ? 0 : static_cast<std::size_t>(raw_index);
+    const auto out_of_range = [&](const std::size_t length) {
+        return VmRuntimeError("VM: " + messages::indice_hors_limites(raw_index, length, sequence.type_name()));
+    };
 
     if (sequence.is_liste())
     {
-        if (offset >= sequence.as_liste()->elements.size())
+        if (raw_index < 0 || offset >= sequence.as_liste()->elements.size())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(sequence.as_liste()->elements.size());
         }
         stack.push_back(sequence.as_liste()->elements[offset]);
         return;
     }
     if (sequence.is_liste_fixe())
     {
-        if (offset >= sequence.as_liste_fixe()->elements.size())
+        if (raw_index < 0 || offset >= sequence.as_liste_fixe()->elements.size())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(sequence.as_liste_fixe()->elements.size());
         }
         stack.push_back(sequence.as_liste_fixe()->elements[offset]);
         return;
     }
     if (sequence.is_texte())
     {
-        const auto character = utf8::character_at(sequence.as_texte(), offset);
+        const auto character = raw_index < 0 ? std::nullopt : utf8::character_at(sequence.as_texte(), offset);
         if (!character.has_value())
         {
-            throw VmRuntimeError("VM: indice hors limites");
+            throw out_of_range(utf8::character_count(sequence.as_texte()).value_or(0));
         }
         stack.push_back(Value::symbole(*character));
         return;
     }
 
-    throw VmRuntimeError("VM: indexation demandee sur une valeur non iterable");
+    throw VmRuntimeError("VM: " + messages::acces_indice_impossible(sequence.type_name()));
 }
 
 void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
@@ -949,14 +690,14 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
     {
         if (!index.is_entier())
         {
-            throw VmRuntimeError("VM: l'index de liste doit etre un Entier");
+            throw VmRuntimeError("VM: l'index de liste doit être un Entier");
         }
         const std::int64_t raw_index = index.as_entier();
         if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= object.as_liste()->elements.size())
         {
             throw VmRuntimeError("VM: index de liste hors limites");
         }
-        runtime.enforce_list_element(object.as_liste(), value, "l'affectation de liste");
+        runtime.enforce_list_element(object.as_liste(), value, "Liste.ajouter");
         object.as_liste()->elements[static_cast<std::size_t>(raw_index)] = value;
         stack.push_back(value);
         return;
@@ -964,115 +705,26 @@ void execute_index_set(std::vector<Value> &stack, VmRuntimeServices &runtime)
 
     if (object.is_liste_fixe())
     {
-        if (!index.is_entier())
-        {
-            throw VmRuntimeError("VM: l'index de liste fixe doit etre un Entier");
-        }
-        const std::int64_t raw_index = index.as_entier();
-        if (raw_index < 0 || static_cast<std::size_t>(raw_index) >= object.as_liste_fixe()->elements.size())
-        {
-            throw VmRuntimeError("VM: index de liste fixe hors limites");
-        }
-        runtime.enforce_fixed_list_element(object.as_liste_fixe(), value, "l'affectation de liste fixe");
-        object.as_liste_fixe()->elements[static_cast<std::size_t>(raw_index)] = value;
-        stack.push_back(value);
-        return;
+        throw VmRuntimeError("VM: " + messages::liste_fixe_immuable());
     }
 
     if (object.is_dictionnaire())
     {
         auto dictionary = object.as_dictionnaire();
-        runtime.enforce_dictionary_entry(dictionary, index, value, "l'affectation de dictionnaire");
-        for (auto &entry : dictionary->entries)
-        {
-            if (values_equal(entry.first, index))
-            {
-                entry.second = value;
-                stack.push_back(value);
-                return;
-            }
-        }
-        dictionary->entries.emplace_back(index, value);
+        runtime.enforce_dictionary_entry(dictionary, index, value, "l'entrée du dictionnaire");
+        require_dictionary_key(index);
+        dictionary->set(index, value);
         stack.push_back(value);
         return;
     }
 
-    throw VmRuntimeError("VM: affectation par indice impossible pour ce type");
+    throw VmRuntimeError("VM: " + messages::affectation_indice_impossible(object.type_name()));
 }
 
-void require_member_arity(const std::string &signature,
-                          const std::vector<Value> &args,
-                          const std::size_t expected)
-{
-    if (args.size() != expected)
-    {
-        throw VmRuntimeError("VM: " + signature + " attend " + std::to_string(expected) + " argument(s)");
-    }
-}
-
-std::int64_t member_integer(const Value &value, const std::string &signature)
-{
-    if (!value.is_entier())
-    {
-        throw VmRuntimeError("VM: " + signature + " attend un Entier");
-    }
-    return value.as_entier();
-}
-
-std::string member_text(const Value &value, const std::string &signature)
-{
-    if (!value.is_texte())
-    {
-        throw VmRuntimeError("VM: " + signature + " attend un Texte");
-    }
-    return value.as_texte();
-}
-
-Value execute_sequence_member(const std::vector<Value> &elements,
-                              const std::string &family,
-                              const std::string &member,
-                              const std::vector<Value> &args)
-{
-    if (member == "taille")
-    {
-        require_member_arity(family + ".taille", args, 0);
-        return Value::entier(static_cast<std::int64_t>(elements.size()));
-    }
-    if (member == "vide")
-    {
-        require_member_arity(family + ".vide", args, 0);
-        return Value::logique(elements.empty());
-    }
-    if (member == "contient")
-    {
-        require_member_arity(family + ".contient", args, 1);
-        for (const Value &element : elements)
-        {
-            if (values_equal(element, args[0]))
-            {
-                return Value::logique(true);
-            }
-        }
-        return Value::logique(false);
-    }
-    if (member == "joindre")
-    {
-        require_member_arity(family + ".joindre", args, 1);
-        const std::string separator = member_text(args[0], family + ".joindre");
-        std::string result;
-        for (std::size_t i = 0; i < elements.size(); ++i)
-        {
-            if (i > 0)
-            {
-                result += separator;
-            }
-            result += elements[i].to_string();
-        }
-        return Value::texte(std::move(result));
-    }
-    return Value::rien();
-}
-
+// These take a view rather than a string because every caller hands them a
+// literal or a name the module already owns. Binding a literal to a
+// `const std::string &` builds a string, and `valeurs.ajouter(index)` did that
+// twice per call on a path whose whole job is to push one value.
 Value execute_member_call(const Value &receiver,
                           const std::string &member,
                           const std::vector<RuntimeArgument> &runtime_args,
@@ -1083,183 +735,39 @@ Value execute_member_call(const Value &receiver,
     {
         return execute_texte_member(runtime, receiver, member, runtime_args, site);
     }
-
-    std::vector<Value> args;
-    args.reserve(runtime_args.size());
-    for (const RuntimeArgument &argument : runtime_args)
+    if (std::optional<Value> result = call_builtin_member(runtime, receiver, member, runtime_args, site))
     {
-        if (!argument.name.empty())
-        {
-            throw VmRuntimeError("VM: " + receiver.type_name() + "." + member +
-                                 " n'accepte pas d'arguments nommes");
-        }
-        args.push_back(argument.value);
+        return std::move(*result);
     }
-
-    if (receiver.is_liste())
-    {
-        auto list = receiver.as_liste();
-        const Value common = execute_sequence_member(list->elements, "Liste", member, args);
-        if (!common.is_rien())
-        {
-            return common;
-        }
-        if (member == "ajouter")
-        {
-            require_member_arity("Liste.ajouter", args, 1);
-            runtime.enforce_list_element(list, args[0], "Liste.ajouter");
-            list->elements.push_back(args[0]);
-            return Value::entier(static_cast<std::int64_t>(list->elements.size()));
-        }
-        if (member == "inserer")
-        {
-            require_member_arity("Liste.inserer", args, 2);
-            const std::int64_t position = member_integer(args[0], "Liste.inserer");
-            if (position < 0 || static_cast<std::size_t>(position) > list->elements.size())
-            {
-                throw VmRuntimeError("VM: indice d'insertion hors limites");
-            }
-            runtime.enforce_list_element(list, args[1], "Liste.inserer");
-            list->elements.insert(list->elements.begin() + position, args[1]);
-            return Value::entier(position);
-        }
-        if (member == "retirer_a")
-        {
-            require_member_arity("Liste.retirer_a", args, 1);
-            const std::int64_t position = member_integer(args[0], "Liste.retirer_a");
-            if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
-            {
-                throw VmRuntimeError("VM: indice hors limites");
-            }
-            Value removed = list->elements[static_cast<std::size_t>(position)];
-            list->elements.erase(list->elements.begin() + position);
-            return removed;
-        }
-        if (member == "en_liste_fixe")
-        {
-            require_member_arity("Liste.en_liste_fixe", args, 1);
-            const std::int64_t length = member_integer(args[0], "Liste.en_liste_fixe");
-            if (length < 0 || static_cast<std::size_t>(length) != list->elements.size())
-            {
-                throw VmRuntimeError("VM: Liste.en_liste_fixe requiert une liste de taille exacte");
-            }
-            auto fixed = std::make_shared<ListeFixeData>();
-            fixed->elements = list->elements;
-            Value result = Value::liste_fixe(std::move(fixed));
-            if (const auto type = runtime.list_element_type(list); type.has_value())
-            {
-                runtime.annotate_value(result,
-                                       "ListeFixe[" + *type + "," + std::to_string(length) + "]",
-                                       site);
-            }
-            return result;
-        }
-    }
-
-    if (receiver.is_liste_fixe())
-    {
-        auto list = receiver.as_liste_fixe();
-        const Value common = execute_sequence_member(list->elements, "ListeFixe", member, args);
-        if (!common.is_rien())
-        {
-            return common;
-        }
-        if (member == "en_liste")
-        {
-            require_member_arity("ListeFixe.en_liste", args, 0);
-            auto dynamic = std::make_shared<ListeData>();
-            dynamic->elements = list->elements;
-            Value result = Value::liste(std::move(dynamic));
-            if (const auto type = runtime.fixed_list_element_type(list); type.has_value())
-            {
-                runtime.annotate_value(result, "Liste[" + *type + "]", site);
-            }
-            return result;
-        }
-    }
-
-    if (receiver.is_dictionnaire())
-    {
-        auto dictionary = receiver.as_dictionnaire();
-        if (member == "taille")
-        {
-            require_member_arity("Dictionnaire.taille", args, 0);
-            return Value::entier(static_cast<std::int64_t>(dictionary->entries.size()));
-        }
-        if (member == "vide")
-        {
-            require_member_arity("Dictionnaire.vide", args, 0);
-            return Value::logique(dictionary->entries.empty());
-        }
-        if (member == "contient")
-        {
-            require_member_arity("Dictionnaire.contient", args, 1);
-            for (const auto &entry : dictionary->entries)
-            {
-                if (values_equal(entry.first, args[0]))
-                {
-                    return Value::logique(true);
-                }
-            }
-            return Value::logique(false);
-        }
-        if (member == "cles" || member == "valeurs")
-        {
-            require_member_arity("Dictionnaire." + member, args, 0);
-            auto result = std::make_shared<ListeData>();
-            for (const auto &entry : dictionary->entries)
-            {
-                result->elements.push_back(member == "cles" ? entry.first : entry.second);
-            }
-            Value list_result = Value::liste(std::move(result));
-            if (const auto types = runtime.dictionary_types(dictionary); types.has_value())
-            {
-                runtime.annotate_value(list_result,
-                                       "Liste[" + (member == "cles" ? types->first : types->second) + "]",
-                                       site);
-            }
-            return list_result;
-        }
-        if (member == "paires")
-        {
-            require_member_arity("Dictionnaire.paires", args, 0);
-            auto pairs = std::make_shared<ListeData>();
-            for (const auto &entry : dictionary->entries)
-            {
-                auto pair = std::make_shared<ListeFixeData>();
-                pair->elements = {entry.first, entry.second};
-                pairs->elements.push_back(Value::liste_fixe(std::move(pair)));
-            }
-            return Value::liste(std::move(pairs));
-        }
-        if (member == "retirer")
-        {
-            require_member_arity("Dictionnaire.retirer", args, 1);
-            for (auto it = dictionary->entries.begin(); it != dictionary->entries.end(); ++it)
-            {
-                if (values_equal(it->first, args[0]))
-                {
-                    Value removed = it->second;
-                    dictionary->entries.erase(it);
-                    return removed;
-                }
-            }
-            throw VmRuntimeError("VM: cle introuvable dans le dictionnaire");
-        }
-    }
-
-    throw VmRuntimeError("VM: membre introuvable '" + member + "' pour " + receiver.type_name());
+    throw VmRuntimeError("VM: " + messages::membre_introuvable(member, receiver.type_name()));
 }
 
 Value VmRuntimeServices::call(Value callee, const NativeArgs &args)
 {
     if (!callee.is_fonction())
     {
-        throw VmRuntimeError("VM: la valeur n'est pas appelable");
+        throw VmRuntimeError("VM: " + messages::valeur_non_appelable(callee.type_name()));
     }
-    if (callee.as_fonction()->is_native())
+    if (callee.as_fonction_ptr()->is_native())
     {
-        return callee.as_fonction()->native_handler(*this, args);
+        // A native handler runs arbitrary C++ (allocating a buffer sized by
+        // caller-controlled input, for instance) with no bound this call site
+        // can see. Left uncaught, std::bad_alloc/std::length_error would
+        // unwind straight past every Lumiere-level error handling construct
+        // as a raw C++ exception and terminate the process instead of
+        // producing a normal, reportable runtime error.
+        try
+        {
+            return callee.as_fonction_ptr()->native_handler(*this, args);
+        }
+        catch (const std::bad_alloc &)
+        {
+            throw VmRuntimeError(messages::memoire_insuffisante(), args.site);
+        }
+        catch (const std::length_error &)
+        {
+            throw VmRuntimeError(messages::taille_hors_limites(), args.site);
+        }
     }
     if (!m_callback_executor)
     {
@@ -1272,7 +780,7 @@ Value make_bound_member(Value receiver,
                         std::string member,
                         VmRuntimeServices &runtime)
 {
-    auto function = std::make_shared<LumiereFunction>();
+    auto function = make_ref<LumiereFunction>();
     function->name = member;
     function->receiver = std::move(receiver);
     function->min_arity = 0;
@@ -1292,41 +800,242 @@ Value make_bound_member(Value receiver,
     return Value::fonction(std::move(function));
 }
 
+struct LocalSlot
+{
+    Value value = Value::rien();
+    CellRef cell;
+
+    Value &get() { return cell ? cell->value : value; }
+
+    CellRef capture()
+    {
+        // Only escaping locals need stable, shared storage. All readers and
+        // writers use the same cell after its first capture.
+        if (!cell)
+            cell = make_ref<CellData>(std::move(value));
+        return cell;
+    }
+};
+
 struct CallFrame
 {
     const FunctionBytecode *function = nullptr;
     std::size_t ip = 0;
     std::size_t stack_base = 0;
-    std::vector<std::shared_ptr<Value>> locals;
-    std::vector<std::shared_ptr<Value>> captures;
+    std::vector<LocalSlot> locals;
+    std::vector<CellRef> captures;
     SourceLocation call_site {};
+
+    CellRef capture(bool from_capture, std::size_t index)
+    {
+        if (index >= (from_capture ? captures.size() : locals.size()))
+            throw VmRuntimeError("VM: source de capture invalide");
+        return from_capture ? captures[index] : locals[index].capture();
+    }
 };
+
+/**
+ * @brief Active call frames plus storage retained for the next call at a depth.
+ *
+ * A push may grow m_frames and invalidate every CallFrame reference. The
+ * dispatch loop therefore pushes only as its final action before `break`; it
+ * never reads its `frame` reference after a push.
+ */
+class FrameStack
+{
+public:
+    CallFrame &push()
+    {
+        if (m_depth == m_frames.size())
+        {
+            m_frames.emplace_back();
+        }
+        ++m_depth;
+        m_top = m_frames.data() + (m_depth - 1);
+        return *m_top;
+    }
+
+    void pop()
+    {
+        assert(m_depth != 0);
+        CallFrame &frame = m_frames[--m_depth];
+        frame.locals.clear();
+        frame.captures.clear();
+        frame.function = nullptr;
+        m_top = m_depth != 0 ? m_frames.data() + (m_depth - 1) : nullptr;
+    }
+
+    // The dispatch loop asks for this once per *instruction*, not once per
+    // call, so it is kept as a pointer rather than computed from the depth: a
+    // frame is 88 bytes, so indexing needs a multiply, and paying for one on
+    // every instruction was worth 4.5% of the integer loop.
+    CallFrame &back()
+    {
+        assert(m_top != nullptr);
+        return *m_top;
+    }
+
+    const CallFrame &back() const
+    {
+        assert(m_top != nullptr);
+        return *m_top;
+    }
+
+    [[nodiscard]] bool empty() const { return m_depth == 0; }
+    [[nodiscard]] std::size_t size() const { return m_depth; }
+
+    const CallFrame &operator[](const std::size_t index) const
+    {
+        assert(index < m_depth);
+        return m_frames[index];
+    }
+
+private:
+    std::vector<CallFrame> m_frames;
+    std::size_t m_depth = 0;
+    CallFrame *m_top = nullptr;
+};
+
+/**
+ * @brief A field, with its declared type already read.
+ *
+ * The type is read when the field is first resolved, for the same reason
+ * annotations are read once: assigning to `total: Entier` used to re-read the
+ * word "Entier" every time. It points into the run's type table, whose entries
+ * stay where they are for the whole run, and a class caches it only for the run
+ * that made the class. Null for a field declared without a type.
+ */
+struct ResolvedField
+{
+    const VmFieldDescriptor *descriptor = nullptr;
+    const VmType *type = nullptr;
+};
+
+ResolvedField resolved_field(const VmFieldDescriptor *descriptor, const VmTypeTable &types)
+{
+    return {descriptor,
+            descriptor != nullptr && !descriptor->type.empty() ? &types[descriptor->type] : nullptr};
+}
+
+/**
+ * @brief Whether this frame is a method running on that very object.
+ *
+ * What "privé" means: the member is reachable from the object's own methods and
+ * nowhere else. A frame qualifies when it is a method -- the compiler names a
+ * method `Classe.methode`, which is the only name with a dot in it -- and its
+ * receiver, which always occupies slot zero, is the same object.
+ */
+bool accesses_own_object(CallFrame &frame, const Value &receiver)
+{
+    return !frame.locals.empty() &&
+           frame.function->name.find('.') != std::string::npos &&
+           frame.locals[0].get().is_objet() &&
+           frame.locals[0].get().as_objet_ptr() == receiver.as_objet_ptr();
+}
 
 struct VmClosureBody final : RuntimeFunctionBody
 {
     std::size_t function_index = 0;
-    std::vector<std::shared_ptr<Value>> captures;
+    std::vector<CellRef> captures;
+
+    VmClosureBody() { origin = BodyOrigin::Vm; }
+
+    void trace_references(RefVisitor &visitor) const override
+    {
+        for (const CellRef &cell : captures)
+        {
+            if (cell)
+            {
+                visitor.visit(cell.get());
+            }
+        }
+    }
+
+    void clear_references() override { captures.clear(); }
 };
 
 struct VmClassBody final : RuntimeClassBody
 {
     std::size_t descriptor_index = 0;
-    std::unordered_map<std::size_t, std::vector<std::shared_ptr<Value>>> method_captures;
+    std::unordered_map<std::size_t, std::vector<CellRef>> method_captures;
+
+    // What a member index resolves to in this class and its ancestors, worked
+    // out the first time it is asked. Resolving walks the chain comparing
+    // names, and that happened on every field access and every method call --
+    // six million string walks for two million calls. The answer cannot change:
+    // a class's parent is fixed when the class is made.
+    mutable std::vector<std::optional<ResolvedField>> fields_by_member;
+    // The fields a constructor fills, the ancestors' first. The same for every
+    // instance, and it was being collected, allocated and freed for each one.
+    mutable std::optional<std::vector<ResolvedField>> constructor_fields;
+    mutable std::vector<std::optional<const VmMethodDescriptor *>> methods_by_member;
+
+    VmClassBody() { origin = BodyOrigin::Vm; }
+
+    void trace_references(RefVisitor &visitor) const override
+    {
+        for (const auto &[index, cells] : method_captures)
+        {
+            for (const CellRef &cell : cells)
+            {
+                if (cell)
+                {
+                    visitor.visit(cell.get());
+                }
+            }
+        }
+    }
+
+    void clear_references() override { method_captures.clear(); }
 };
 
 struct VmInterfaceBody final : RuntimeInterfaceBody
 {
     std::size_t descriptor_index = 0;
+
+    VmInterfaceBody() { origin = BodyOrigin::Vm; }
+
+    void trace_references(RefVisitor &) const override {}
+    void clear_references() override {}
 };
 
+// A body the VM made, or nullptr. The tag says which engine made it, and each
+// engine defines exactly one body of each kind, so the tag identifies the type.
+// The assert is what keeps that claim honest: it runs in the Debug and
+// sanitizer builds, where the whole suite runs.
+const VmClassBody *vm_class_body(const RuntimeClassBody *body)
+{
+    if (body == nullptr || body->origin != BodyOrigin::Vm)
+    {
+        return nullptr;
+    }
+    assert(dynamic_cast<const VmClassBody *>(body) != nullptr);
+    return static_cast<const VmClassBody *>(body);
+}
+
+const VmClosureBody *vm_closure_body(const RuntimeFunctionBody *body)
+{
+    if (body == nullptr || body->origin != BodyOrigin::Vm)
+    {
+        return nullptr;
+    }
+    assert(dynamic_cast<const VmClosureBody *>(body) != nullptr);
+    return static_cast<const VmClosureBody *>(body);
+}
+
+// These walk a class and its ancestors to answer a question. They take a raw
+// pointer and step with `klass->parent.get()`, because taking a Ref for each
+// link would be an increment and a decrement per ancestor per lookup, and a
+// lookup happens on every member access. The chain is owned by the value that
+// asked, and cannot go away while the answer is being computed.
 const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
-                                          const std::shared_ptr<LumiereClass> &klass)
+                                          const LumiereClass *klass)
 {
     if (klass == nullptr)
     {
         return nullptr;
     }
-    const auto body = std::dynamic_pointer_cast<VmClassBody>(klass->body);
+    const VmClassBody *body = vm_class_body(klass->body.get());
     if (body == nullptr || body->descriptor_index >= module.classes.size())
     {
         return nullptr;
@@ -1335,7 +1044,7 @@ const VmClassDescriptor *class_descriptor(const ModuleBytecode &module,
 }
 
 const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
-                                         std::shared_ptr<LumiereClass> klass,
+                                         const LumiereClass *klass,
                                          const std::string &name)
 {
     while (klass != nullptr)
@@ -1352,13 +1061,13 @@ const VmMethodDescriptor *find_vm_method(const ModuleBytecode &module,
                 return &method;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
     return nullptr;
 }
 
 const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
-                                       std::shared_ptr<LumiereClass> klass,
+                                       const LumiereClass *klass,
                                        const std::string &name)
 {
     while (klass != nullptr)
@@ -1375,39 +1084,101 @@ const VmFieldDescriptor *find_vm_field(const ModuleBytecode &module,
                 return &field;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
     return nullptr;
 }
 
-std::vector<std::shared_ptr<Value>> find_vm_method_captures(std::shared_ptr<LumiereClass> klass,
-                                                            const std::size_t function_index)
+// Returns the captures in place rather than a copy: most methods capture
+// nothing, and the caller copies only when it is building a frame.
+const std::vector<CellRef> *find_vm_method_captures(const LumiereClass *klass,
+                                                    const std::size_t function_index)
 {
     while (klass != nullptr)
     {
-        const auto body = std::dynamic_pointer_cast<VmClassBody>(klass->body);
+        const VmClassBody *body = vm_class_body(klass->body.get());
         if (body != nullptr)
         {
             const auto captures = body->method_captures.find(function_index);
             if (captures != body->method_captures.end())
             {
-                return captures->second;
+                return &captures->second;
             }
         }
-        klass = klass->parent;
+        klass = klass->parent.get();
     }
-    return {};
+    return nullptr;
+}
+
+// The cached forms of the two walks above. A class with no VM body -- one the
+// tree walker made, reached through a shared value -- falls back to the walk.
+ResolvedField resolve_field(const ModuleBytecode &module,
+                            const VmTypeTable &types,
+                            const LumiereClass *klass,
+                            const std::size_t member_index)
+{
+    const auto look_up = [&types](const ModuleBytecode &in_module,
+                                  const LumiereClass *in_klass,
+                                  const std::string &name) {
+        return resolved_field(find_vm_field(in_module, in_klass, name), types);
+    };
+    const VmClassBody *body = klass != nullptr ? vm_class_body(klass->body.get()) : nullptr;
+    if (body == nullptr)
+    {
+        return look_up(module, klass, module.members[member_index]);
+    }
+    auto &cache = body->fields_by_member;
+    if (cache.size() != module.members.size())
+    {
+        cache.assign(module.members.size(), std::nullopt);
+    }
+    std::optional<ResolvedField> &slot = cache[member_index];
+    if (!slot.has_value())
+    {
+        slot = look_up(module, klass, module.members[member_index]);
+    }
+    return *slot;
+}
+
+const VmMethodDescriptor *resolve_method(const ModuleBytecode &module,
+                                         const LumiereClass *klass,
+                                         const std::size_t member_index)
+{
+    const VmClassBody *body = klass != nullptr ? vm_class_body(klass->body.get()) : nullptr;
+    if (body == nullptr)
+    {
+        return find_vm_method(module, klass, module.members[member_index]);
+    }
+    auto &cache = body->methods_by_member;
+    if (cache.size() != module.members.size())
+    {
+        cache.assign(module.members.size(), std::nullopt);
+    }
+    std::optional<const VmMethodDescriptor *> &slot = cache[member_index];
+    if (!slot.has_value())
+    {
+        slot = find_vm_method(module, klass, module.members[member_index]);
+    }
+    return *slot;
+}
+
+std::vector<CellRef> vm_method_captures(const LumiereClass *klass,
+                                        const std::size_t function_index)
+{
+    const std::vector<CellRef> *captures = find_vm_method_captures(klass, function_index);
+    return captures != nullptr ? *captures : std::vector<CellRef>{};
 }
 
 void collect_vm_fields(const ModuleBytecode &module,
-                       const std::shared_ptr<LumiereClass> &klass,
-                       std::vector<const VmFieldDescriptor *> &fields)
+                       const VmTypeTable &types,
+                       const LumiereClass *klass,
+                       std::vector<ResolvedField> &fields)
 {
     if (klass == nullptr)
     {
         return;
     }
-    collect_vm_fields(module, klass->parent, fields);
+    collect_vm_fields(module, types, klass->parent.get(), fields);
     const VmClassDescriptor *descriptor = class_descriptor(module, klass);
     if (descriptor == nullptr)
     {
@@ -1415,21 +1186,31 @@ void collect_vm_fields(const ModuleBytecode &module,
     }
     for (const VmFieldDescriptor &field : descriptor->fields)
     {
-        fields.push_back(&field);
+        fields.push_back(resolved_field(&field, types));
     }
 }
 
 Value instantiate_vm_class(const ModuleBytecode &module,
-                           const std::shared_ptr<LumiereClass> &klass,
+                           const VmTypeTable &types,
+                           const Ref<LumiereClass> &klass,
                            const std::vector<RuntimeArgument> &arguments)
 {
-    std::vector<const VmFieldDescriptor *> fields;
-    collect_vm_fields(module, klass, fields);
+    const VmClassBody *body = vm_class_body(klass->body.get());
+    std::vector<ResolvedField> uncached;
+    if (body == nullptr)
+    {
+        collect_vm_fields(module, types, klass.get(), uncached);
+    }
+    else if (!body->constructor_fields)
+    {
+        collect_vm_fields(module, types, klass.get(), body->constructor_fields.emplace());
+    }
+    const std::vector<ResolvedField> &fields = body != nullptr ? *body->constructor_fields : uncached;
     if (arguments.size() > fields.size())
     {
         throw VmRuntimeError("VM: trop d'arguments pour construire '" + klass->name + "'");
     }
-    auto object = std::make_shared<LumiereObject>();
+    auto object = make_ref<LumiereObject>();
     object->klass = klass;
     std::unordered_map<std::string, Value> assigned;
     std::size_t positional = 0;
@@ -1438,7 +1219,7 @@ Value instantiate_vm_class(const ModuleBytecode &module,
         std::string name = argument.name;
         if (name.empty())
         {
-            while (positional < fields.size() && assigned.contains(fields[positional]->name))
+            while (positional < fields.size() && assigned.contains(fields[positional].descriptor->name))
             {
                 ++positional;
             }
@@ -1446,14 +1227,14 @@ Value instantiate_vm_class(const ModuleBytecode &module,
             {
                 throw VmRuntimeError("VM: trop d'arguments pour construire '" + klass->name + "'");
             }
-            name = fields[positional++]->name;
+            name = fields[positional++].descriptor->name;
         }
         if (assigned.contains(name))
         {
             throw VmRuntimeError("VM: champ fourni plusieurs fois: " + name);
         }
-        const auto field = std::find_if(fields.begin(), fields.end(), [&](const VmFieldDescriptor *candidate) {
-            return candidate->name == name;
+        const auto field = std::find_if(fields.begin(), fields.end(), [&](const ResolvedField &candidate) {
+            return candidate.descriptor->name == name;
         });
         if (field == fields.end())
         {
@@ -1461,25 +1242,25 @@ Value instantiate_vm_class(const ModuleBytecode &module,
         }
         assigned.emplace(name, argument.value);
     }
-    for (const VmFieldDescriptor *field : fields)
+    for (const auto &[field, type] : fields)
     {
         const auto value_it = assigned.find(field->name);
         const Value value = value_it == assigned.end() ? Value::rien() : value_it->second;
-        if (!field->type.empty() && !matches_type_name(value, field->type))
+        if (type != nullptr && !matches(value, *type))
         {
-            throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + field->type);
+            throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
         }
         object->fields[field->name] = value;
     }
     return Value::objet(std::move(object));
 }
 
-CallFrame make_call_frame(const ModuleBytecode &module,
-                          const std::size_t function_index,
-                          const std::vector<Value> &args,
-                          const std::size_t stack_base,
-                          std::vector<std::shared_ptr<Value>> captures = {},
-                          const SourceLocation call_site = {})
+CallFrame &push_empty_call_frame(FrameStack &frames,
+                                 const ModuleBytecode &module,
+                                 const std::size_t function_index,
+                                 const std::size_t stack_base,
+                                 std::vector<CellRef> captures,
+                                 const SourceLocation call_site)
 {
     if (function_index >= module.functions.size())
     {
@@ -1487,65 +1268,253 @@ CallFrame make_call_frame(const ModuleBytecode &module,
     }
 
     const FunctionBytecode &function = module.functions[function_index];
-    if (args.size() != function.arity)
-    {
-        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
-    }
     if (captures.size() != function.capture_count)
     {
         throw VmRuntimeError("VM: nombre de captures invalide pour '" + function.name + "'");
     }
 
-    CallFrame frame;
+    CallFrame &frame = frames.push();
     frame.function = &function;
+    frame.ip = 0;
     frame.stack_base = stack_base;
-    frame.locals.reserve(function.local_slot_count);
-    for (std::size_t i = 0; i < function.local_slot_count; ++i)
-    {
-        frame.locals.push_back(std::make_shared<Value>(Value::rien()));
-    }
-    frame.captures = std::move(captures);
+    frame.locals.resize(function.local_slot_count);
+    frame.captures.assign(std::make_move_iterator(captures.begin()),
+                          std::make_move_iterator(captures.end()));
     frame.call_site = call_site;
-    for (std::size_t i = 0; i < args.size(); ++i)
-    {
-        *frame.locals[i] = args[i];
-    }
     return frame;
 }
 
-std::vector<Value> normalize_closure_arguments(const FunctionBytecode &function,
-                                               const std::vector<RuntimeArgument> &args)
+void push_call_frame(FrameStack &frames,
+                     const ModuleBytecode &module,
+                     const std::size_t function_index,
+                     std::vector<Value> args,
+                     const std::size_t stack_base,
+                     std::vector<CellRef> captures = {},
+                     const SourceLocation call_site = {})
 {
-    if (args.size() > function.source_arity)
+    if (function_index >= module.functions.size())
     {
-        throw VmRuntimeError("VM: trop d'arguments pour '" + function.name + "'");
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
+    if (args.size() != function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
     }
 
-    std::vector<Value> normalized;
-    normalized.reserve(function.arity);
-    for (std::size_t i = 0; i < function.source_arity; ++i)
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
+    for (std::size_t i = 0; i < args.size(); ++i)
     {
-        if (i < args.size())
+        frame.locals[i].get() = std::move(args[i]);
+    }
+}
+
+void push_call_frame(FrameStack &frames,
+                     const ModuleBytecode &module,
+                     const std::size_t function_index,
+                     std::vector<RuntimeArgument> &args,
+                     const std::size_t stack_base,
+                     std::vector<CellRef> captures = {},
+                     const SourceLocation call_site = {})
+{
+    if (function_index >= module.functions.size())
+    {
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
+    if (args.size() != function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
+    }
+
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
+    for (std::size_t i = 0; i < args.size(); ++i)
+    {
+        frame.locals[i].get() = std::move(args[i].value);
+    }
+}
+
+// A parameter is named in diagnostics; bytecode that arrived without the name
+// table still has to say something, so fall back to its position.
+std::string parameter_label(const FunctionBytecode &function, const std::size_t index)
+{
+    return index < function.parameter_names.size() ? function.parameter_names[index]
+                                                   : std::to_string(index + 1);
+}
+
+// No argument fills this parameter. Any value at or past the argument count
+// says the same thing, which lets one bounds test serve both binding rules.
+constexpr std::size_t no_argument = static_cast<std::size_t>(-1);
+
+/**
+ * @brief Resolves a call that names at least one of its arguments.
+ *
+ * Returns, for each parameter, the index of the argument that fills it, or
+ * `no_argument`. The rule is the tree walker's: a named argument goes to the
+ * parameter it names, a positional one to the next parameter still unbound.
+ */
+std::vector<std::size_t> bind_named_arguments(const FunctionBytecode &function,
+                                              const std::vector<RuntimeArgument> &args)
+{
+    const std::size_t count = function.source_arity;
+    std::vector<std::size_t> sources(count, no_argument);
+    std::size_t next_positional = 0;
+
+    for (std::size_t i = 0; i < args.size(); ++i)
+    {
+        std::size_t target = count;
+        if (!args[i].name.empty())
         {
-            normalized.push_back(args[i].value);
+            for (std::size_t parameter = 0; parameter < count; ++parameter)
+            {
+                if (parameter_label(function, parameter) == args[i].name)
+                {
+                    target = parameter;
+                    break;
+                }
+            }
+            if (target == count)
+            {
+                throw VmRuntimeError("aucun paramètre nommé '" + args[i].name + "'", args[i].site);
+            }
         }
         else
         {
-            if (i >= function.optional_params.size() || !function.optional_params[i])
+            while (next_positional < count && sources[next_positional] != no_argument)
             {
-                throw VmRuntimeError("VM: argument manquant pour '" + function.name + "'");
+                ++next_positional;
             }
-            normalized.push_back(Value::rien());
+            if (next_positional == count)
+            {
+                throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction", args[i].site);
+            }
+            target = next_positional++;
+        }
+
+        if (sources[target] != no_argument)
+        {
+            throw VmRuntimeError("le paramètre '" + parameter_label(function, target) +
+                                     "' est fourni plusieurs fois",
+                                 args[i].site);
+        }
+        sources[target] = i;
+    }
+    return sources;
+}
+
+/**
+ * @brief Lays a call's arguments out the way the callee's frame expects them.
+ *
+ * The VM used to bind purely by position, so `f(b: 1, a: 10)` computed `1 - 10`
+ * whenever the callee was not known at compile time -- a call through a
+ * variable, or any method call. The names travel in the bytecode; nothing read
+ * them. The analyzer accepts such a program, so the wrong answer was silent.
+ *
+ * Writes the layout the compiler's prologue expects directly into a new call
+ * frame: an optional receiver, the `source_arity` values, then one Logique per
+ * optional parameter saying whether the caller supplied it.
+ */
+void normalize_closure_arguments(FrameStack &frames,
+                                 const ModuleBytecode &module,
+                                 const std::size_t function_index,
+                                 std::vector<RuntimeArgument> &args,
+                                 const std::size_t stack_base,
+                                 std::vector<CellRef> captures,
+                                 const SourceLocation call_site,
+                                 const Value *receiver = nullptr)
+{
+    if (function_index >= module.functions.size())
+    {
+        throw VmRuntimeError("VM: index de fonction invalide");
+    }
+    const FunctionBytecode &function = module.functions[function_index];
+    const std::size_t count = function.source_arity;
+    const bool named = std::any_of(args.begin(), args.end(),
+                                   [](const RuntimeArgument &arg) { return !arg.name.empty(); });
+    if (!named && args.size() > count)
+    {
+        throw VmRuntimeError("trop d'arguments fournis a l'appel de fonction", args[count].site);
+    }
+
+    // Positional binding is the identity -- argument i fills parameter i -- and
+    // the compiler strips the names from every call whose callee it knows, so
+    // the mapping is materialised only when a call really names an argument.
+    // Method calls run through here on every iteration of a hot loop; an
+    // allocation none of them needs is one they would all pay for.
+    const std::vector<std::size_t> sources =
+        named ? bind_named_arguments(function, args) : std::vector<std::size_t>{};
+    const auto source_for = [&](const std::size_t parameter) {
+        return named ? sources[parameter] : parameter;
+    };
+
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const bool supplied = source_for(i) < args.size();
+        const bool optional = i < function.optional_params.size() && function.optional_params[i];
+        if (!supplied && !optional)
+        {
+            throw VmRuntimeError("argument manquant pour le paramètre '" + parameter_label(function, i) + "'");
         }
     }
-    for (std::size_t i = 0; i < function.source_arity; ++i)
+
+    const std::size_t receiver_slots = receiver == nullptr ? 0 : 1;
+    if (receiver_slots + count +
+            static_cast<std::size_t>(std::count(function.optional_params.begin(),
+                                                function.optional_params.end(),
+                                                true)) !=
+        function.arity)
+    {
+        throw VmRuntimeError("VM: arite invalide pour '" + function.name + "'");
+    }
+
+    CallFrame &frame = push_empty_call_frame(frames,
+                                             module,
+                                             function_index,
+                                             stack_base,
+                                             std::move(captures),
+                                             call_site);
+    if (receiver != nullptr)
+    {
+        frame.locals[0].get() = *receiver;
+    }
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        const std::size_t source = source_for(i);
+        frame.locals[receiver_slots + i].get() =
+            source < args.size() ? std::move(args[source].value) : Value::rien();
+    }
+
+    // The prologue evaluates a default only where the caller supplied nothing,
+    // so the flag follows the binding rather than the argument count.
+    std::size_t flag = receiver_slots + count;
+    for (std::size_t i = 0; i < count; ++i)
     {
         if (i < function.optional_params.size() && function.optional_params[i])
         {
-            normalized.push_back(Value::logique(i < args.size()));
+            frame.locals[flag++].get() = Value::logique(source_for(i) < args.size());
         }
     }
-    return normalized;
+}
+
+std::vector<VmType> read_types(const std::vector<std::string> &texts)
+{
+    std::vector<VmType> types;
+    types.reserve(texts.size());
+    for (const std::string &text : texts)
+    {
+        types.push_back(parse_runtime_type(text));
+    }
+    return types;
 }
 
 struct VmExecutionState
@@ -1556,13 +1525,13 @@ struct VmExecutionState
     std::vector<Value> &globals;
     std::vector<bool> &global_defined;
     std::vector<bool> &initialized_functions;
+    VmRuntimeServices runtime_services;
+    // One entry per module type, in the same order, read once instead of at
+    // every assertion.
+    std::vector<VmType> types;
 };
 
-Value run_frames(VmExecutionState &execution,
-                 const std::size_t entry_function_index,
-                 std::vector<Value> entry_arguments = {},
-                 std::vector<std::shared_ptr<Value>> entry_captures = {},
-                 const SourceLocation entry_call_site = {})
+Value execute_frames(VmExecutionState &execution, FrameStack frames)
 {
     const ModuleBytecode &module = execution.module;
     const auto &natives = execution.natives;
@@ -1571,33 +1540,12 @@ Value run_frames(VmExecutionState &execution,
     auto &global_defined = execution.global_defined;
     auto &initialized_functions = execution.initialized_functions;
     std::vector<Value> stack;
-    std::vector<CallFrame> frames;
-    VmRuntimeServices runtime_services;
-    runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {
-        const auto function = callee.as_fonction();
-        const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
-        if (body == nullptr || args.arguments == nullptr)
-        {
-            throw VmRuntimeError("VM: fermeture bytecode invalide");
-        }
-        std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                *args.arguments);
-        return run_frames(execution,
-                          body->function_index,
-                          std::move(values),
-                          body->captures,
-                          {static_cast<std::size_t>(args.site.line),
-                           static_cast<std::size_t>(args.site.column)});
-    });
-    frames.push_back(make_call_frame(module,
-                                     entry_function_index,
-                                     entry_arguments,
-                                     0,
-                                     std::move(entry_captures),
-                                     entry_call_site));
+    auto &runtime_services = execution.runtime_services;
 
-    const auto build_runtime_error = [&frames](std::string message, const std::size_t opcode_offset)
+    const auto build_runtime_error = [&frames](const VmRuntimeError &error,
+                                               const std::size_t opcode_offset)
     {
+        std::string message = error.what();
         if (message.starts_with("VM: "))
         {
             message.erase(0, 4);
@@ -1608,17 +1556,35 @@ Value run_frames(VmExecutionState &execution,
         {
             location = current.function->chunk.locations[opcode_offset];
         }
+        std::string source_path = current.function->source_path;
+        if (error.site().has_value())
+        {
+            if (!error.site()->source_path.empty())
+            {
+                source_path = error.site()->source_path;
+            }
+            location.line = static_cast<std::size_t>(error.site()->line);
+            location.column = static_cast<std::size_t>(error.site()->column);
+        }
         std::vector<StackFrame> trace;
         trace.reserve(frames.size());
-        for (const CallFrame &frame : frames)
+        for (std::size_t index = 0; index < frames.size(); ++index)
         {
+            const CallFrame &frame = frames[index];
+            // Top-level code is a real frame to the VM and no frame at all to
+            // the tree walker. Showing it would make the same failure read
+            // differently depending on which engine ran it.
+            if (frame.function->is_module_initializer)
+            {
+                continue;
+            }
             trace.push_back({frame.function->name,
                              frame.function->source_path,
                              static_cast<std::uint32_t>(frame.call_site.line),
                              static_cast<std::uint32_t>(frame.call_site.column)});
         }
         return RuntimeError(std::move(message),
-                            current.function->source_path,
+                            std::move(source_path),
                             current.function->source_text,
                             static_cast<std::uint32_t>(location.line),
                             static_cast<std::uint32_t>(location.column),
@@ -1636,14 +1602,17 @@ Value run_frames(VmExecutionState &execution,
         auto &locals = frame.locals;
         if (ip >= chunk.code.size())
         {
-            throw VmRuntimeError("VM: fonction terminee sans RETURN");
+            throw VmRuntimeError("VM: fonction terminée sans RETURN");
         }
 
         opcode_offset = ip;
         const Opcode opcode = read_opcode(chunk, ip);
-        const SourceLocation dispatch_location = opcode_offset < chunk.locations.size()
-                                                     ? chunk.locations[opcode_offset]
-                                                     : SourceLocation{};
+        // Only the call opcodes below need this, and looking it up for every
+        // instruction cost a bounds check and a copy on the hottest path there is.
+        const auto dispatch_location = [&chunk, &opcode_offset]() {
+            return opcode_offset < chunk.locations.size() ? chunk.locations[opcode_offset]
+                                                          : SourceLocation{};
+        };
         switch (opcode)
         {
         case Opcode::CONSTANT:
@@ -1684,7 +1653,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (!global_defined[index])
             {
-                throw VmRuntimeError("VM: variable globale introuvable: " + module.globals[index]);
+                throw VmRuntimeError("VM: " + messages::symbole_introuvable(module.globals[index]));
             }
             stack.push_back(globals[index]);
             break;
@@ -1698,7 +1667,7 @@ Value run_frames(VmExecutionState &execution,
             }
             if (!global_defined[index])
             {
-                throw VmRuntimeError("VM: variable globale introuvable: " + module.globals[index]);
+                throw VmRuntimeError("VM: " + messages::symbole_introuvable(module.globals[index]));
             }
             stack.push_back(globals[index]);
             break;
@@ -1727,7 +1696,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: initialiseur de module invalide");
             }
-            const auto body = std::dynamic_pointer_cast<VmClosureBody>(globals[index].as_fonction()->body);
+            const auto body = dynamic_ref_cast<VmClosureBody>(globals[index].as_fonction()->body);
             if (body == nullptr || body->function_index >= initialized_functions.size())
             {
                 throw VmRuntimeError("VM: corps d'initialiseur de module invalide");
@@ -1737,12 +1706,13 @@ Value run_frames(VmExecutionState &execution,
                 break;
             }
             initialized_functions[body->function_index] = true;
-            frames.push_back(make_call_frame(module,
-                                             body->function_index,
-                                             {},
-                                             stack.size(),
-                                             {},
-                                             dispatch_location));
+            push_call_frame(frames,
+                            module,
+                            body->function_index,
+                            {},
+                            stack.size(),
+                            {},
+                            dispatch_location());
             break;
         }
         case Opcode::GET_LOCAL:
@@ -1752,7 +1722,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index local invalide");
             }
-            stack.push_back(*locals[index]);
+            stack.push_back(locals[index].get());
             break;
         }
         case Opcode::SET_LOCAL:
@@ -1762,7 +1732,22 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index local invalide");
             }
-            *locals[index] = pop_value(stack);
+            locals[index].get() = pop_value(stack);
+            break;
+        }
+        case Opcode::CLEAR_LOCALS:
+        {
+            // A loop body's locals are new bindings on every iteration. Dropping
+            // the slots here is what makes that true for a closure as well: the
+            // cell a closure captured on the previous iteration stays with that
+            // closure, and the next capture of this slot allocates a fresh one.
+            const std::uint8_t first = read_byte(chunk, ip);
+            const std::uint8_t count = read_byte(chunk, ip);
+            const std::size_t end = std::min<std::size_t>(first + count, locals.size());
+            for (std::size_t slot = first; slot < end; ++slot)
+            {
+                locals[slot] = LocalSlot{};
+            }
             break;
         }
         case Opcode::GET_CAPTURE:
@@ -1772,7 +1757,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de capture invalide");
             }
-            stack.push_back(*frame.captures[index]);
+            stack.push_back(frame.captures[index]->value);
             break;
         }
         case Opcode::SET_CAPTURE:
@@ -1782,7 +1767,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de capture invalide");
             }
-            *frame.captures[index] = pop_value(stack);
+            frame.captures[index]->value = pop_value(stack);
             break;
         }
         case Opcode::CLOSURE:
@@ -1793,21 +1778,16 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de fermeture invalide");
             }
-            auto body = std::make_shared<VmClosureBody>();
+            auto body = make_ref<VmClosureBody>();
             body->function_index = function_index;
             body->captures.reserve(capture_count);
             for (std::size_t i = 0; i < capture_count; ++i)
             {
                 const bool from_capture = read_byte(chunk, ip) != 0;
                 const std::uint8_t source_index = read_byte(chunk, ip);
-                const auto &source = from_capture ? frame.captures : frame.locals;
-                if (source_index >= source.size())
-                {
-                    throw VmRuntimeError("VM: source de capture invalide");
-                }
-                body->captures.push_back(source[source_index]);
+                body->captures.push_back(frame.capture(from_capture, source_index));
             }
-            auto closure = std::make_shared<LumiereFunction>();
+            auto closure = make_ref<LumiereFunction>();
             closure->name = module.functions[function_index].name;
             closure->body = std::move(body);
             stack.push_back(Value::fonction(std::move(closure)));
@@ -1827,21 +1807,17 @@ Value run_frames(VmExecutionState &execution,
                 interface_values[i - 1] = pop_value(stack);
             }
             const Value parent_value = descriptor.parent.empty() ? Value::rien() : pop_value(stack);
-            auto klass = std::make_shared<LumiereClass>();
+            auto klass = make_ref<LumiereClass>();
             klass->name = descriptor.name;
-            auto body = std::make_shared<VmClassBody>();
+            klass->type_identity = descriptor.type_identity;
+            auto body = make_ref<VmClassBody>();
             body->descriptor_index = descriptor_index;
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
                 auto &captures = body->method_captures[method.function_index];
                 for (const VmMethodDescriptor::CaptureSource &source : method.capture_sources)
                 {
-                    const auto &cells = source.from_capture ? frame.captures : frame.locals;
-                    if (source.index >= cells.size())
-                    {
-                        throw VmRuntimeError("VM: source de capture de methode invalide");
-                    }
-                    captures.push_back(cells[source.index]);
+                    captures.push_back(frame.capture(source.from_capture, source.index));
                 }
             }
             klass->body = std::move(body);
@@ -1867,27 +1843,26 @@ Value run_frames(VmExecutionState &execution,
                          interface_name.size() - 8,
                          8,
                          "::Erreur") == 0);
-                klass->interfaces[
-                    error_marker ? "Erreur"
-                                 : interface_name] =
-                    interface_values[i].as_interface();
+                const auto interface = interface_values[i].as_interface();
+                klass->interfaces[error_marker ? "Erreur" :
+                    (interface->type_identity.empty() ? interface_name : interface->type_identity)] = interface;
             }
             for (const VmMethodDescriptor &method : descriptor.methods)
             {
-                const VmMethodDescriptor *parent_method = find_vm_method(module, klass->parent, method.name);
+                const VmMethodDescriptor *parent_method = find_vm_method(module, klass->parent.get(), method.name);
                 if (method.is_override && parent_method == nullptr)
                 {
-                    throw VmRuntimeError("VM: remplace utilise sans methode parente correspondante: " + method.name);
+                    throw VmRuntimeError("VM: remplace utilise sans méthode parente correspondante: " + method.name);
                 }
                 if (!method.is_override && parent_method != nullptr)
                 {
-                    throw VmRuntimeError("VM: methode parente deja definie; utilisez remplace: " + method.name);
+                    throw VmRuntimeError("VM: méthode parente déjà définie; utilisez remplace: " + method.name);
                 }
                 if (parent_method != nullptr &&
                     (parent_method->parameter_types != method.parameter_types ||
                      parent_method->return_type != method.return_type))
                 {
-                    throw VmRuntimeError("VM: la methode remplacee doit conserver la meme signature: " + method.name);
+                    throw VmRuntimeError("VM: la méthode remplacee doit conserver la même signature: " + method.name);
                 }
             }
             for (const auto &[interface_name, interface] : klass->interfaces)
@@ -1896,30 +1871,30 @@ Value run_frames(VmExecutionState &execution,
                 {
                     continue;
                 }
-                const auto interface_body = std::dynamic_pointer_cast<VmInterfaceBody>(interface->body);
+                const auto interface_body = dynamic_ref_cast<VmInterfaceBody>(interface->body);
                 if (interface_body == nullptr || interface_body->descriptor_index >= module.interfaces.size())
                 {
-                    throw VmRuntimeError("VM: interface non compatible avec le backend: " + interface_name);
+                    throw VmRuntimeError("VM: interface non compatible avec le backend: " + interface->name);
                 }
                 for (const VmInterfaceMethodDescriptor &required :
                      module.interfaces[interface_body->descriptor_index].methods)
                 {
-                    const VmMethodDescriptor *implemented = find_vm_method(module, klass, required.name);
+                    const VmMethodDescriptor *implemented = find_vm_method(module, klass.get(), required.name);
                     if (implemented == nullptr)
                     {
                         throw VmRuntimeError("VM: la classe " + descriptor.name +
-                                             " ne realise pas la methode requise " + interface_name + "." + required.name);
+                                             " ne réalise pas la méthode requise " + interface->name + "." + required.name);
                     }
                     if (implemented->parameter_types != required.parameter_types ||
                         implemented->return_type != required.return_type)
                     {
-                        throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
-                                             " ne respecte pas la signature requise par l'interface " + interface_name);
+                        throw VmRuntimeError("VM: la méthode " + descriptor.name + "." + required.name +
+                                             " ne respecte pas la signature requise par l'interface " + interface->name);
                     }
                     if (implemented->is_private)
                     {
-                        throw VmRuntimeError("VM: la methode " + descriptor.name + "." + required.name +
-                                             " ne peut pas etre privee car elle realise l'interface " + interface_name);
+                        throw VmRuntimeError("VM: la méthode " + descriptor.name + "." + required.name +
+                                             " ne peut pas être privée car elle réalise l'interface " + interface->name);
                     }
                 }
             }
@@ -1933,9 +1908,10 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: descripteur d'interface invalide");
             }
-            auto interface = std::make_shared<LumiereInterface>();
+            auto interface = make_ref<LumiereInterface>();
             interface->name = module.interfaces[descriptor_index].name;
-            auto body = std::make_shared<VmInterfaceBody>();
+            interface->type_identity = module.interfaces[descriptor_index].type_identity;
+            auto body = make_ref<VmInterfaceBody>();
             body->descriptor_index = descriptor_index;
             interface->body = std::move(body);
             stack.push_back(Value::interface(std::move(interface)));
@@ -1948,7 +1924,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: descripteur d'espace de noms invalide");
             }
-            auto name_space = std::make_shared<LumiereObject>();
+            auto name_space = make_ref<LumiereObject>();
             for (const VmNamespaceMember &member : module.namespaces[descriptor_index].members)
             {
                 if (member.global_index >= globals.size() || !global_defined[member.global_index])
@@ -1966,6 +1942,12 @@ Value run_frames(VmExecutionState &execution,
             if (target >= chunk.code.size())
             {
                 throw VmRuntimeError("VM: cible de saut invalide");
+            }
+            if (target < ip)
+            {
+                // A loop's back edge: a safe point, and the only one a program
+                // that never calls anything will reach.
+                collect_cycles_if_due();
             }
             ip = target;
             break;
@@ -2012,46 +1994,47 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::LESS:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left < right; },
-                                    "VM: comparaison '<' attend deux valeurs numeriques");
+                                    "la comparaison '<'");
             break;
         case Opcode::LESS_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left <= right; },
-                                    "VM: comparaison '<=' attend deux valeurs numeriques");
+                                    "la comparaison '<='");
             break;
         case Opcode::GREATER:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left > right; },
-                                    "VM: comparaison '>' attend deux valeurs numeriques");
+                                    "la comparaison '>'");
             break;
         case Opcode::GREATER_EQUAL:
             execute_numeric_compare(stack, [](const auto left, const auto right) { return left >= right; },
-                                    "VM: comparaison '>=' attend deux valeurs numeriques");
+                                    "la comparaison '>='");
             break;
         case Opcode::CALL:
         {
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (stack.size() < frame.stack_base + static_cast<std::size_t>(arity) + 1)
             {
                 throw VmRuntimeError("VM: pile insuffisante pour l'appel");
             }
 
             const std::size_t callee_index = stack.size() - static_cast<std::size_t>(arity) - 1;
-            const Value callee = stack[callee_index];
+            const Value callee = std::move(stack[callee_index]);
             std::vector<RuntimeArgument> call_args;
             call_args.reserve(arity);
             for (std::size_t i = callee_index + 1; i < stack.size(); ++i)
             {
-                call_args.push_back({argument_names[i - callee_index - 1], stack[i]});
+                const std::size_t argument = i - callee_index - 1;
+                call_args.push_back({argument_name(argument),
+                                     std::move(stack[i]),
+                                     argument_site(argument_names, argument)});
             }
 
             stack.resize(callee_index);
@@ -2063,29 +2046,25 @@ Value run_frames(VmExecutionState &execution,
             }
             if (callee.is_classe())
             {
-                stack.push_back(instantiate_vm_class(module, callee.as_classe(), call_args));
+                stack.push_back(instantiate_vm_class(module, runtime_services.types, callee.as_classe(), call_args));
                 break;
             }
-            const auto function = callee.is_fonction() ? callee.as_fonction() : nullptr;
+            const LumiereFunction *function = callee.is_fonction() ? callee.as_fonction_ptr() : nullptr;
             if (function != nullptr && !function->is_native())
             {
-                auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                const VmClosureBody *body = vm_closure_body(function->body.get());
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction non compatible avec le backend VM");
                 }
-                const FunctionBytecode &target = module.functions[body->function_index];
-                std::vector<Value> values = normalize_closure_arguments(target, call_args);
-                if (function->is_method())
-                {
-                    values.insert(values.begin(), function->receiver);
-                }
-                frames.push_back(make_call_frame(module,
-                                                 body->function_index,
-                                                 values,
-                                                 stack.size(),
-                                                 body->captures,
-                                                 dispatch_location));
+                normalize_closure_arguments(frames,
+                                            module,
+                                            body->function_index,
+                                            call_args,
+                                            stack.size(),
+                                            body->captures,
+                                            dispatch_location(),
+                                            function->is_method() ? &function->receiver : nullptr);
                 break;
             }
             const Value *receiver = function != nullptr && function->is_method() ? &function->receiver : nullptr;
@@ -2099,17 +2078,15 @@ Value run_frames(VmExecutionState &execution,
                                                  ? read_u24(chunk, ip)
                                                  : read_byte(chunk, ip);
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (global_index >= module.globals.size())
             {
                 throw VmRuntimeError("VM: index global invalide");
@@ -2124,7 +2101,9 @@ Value run_frames(VmExecutionState &execution,
             call_args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                call_args.push_back({argument_names[i], stack[args_start + i]});
+                call_args.push_back({argument_name(i),
+                                     std::move(stack[args_start + i]),
+                                     argument_site(argument_names, i)});
             }
             stack.resize(args_start);
 
@@ -2132,29 +2111,25 @@ Value run_frames(VmExecutionState &execution,
             if (global_defined[global_index] && globals[global_index].is_classe())
             {
                 stack.push_back(instantiate_vm_class(module,
+                                                     runtime_services.types,
                                                      globals[global_index].as_classe(),
                                                      call_args));
                 break;
             }
             if (const auto direct = function_indices.find(name); direct != function_indices.end())
             {
-                std::vector<Value> values;
-                values.reserve(call_args.size());
-                for (const RuntimeArgument &argument : call_args)
-                {
-                    values.push_back(argument.value);
-                }
-                frames.push_back(make_call_frame(module,
-                                                 direct->second,
-                                                 values,
-                                                 stack.size(),
-                                                 {},
-                                                 dispatch_location));
+                push_call_frame(frames,
+                                module,
+                                direct->second,
+                                call_args,
+                                stack.size(),
+                                {},
+                                dispatch_location());
                 break;
             }
             if (global_defined[global_index] && globals[global_index].is_fonction())
             {
-                const auto function = globals[global_index].as_fonction();
+                const LumiereFunction *function = globals[global_index].as_fonction_ptr();
                 if (function->is_native())
                 {
                     RuntimeSite site;
@@ -2171,19 +2146,18 @@ Value run_frames(VmExecutionState &execution,
                         NativeArgs{nullptr, &call_args, std::move(site)}));
                     break;
                 }
-                const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                const VmClosureBody *body = vm_closure_body(function->body.get());
                 if (body == nullptr)
                 {
                     throw VmRuntimeError("VM: corps de fonction globale incompatible");
                 }
-                std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                        call_args);
-                frames.push_back(make_call_frame(module,
-                                                 body->function_index,
-                                                 values,
-                                                 stack.size(),
-                                                 body->captures,
-                                                 dispatch_location));
+                normalize_closure_arguments(frames,
+                                            module,
+                                            body->function_index,
+                                            call_args,
+                                            stack.size(),
+                                            body->captures,
+                                            dispatch_location());
                 break;
             }
             const auto native = natives.find(name);
@@ -2193,7 +2167,7 @@ Value run_frames(VmExecutionState &execution,
                 {
                     if (!argument.name.empty())
                     {
-                        throw VmRuntimeError("VM: " + name + " n'accepte pas d'arguments nommes");
+                        throw VmRuntimeError("VM: " + name + " n'accepte pas d'arguments nommés");
                     }
                 }
                 std::vector<Value> values;
@@ -2225,7 +2199,7 @@ Value run_frames(VmExecutionState &execution,
                 break;
             }
 
-            throw VmRuntimeError("VM: fonction globale inconnue '" + name + "'");
+            throw VmRuntimeError("VM: " + messages::symbole_introuvable(name));
         }
         case Opcode::CALL_MEMBER:
         case Opcode::CALL_MEMBER_LONG:
@@ -2238,17 +2212,15 @@ Value run_frames(VmExecutionState &execution,
                                                  ? read_u24(chunk, ip)
                                                  : read_byte(chunk, ip);
             const std::uint8_t arity = read_byte(chunk, ip);
-            std::vector<std::string> argument_names;
-            argument_names.reserve(arity);
-            for (std::size_t i = 0; i < arity; ++i)
-            {
-                const std::size_t name_index = read_u16(chunk, ip);
-                if (name_index >= module.argument_names.size())
+            const ArgumentNames argument_names(chunk, ip, arity);
+            const auto argument_name = [&](const std::size_t i) -> const std::string & {
+                const std::size_t index = argument_names.index(i);
+                if (index >= module.argument_names.size())
                 {
                     throw VmRuntimeError("VM: index de nom d'argument invalide");
                 }
-                argument_names.push_back(module.argument_names[name_index]);
-            }
+                return module.argument_names[index];
+            };
             if (member_index >= module.members.size())
             {
                 throw VmRuntimeError("VM: index de membre invalide");
@@ -2259,74 +2231,91 @@ Value run_frames(VmExecutionState &execution,
             }
 
             const std::size_t receiver_index = stack.size() - arity - 1;
-            const Value receiver = stack[receiver_index];
+            const Value receiver = std::move(stack[receiver_index]);
             std::vector<RuntimeArgument> args;
             args.reserve(arity);
             for (std::size_t i = 0; i < arity; ++i)
             {
-                args.push_back({argument_names[i], stack[receiver_index + 1 + i]});
+                args.push_back({argument_name(i),
+                                std::move(stack[receiver_index + 1 + i]),
+                                argument_site(argument_names, i)});
             }
             stack.resize(receiver_index);
 
             if (receiver.is_objet())
             {
-                const auto field = receiver.as_objet()->fields.find(module.members[member_index]);
-                if (field != receiver.as_objet()->fields.end())
+                const auto field = receiver.as_objet_ptr()->fields.find(module.members[member_index]);
+                if (field != receiver.as_objet_ptr()->fields.end())
                 {
+                    if (field->second.is_classe())
+                    {
+                        stack.push_back(instantiate_vm_class(module, runtime_services.types, field->second.as_classe(), args));
+                        break;
+                    }
                     if (!field->second.is_fonction())
                     {
                         throw VmRuntimeError("VM: le membre '" + module.members[member_index] + "' n'est pas appelable");
                     }
-                    const auto function = field->second.as_fonction();
+                    const LumiereFunction *function = field->second.as_fonction_ptr();
                     if (function->is_native())
                     {
+                        // Populate line/column like every other native-call
+                        // opcode branch (CALL, CALL_GLOBAL) does. Left blank,
+                        // this silently drops the source location whenever a
+                        // native stdlib function is invoked via qualified
+                        // module-member syntax (e.g. "Regex.remplacer(...)"
+                        // as opposed to an imported "remplacer(...)"), so any
+                        // runtime error it raises loses its line/column and
+                        // source snippet on the VM backend, while the tree
+                        // walker keeps them (--tw vs --vm output diverges).
                         RuntimeSite site;
+                        site.source_path = module.source_path;
+                        if (opcode_offset < chunk.locations.size())
+                        {
+                            site.line = static_cast<int>(chunk.locations[opcode_offset].line);
+                            site.column = static_cast<int>(chunk.locations[opcode_offset].column);
+                        }
                         stack.push_back(runtime_services.call(field->second,
-                                                            NativeArgs{nullptr, &args, site}));
+                                                            NativeArgs{nullptr, &args, std::move(site)}));
                         break;
                     }
-                    const auto body = std::dynamic_pointer_cast<VmClosureBody>(function->body);
+                    const VmClosureBody *body = vm_closure_body(function->body.get());
                     if (body == nullptr)
                     {
                         throw VmRuntimeError("VM: corps de membre incompatible");
                     }
-                    std::vector<Value> values = normalize_closure_arguments(module.functions[body->function_index],
-                                                                            args);
-                    frames.push_back(make_call_frame(module,
-                                                     body->function_index,
-                                                     values,
-                                                     stack.size(),
-                                                     body->captures,
-                                                     dispatch_location));
+                    normalize_closure_arguments(frames,
+                                                module,
+                                                body->function_index,
+                                                args,
+                                                stack.size(),
+                                                body->captures,
+                                                dispatch_location());
                     break;
                 }
-                const VmMethodDescriptor *method = find_vm_method(module,
+                const LumiereObject *object = receiver.as_objet_ptr();
+                const VmMethodDescriptor *method = resolve_method(module,
                                                                   parent_dispatch
-                                                                      ? receiver.as_objet()->klass->parent
-                                                                      : receiver.as_objet()->klass,
-                                                                  module.members[member_index]);
+                                                                      ? object->klass->parent.get()
+                                                                      : object->klass.get(),
+                                                                  member_index);
                 if (method == nullptr)
                 {
-                    throw VmRuntimeError("VM: methode introuvable '" + module.members[member_index] + "'");
+                    throw VmRuntimeError("VM: méthode introuvable '" + module.members[member_index] + "'");
                 }
-                const bool private_access = !frame.locals.empty() &&
-                                            frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0]->is_objet() &&
-                                            frame.locals[0]->as_objet() == receiver.as_objet();
-                if (method->is_private && !private_access)
+                if (method->is_private && !accesses_own_object(frame, receiver))
                 {
-                    throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
+                    throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
-                const FunctionBytecode &target = module.functions[method->function_index];
-                std::vector<Value> method_args = normalize_closure_arguments(target, args);
-                method_args.insert(method_args.begin(), receiver);
-                frames.push_back(make_call_frame(module,
-                                                 method->function_index,
-                                                 method_args,
-                                                 stack.size(),
-                                                 find_vm_method_captures(receiver.as_objet()->klass,
-                                                                         method->function_index),
-                                                 dispatch_location));
+                normalize_closure_arguments(frames,
+                                            module,
+                                            method->function_index,
+                                            args,
+                                            stack.size(),
+                                            vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                               method->function_index),
+                                            dispatch_location(),
+                                            &receiver);
                 break;
             }
 
@@ -2359,50 +2348,48 @@ Value run_frames(VmExecutionState &execution,
             }
             if (stack.size() <= frame.stack_base)
             {
-                throw VmRuntimeError("VM: pile insuffisante pour l'acces membre");
+                throw VmRuntimeError("VM: pile insuffisante pour l'accès membre");
             }
             const Value receiver = pop_value(stack);
             if (receiver.is_objet())
             {
-                const auto field = receiver.as_objet()->fields.find(module.members[member_index]);
-                if (field != receiver.as_objet()->fields.end())
+                const auto field = receiver.as_objet_ptr()->fields.find(module.members[member_index]);
+                if (field != receiver.as_objet_ptr()->fields.end())
                 {
-                    const VmFieldDescriptor *descriptor = find_vm_field(module,
-                                                                        receiver.as_objet()->klass,
-                                                                        module.members[member_index]);
-                    const bool private_access = !frame.locals.empty() &&
-                                                frame.function->name.find('.') != std::string::npos &&
-                                                frame.locals[0]->is_objet() &&
-                                                frame.locals[0]->as_objet() == receiver.as_objet();
-                    if (descriptor != nullptr && descriptor->is_private && !private_access)
+                    const VmFieldDescriptor *descriptor = resolve_field(module,
+                                                                        runtime_services.types,
+                                                                        receiver.as_objet_ptr()->klass.get(),
+                                                                        member_index).descriptor;
+                    // Asking whether this frame is the object's own method
+                    // searches the frame's name, so it is only asked about a
+                    // member that is actually private.
+                    if (descriptor != nullptr && descriptor->is_private &&
+                        !accesses_own_object(frame, receiver))
                     {
-                        throw VmRuntimeError("VM: acces interdit au champ prive '" + descriptor->name + "'");
+                        throw VmRuntimeError("VM: accès interdit au champ privé '" + descriptor->name + "'");
                     }
                     stack.push_back(field->second);
                     break;
                 }
-                const VmMethodDescriptor *method = find_vm_method(module,
+                const LumiereObject *object = receiver.as_objet_ptr();
+                const VmMethodDescriptor *method = resolve_method(module,
                                                                   parent_dispatch
-                                                                      ? receiver.as_objet()->klass->parent
-                                                                      : receiver.as_objet()->klass,
-                                                                  module.members[member_index]);
+                                                                      ? object->klass->parent.get()
+                                                                      : object->klass.get(),
+                                                                  member_index);
                 if (method == nullptr)
                 {
                     throw VmRuntimeError("VM: membre introuvable '" + module.members[member_index] + "'");
                 }
-                const bool private_access = !frame.locals.empty() &&
-                                            frame.function->name.find('.') != std::string::npos &&
-                                            frame.locals[0]->is_objet() &&
-                                            frame.locals[0]->as_objet() == receiver.as_objet();
-                if (method->is_private && !private_access)
+                if (method->is_private && !accesses_own_object(frame, receiver))
                 {
-                    throw VmRuntimeError("VM: acces interdit a la methode privee '" + method->name + "'");
+                    throw VmRuntimeError("VM: accès interdit à la méthode privée '" + method->name + "'");
                 }
-                auto body = std::make_shared<VmClosureBody>();
+                auto body = make_ref<VmClosureBody>();
                 body->function_index = method->function_index;
-                body->captures = find_vm_method_captures(receiver.as_objet()->klass,
-                                                         method->function_index);
-                auto function = std::make_shared<LumiereFunction>();
+                body->captures = vm_method_captures(receiver.as_objet_ptr()->klass.get(),
+                                                    method->function_index);
+                auto function = make_ref<LumiereFunction>();
                 function->name = method->name;
                 function->body = std::move(body);
                 function->receiver = receiver;
@@ -2430,30 +2417,28 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: affectation membre sur une valeur non objet");
             }
-            const VmFieldDescriptor *field = find_vm_field(module,
-                                                           receiver.as_objet()->klass,
-                                                           module.members[member_index]);
+            const ResolvedField resolved = resolve_field(module,
+                                                         runtime_services.types,
+                                                         receiver.as_objet_ptr()->klass.get(),
+                                                         member_index);
+            const VmFieldDescriptor *field = resolved.descriptor;
             if (field == nullptr)
             {
                 throw VmRuntimeError("VM: champ introuvable '" + module.members[member_index] + "'");
             }
-            const bool private_access = !frame.locals.empty() &&
-                                        frame.function->name.find('.') != std::string::npos &&
-                                        frame.locals[0]->is_objet() &&
-                                        frame.locals[0]->as_objet() == receiver.as_objet();
-            if (field->is_private && !private_access)
+            if (field->is_private && !accesses_own_object(frame, receiver))
             {
-                throw VmRuntimeError("VM: affectation interdite au champ prive '" + field->name + "'");
+                throw VmRuntimeError("VM: affectation interdite au champ privé '" + field->name + "'");
             }
             if (field->is_fixed)
             {
                 throw VmRuntimeError("VM: impossible d'affecter le champ fixe '" + field->name + "'");
             }
-            if (!field->type.empty() && !matches_type_name(value, field->type))
+            if (resolved.type != nullptr && !matches(value, *resolved.type))
             {
-                throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + field->type);
+                throw VmRuntimeError("VM: le champ '" + field->name + "' attend " + display_runtime_type(field->type));
             }
-            receiver.as_objet()->fields[field->name] = value;
+            receiver.as_objet_ptr()->fields[field->name] = value;
             stack.push_back(value);
             break;
         }
@@ -2462,6 +2447,12 @@ Value run_frames(VmExecutionState &execution,
             break;
         case Opcode::DICTIONARY:
             execute_dictionary(stack, read_byte(chunk, ip));
+            break;
+        case Opcode::ENSEMBLE:
+            execute_ensemble(stack, read_byte(chunk, ip));
+            break;
+        case Opcode::ITERATION_SNAPSHOT:
+            execute_iteration_snapshot(stack);
             break;
         case Opcode::SEQUENCE_LENGTH:
             execute_sequence_length(stack);
@@ -2481,7 +2472,14 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de type invalide");
             }
-            execute_cast(stack, module.types[index]);
+            RuntimeSite site;
+            if (opcode_offset < chunk.locations.size())
+            {
+                site.line = static_cast<int>(chunk.locations[opcode_offset].line);
+                site.column = static_cast<int>(chunk.locations[opcode_offset].column);
+            }
+            const Value operand = pop_value(stack);
+            stack.push_back(convert(runtime_services, operand, module.types[index], site));
             break;
         }
         case Opcode::TYPE_CHECK:
@@ -2493,7 +2491,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 throw VmRuntimeError("VM: index de type invalide");
             }
-            execute_type_check(stack, module.types[index]);
+            execute_type_check(stack, execution.types[index]);
             break;
         }
         case Opcode::ASSERT_TYPE:
@@ -2502,11 +2500,16 @@ Value run_frames(VmExecutionState &execution,
             const std::size_t index = opcode == Opcode::ASSERT_TYPE_LONG
                                           ? read_u24(chunk, ip)
                                           : read_byte(chunk, ip);
-            if (index >= module.types.size())
+            if (index >= module.annotations.size())
+            {
+                throw VmRuntimeError("VM: index d'annotation invalide");
+            }
+            const VmAnnotation &annotation = module.annotations[index];
+            if (annotation.type_index >= module.types.size())
             {
                 throw VmRuntimeError("VM: index de type invalide");
             }
-            execute_type_assertion(stack, module.types[index], runtime_services);
+            execute_type_assertion(stack, execution.types[annotation.type_index], annotation.context);
             break;
         }
         case Opcode::MATCH_ERROR:
@@ -2543,8 +2546,7 @@ Value run_frames(VmExecutionState &execution,
             stack.push_back(Value::logique(
                 result.is_resultat() &&
                 !result.as_resultat()->success &&
-                matches_type_name(result.as_resultat()->payload,
-                                  module.types[index])));
+                matches(result.as_resultat()->payload, execution.types[index])));
             break;
         }
         case Opcode::RESULT_PAYLOAD:
@@ -2572,8 +2574,7 @@ Value run_frames(VmExecutionState &execution,
             {
                 Value error = result;
                 if (frame.function->return_type.empty() ||
-                    !matches_type_name(error,
-                                       frame.function->return_type))
+                    !matches(error, runtime_services.types[frame.function->return_type]))
                 {
                     throw VmRuntimeError(
                         "VM: propager exige une fonction englobante dont le retour '" +
@@ -2586,7 +2587,7 @@ Value run_frames(VmExecutionState &execution,
                     static_cast<std::uint32_t>(frame.call_site.line),
                     static_cast<std::uint32_t>(frame.call_site.column)});
                 stack.resize(frame.stack_base);
-                frames.pop_back();
+                frames.pop();
                 if (frames.empty())
                 {
                     return error;
@@ -2606,14 +2607,18 @@ Value run_frames(VmExecutionState &execution,
         }
         case Opcode::RETURN:
         {
-            Value result = stack.size() > frame.stack_base ? stack.back() : Value::rien();
-            result = result.with_trace_frame(TraceFrame{
-                frame.function->name,
-                frame.function->source_path,
-                static_cast<std::uint32_t>(frame.call_site.line),
-                static_cast<std::uint32_t>(frame.call_site.column)});
+            collect_cycles_if_due();
+            Value result = stack.size() > frame.stack_base ? std::move(stack.back()) : Value::rien();
+            if (result.is_resultat() && !result.as_resultat()->success)
+            {
+                result = result.with_trace_frame(TraceFrame{
+                    frame.function->name,
+                    frame.function->source_path,
+                    static_cast<std::uint32_t>(frame.call_site.line),
+                    static_cast<std::uint32_t>(frame.call_site.column)});
+            }
             stack.resize(frame.stack_base);
-            frames.pop_back();
+            frames.pop();
             if (frames.empty())
             {
                 return result;
@@ -2625,11 +2630,45 @@ Value run_frames(VmExecutionState &execution,
         }
         catch (const VmRuntimeError &error)
         {
-            throw build_runtime_error(error.what(), opcode_offset);
+            throw build_runtime_error(error, opcode_offset);
         }
     }
 
     return Value::rien();
+}
+
+Value run_frames(VmExecutionState &execution,
+                 const std::size_t entry_function_index,
+                 std::vector<Value> entry_arguments = {},
+                 std::vector<CellRef> entry_captures = {},
+                 const SourceLocation entry_call_site = {})
+{
+    FrameStack frames;
+    push_call_frame(frames,
+                    execution.module,
+                    entry_function_index,
+                    std::move(entry_arguments),
+                    0,
+                    std::move(entry_captures),
+                    entry_call_site);
+    return execute_frames(execution, std::move(frames));
+}
+
+Value run_closure_frames(VmExecutionState &execution,
+                         const std::size_t entry_function_index,
+                         std::vector<RuntimeArgument> arguments,
+                         std::vector<CellRef> entry_captures,
+                         const SourceLocation entry_call_site)
+{
+    FrameStack frames;
+    normalize_closure_arguments(frames,
+                                execution.module,
+                                entry_function_index,
+                                arguments,
+                                0,
+                                std::move(entry_captures),
+                                entry_call_site);
+    return execute_frames(execution, std::move(frames));
 }
 
 } // namespace
@@ -2638,7 +2677,16 @@ void VM::execute(Program &program)
 {
     VmCompiler compiler;
     ModuleBytecode module = compiler.compile(program);
+    // Checked once here so the interpreter can read operands without checking
+    // them again on every instruction.
+    if (const auto problem = verify_module(module))
+    {
+        throw VmCompileError("VM: bytecode invalide — " + *problem);
+    }
     const Value result = run(module);
+    // The entry frame is gone, so anything the program left in a cycle is now
+    // unreachable and this is the last chance to say so.
+    collect_cycles();
     if (result.is_resultat() && !result.as_resultat()->success)
     {
         const std::optional<RuntimeSite> &origin =
@@ -2692,7 +2740,22 @@ Value VM::run(const ModuleBytecode &module)
     std::vector<bool> global_defined(module.globals.size(), false);
     std::vector<bool> initialized_functions(module.functions.size(), false);
     VmExecutionState execution{
-        module, natives, function_indices, globals, global_defined, initialized_functions};
+        module, natives, function_indices, globals, global_defined, initialized_functions, {},
+        read_types(module.types)};
+    // Initializers, entrypoint, and native callback re-entry share contracts and
+    // bound native methods for the entire execution, not just one frame stack.
+    execution.runtime_services.set_callback_executor([&](Value callee, const NativeArgs &args) {
+        const auto function = callee.as_fonction();
+        const auto body = dynamic_ref_cast<VmClosureBody>(function->body);
+        if (body == nullptr || args.arguments == nullptr || body->function_index >= module.functions.size())
+            throw VmRuntimeError("VM: fermeture bytecode invalide");
+        return run_closure_frames(execution,
+                                  body->function_index,
+                                  *args.arguments,
+                                  body->captures,
+                                  {static_cast<std::size_t>(args.site.line),
+                                   static_cast<std::size_t>(args.site.column)});
+    });
     for (std::size_t i = 0; i < module.globals.size(); ++i)
     {
         const std::string &name = module.globals[i];
@@ -2704,7 +2767,7 @@ Value VM::run(const ModuleBytecode &module)
                  "::Erreur") == 0))
         {
             auto interface =
-                std::make_shared<LumiereInterface>();
+                make_ref<LumiereInterface>();
             interface->name = "Erreur";
             globals[i] =
                 Value::interface(std::move(interface));
@@ -2713,9 +2776,9 @@ Value VM::run(const ModuleBytecode &module)
         }
         if (const auto function = function_indices.find(name); function != function_indices.end())
         {
-            auto body = std::make_shared<VmClosureBody>();
+            auto body = make_ref<VmClosureBody>();
             body->function_index = function->second;
-            auto closure = std::make_shared<LumiereFunction>();
+            auto closure = make_ref<LumiereFunction>();
             closure->name = name;
             closure->body = std::move(body);
             globals[i] = Value::fonction(std::move(closure));
@@ -2723,7 +2786,7 @@ Value VM::run(const ModuleBytecode &module)
         }
         else if (const auto native = natives.find(name); native != natives.end())
         {
-            auto callable = std::make_shared<LumiereFunction>();
+            auto callable = make_ref<LumiereFunction>();
             callable->name = name;
             callable->min_arity = 0;
             callable->max_arity = 255;
@@ -2737,7 +2800,7 @@ Value VM::run(const ModuleBytecode &module)
                 {
                     if (!argument.name.empty())
                     {
-                        throw VmRuntimeError("VM: arguments nommes ne sont pas pris en charge pour '" + name + "'");
+                        throw VmRuntimeError("VM: arguments nommés ne sont pas pris en charge pour '" + name + "'");
                     }
                     values.push_back(argument.value);
                 }

@@ -38,6 +38,23 @@ void print_index(std::ostringstream &out, const std::size_t index, const std::ve
     out << ' ' << index << " (" << table_value(table, index) << ')';
 }
 
+// An annotation is a type plus what required it, so a dump shows both.
+void print_annotation(std::ostringstream &out, const std::size_t index, const ModuleBytecode &module)
+{
+    if (index >= module.annotations.size())
+    {
+        out << ' ' << index << " (<annotation hors table>)";
+        return;
+    }
+    const VmAnnotation &annotation = module.annotations[index];
+    out << ' ' << index << " (" << table_value(module.types, annotation.type_index);
+    if (!annotation.context.empty())
+    {
+        out << ", " << annotation.context;
+    }
+    out << ')';
+}
+
 void print_argument_names(std::ostringstream &out, const ModuleBytecode &module, const Chunk &chunk,
                           std::size_t &offset, const std::size_t arity)
 {
@@ -91,12 +108,17 @@ void disassemble_instruction(std::ostringstream &out, const ModuleBytecode &modu
     case Opcode::INIT_GLOBAL_LONG:
         print_index(out, read_u24(chunk, offset), module.globals);
         break;
+    case Opcode::CLEAR_LOCALS:
+        out << ' ' << static_cast<int>(read_byte(chunk, offset));
+        out << ' ' << static_cast<int>(read_byte(chunk, offset));
+        break;
     case Opcode::GET_LOCAL:
     case Opcode::SET_LOCAL:
     case Opcode::GET_CAPTURE:
     case Opcode::SET_CAPTURE:
     case Opcode::LIST:
     case Opcode::DICTIONARY:
+    case Opcode::ENSEMBLE:
         out << ' ' << read_byte(chunk, offset);
         break;
     case Opcode::CLOSURE:
@@ -194,15 +216,19 @@ void disassemble_instruction(std::ostringstream &out, const ModuleBytecode &modu
         break;
     case Opcode::CAST:
     case Opcode::TYPE_CHECK:
-    case Opcode::ASSERT_TYPE:
     case Opcode::RESULT_FAILURE_TYPE:
         print_index(out, read_byte(chunk, offset), module.types);
         break;
     case Opcode::CAST_LONG:
     case Opcode::TYPE_CHECK_LONG:
-    case Opcode::ASSERT_TYPE_LONG:
     case Opcode::RESULT_FAILURE_TYPE_LONG:
         print_index(out, read_u24(chunk, offset), module.types);
+        break;
+    case Opcode::ASSERT_TYPE:
+        print_annotation(out, read_byte(chunk, offset), module);
+        break;
+    case Opcode::ASSERT_TYPE_LONG:
+        print_annotation(out, read_u24(chunk, offset), module);
         break;
     default:
         break;
@@ -241,6 +267,7 @@ std::string_view opcode_name(const Opcode opcode)
         LUMIERE_OPCODE_NAME(INIT_GLOBAL_LONG);
         LUMIERE_OPCODE_NAME(GET_LOCAL);
         LUMIERE_OPCODE_NAME(SET_LOCAL);
+        LUMIERE_OPCODE_NAME(CLEAR_LOCALS);
         LUMIERE_OPCODE_NAME(GET_CAPTURE);
         LUMIERE_OPCODE_NAME(SET_CAPTURE);
         LUMIERE_OPCODE_NAME(CLOSURE);
@@ -277,6 +304,7 @@ std::string_view opcode_name(const Opcode opcode)
         LUMIERE_OPCODE_NAME(NAMESPACE);
         LUMIERE_OPCODE_NAME(LIST);
         LUMIERE_OPCODE_NAME(DICTIONARY);
+        LUMIERE_OPCODE_NAME(ITERATION_SNAPSHOT);
         LUMIERE_OPCODE_NAME(SEQUENCE_LENGTH);
         LUMIERE_OPCODE_NAME(INDEX_GET);
         LUMIERE_OPCODE_NAME(INDEX_SET);

@@ -69,7 +69,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
         hints.ai_socktype = SOCK_STREAM;
         addrinfo *result = nullptr;
         const std::string port_text = std::to_string(parsed.port);
-        const int rc = ::getaddrinfo(parsed.host.c_str(), port_text.c_str(), &hints, &result);
+        const int rc = getaddrinfo_with_timeout(parsed.host.c_str(), port_text.c_str(), &hints, &result);
         if (rc != 0)
         {
             raise_network_error(runtime, native_args.site, signature, gai_strerror(rc));
@@ -87,8 +87,9 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
             }
             platform_socket_enable_nosigpipe(fd);
             constexpr int64_t kDefaultTimeoutMs = 30000;
-            apply_timeout(runtime, fd, timeout_ms.value_or(kDefaultTimeoutMs), signature, native_args.site);
-            if (::connect(fd, entry->ai_addr, entry->ai_addrlen) == 0)
+            const int64_t connect_timeout_ms = timeout_ms.value_or(kDefaultTimeoutMs);
+            apply_timeout(runtime, fd, connect_timeout_ms, signature, native_args.site);
+            if (platform_socket_connect_with_timeout(fd, entry->ai_addr, entry->ai_addrlen, connect_timeout_ms))
             {
                 break;
             }
@@ -186,7 +187,7 @@ Value make_luminet_http_module(const NativeFunctionFactory &make_native_function
     bind_object_method(http, make_native_function, "Serveur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "LumiNet.HTTP.Serveur", native_args.site);
-            return make_http_server_value(std::make_shared<HttpServerState>(), make_native_function);
+            return make_http_server_value(make_ref<HttpServerState>(), make_native_function);
         });
     return Value::objet(std::move(http));
 }
@@ -218,7 +219,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
             hints.ai_socktype = SOCK_STREAM;
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(parsed.port);
-            const int rc = ::getaddrinfo(parsed.host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(parsed.host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "LumiNet.Canal.connecter", gai_strerror(rc));
@@ -283,7 +284,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
                     throw NetworkFailure(
                         "LumiNet.Canal.connecter a échoué: poignée de main websocket refusée");
                 }
-                auto state = std::make_shared<CanalClientState>();
+                auto state = make_ref<CanalClientState>();
                 state->fd = fd;
                 state->client_side = true;
                 state->address = parsed.host;
@@ -300,7 +301,7 @@ Value make_luminet_canal_module(const NativeFunctionFactory &make_native_functio
     bind_object_method(canal, make_native_function, "Serveur",
         [make_native_function](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             stdlib_expect_positional(runtime, *native_args.arguments, 0, "LumiNet.Canal.Serveur", native_args.site);
-            return make_canal_server_value(std::make_shared<CanalServerState>(), make_native_function);
+            return make_canal_server_value(make_ref<CanalServerState>(), make_native_function);
         });
     return Value::objet(std::move(canal));
 }

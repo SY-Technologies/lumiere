@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_iteration/main.lum)
+  File "diagnostic_iteration/main.lum", line 3, column 27
+        pour chaque item dans 1 {
+                              ^
+erreur d'exécution: cette valeur n'est pas itérable : elle est de type Entier

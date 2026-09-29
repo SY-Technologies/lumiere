@@ -6,8 +6,19 @@
 namespace lumiere
 {
 
+namespace
+{
+// Matches kMaxHttpBodyBytes in protocol.cpp: each individual frame is
+// already capped at 65535 bytes by recv_websocket_frame, but a fragmented
+// message (opcode 0x0 continuation frames with fin=false) had no cap on
+// its *total* reassembled size -- a peer sending an endless stream of small
+// continuation frames grew fragment_buffer without bound until the process
+// ran out of memory.
+constexpr std::size_t kMaxWebSocketMessageBytes = 10 * 1024 * 1024;
+}
+
 void run_canal_loop(IRuntime &runtime,
-                    const std::shared_ptr<CanalClientState> &state,
+                    const Ref<CanalClientState> &state,
                     bool server_dispatch_mode,
                     const Value &server_message_callback,
                     const Value &server_disconnect_callback,
@@ -87,6 +98,22 @@ void run_canal_loop(IRuntime &runtime,
             fragment_buffer.insert(fragment_buffer.end(), frame->payload.begin(), frame->payload.end());
         }
 
+        if (fragment_buffer.size() > kMaxWebSocketMessageBytes)
+        {
+            const NetworkFailure failure("Canal.attendre a reçu un message websocket fragmenté trop volumineux");
+            if (state->on_error.is_fonction())
+            {
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", Value::texte(failure.what())}};
+                runtime.call(state->on_error, NativeArgs{nullptr, &args, site});
+            }
+            if (server_error_callback.is_fonction())
+            {
+                std::vector<RuntimeArgument> args = {RuntimeArgument{"", client_value}, RuntimeArgument{"", Value::texte(failure.what())}};
+                runtime.call(server_error_callback, NativeArgs{nullptr, &args, site});
+            }
+            throw failure;
+        }
+
         if (!frame->fin)
         {
             continue;
@@ -117,7 +144,7 @@ void run_canal_loop(IRuntime &runtime,
         {
             if (state->on_message.is_fonction())
             {
-                auto byte_list = std::make_shared<ListeData>();
+                auto byte_list = make_ref<ListeData>();
                 byte_list->elements.reserve(fragment_buffer.size());
                 for (auto byte : fragment_buffer)
                 {
@@ -130,7 +157,7 @@ void run_canal_loop(IRuntime &runtime,
             }
             if (server_dispatch_mode && server_message_callback.is_fonction())
             {
-                auto byte_list = std::make_shared<ListeData>();
+                auto byte_list = make_ref<ListeData>();
                 byte_list->elements.reserve(fragment_buffer.size());
                 for (auto byte : fragment_buffer)
                 {
@@ -169,12 +196,15 @@ void run_canal_loop(IRuntime &runtime,
 }
 
 Value make_canal_client_value(IRuntime &runtime,
-                              const std::shared_ptr<CanalClientState> &state,
+                              const Ref<CanalClientState> &state_ref,
                               const NativeFunctionFactory &make_native_function,
                               const RuntimeSite &site)
 {
     auto object = make_hidden_typed_object("CanalClient");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
     object->fields["adresse"] = Value::texte(state->address);
 
     bind_object_method(object, make_native_function, "quand_ouvert",
@@ -245,24 +275,30 @@ Value make_canal_client_value(IRuntime &runtime,
             return Value::logique(!state->closed && socket_handle_valid(state->fd));
         });
     bind_object_method(object, make_native_function, "attendre",
-        [state, object_value = Value::objet(object)](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
+        [state, self = object.get()](IRuntime &inner_runtime, const NativeArgs &native_args) -> Value {
             return network_result(native_args, "LumiNet.ErreurIO", "attendre_canal", [&]() -> Value {
             stdlib_expect_positional(inner_runtime, *native_args.arguments, 0, "CanalClient.attendre", native_args.site);
-            run_canal_loop(inner_runtime, state, false, Value::rien(), Value::rien(), Value::rien(), object_value, native_args.site);
+            // run_canal_loop keeps its own handle for the duration of the
+            // loop, which calls back into Lumiere code; the handler holds only
+            // the raw pointer.
+            run_canal_loop(inner_runtime, Ref<CanalClientState>(state), false, Value::rien(), Value::rien(), Value::rien(), Value::objet(Ref<LumiereObject>(self)), native_args.site);
             return Value::rien();
             });
         });
 
     Value result = Value::objet(std::move(object));
-    runtime.annotate_value(result, "CanalClient", site);
+    runtime.annotate_value(result, "LumiNet.CanalClient", site);
     return result;
 }
 
-Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
+Value make_canal_server_value(const Ref<CanalServerState> &state_ref,
                               const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("ServeurCanal");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
 
     bind_object_method(object, make_native_function, "quand_connexion",
         [state](IRuntime &runtime, const NativeArgs &native_args) -> Value {
@@ -326,7 +362,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
             hints.ai_flags = AI_PASSIVE;
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(port);
-            const int rc = ::getaddrinfo(host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "ServeurCanal.écouter", gai_strerror(rc));
@@ -409,7 +445,7 @@ Value make_canal_server_value(const std::shared_ptr<CanalServerState> &state,
                              "ServeurCanal.écouter",
                              native_args.site);
 
-                    auto client_state = std::make_shared<CanalClientState>();
+                    auto client_state = make_ref<CanalClientState>();
                     client_state->fd = active_client_fd;
                     active_client_fd = kInvalidSocketHandle;
                     client_state->client_side = false;

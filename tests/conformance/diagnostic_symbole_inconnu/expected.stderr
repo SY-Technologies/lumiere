@@ -1,0 +1,2 @@
+diagnostic_symbole_inconnu/main.lum:6:14: erreur[LUM-S0057]: le symbole 'valeur_absente' n'est déclaré nulle part
+diagnostic_symbole_inconnu/main.lum:7:14: erreur[LUM-S0057]: le symbole 'fonction_absente' n'est déclaré nulle part

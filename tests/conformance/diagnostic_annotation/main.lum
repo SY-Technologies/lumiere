@@ -1,0 +1,6 @@
+// Une annotation non respectée doit dire ce qui l'attendait, pas seulement
+// quels types sont en cause.
+fonction principal() {
+    soit f: ListeFixe[Entier, 3] = [1, 2, 3]
+    afficher(f[0])
+}

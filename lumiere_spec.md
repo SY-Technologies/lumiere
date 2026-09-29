@@ -67,15 +67,29 @@ Notes:
 Supported literal forms:
 
 - integers: `0`, `42`, `1_000`
-- decimals: `3.14`, `2.0`, `1_000.25`
+- decimals: `3.14`, `2.0`, `1_000.25`, `1e3`, `1.5E-3`, `2e+2`
 - text: `"bonjour"`
 - symbols: `'A'`
 - booleans: `vrai`, `faux`
 - null-like value: `rien`
 - lists: `[1, 2, 3]`
 - dictionaries: `{"nom": "Ada", "age": 36}`
+- sets: `{1, 2, 3}`
 
-Escape sequences are supported in text and symbol literals.
+An underscore separates digits and must sit between two of them: `1_000` and
+`1.5e1_0` are literals, `_1`, `1_` and `1._5` are not. A letter or underscore
+touching the end of a number is a lexical error rather than the start of a new
+token, so a mistyped exponent is reported where it is written.
+
+An integer literal must fit in `Entier`, and one that does not is a lexical
+error. `-9223372036854775808` is not a literal but a negation applied to one, so
+the smallest `Entier` is written `-9223372036854775807 - 1`.
+
+A decimal conversion from text rejects anything that is not finite: `"nan"`,
+`"inf"` and their variants fail rather than producing a value that no arithmetic
+in the language can produce.
+
+Escape sequences are supported in text and symbol literals: `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`, and `\u{XXXXXX}` (1 to 6 hexadecimal digits, any Unicode scalar value). Any other character after a backslash is a lexical error; a literal backslash that must reach a value unchanged (a Windows path, a regex pattern) is written `\\`.
 
 ## 5. Types
 
@@ -129,9 +143,11 @@ soit profils: Dictionnaire[Texte, Entier] = {"ada": 12}
 Rules:
 
 - `N` is part of the type annotation and must be an integer literal in type position.
-- the size of a `ListeFixe` never changes after construction
-- elements may be replaced by index
-- out-of-bounds reads and writes report an `ErreurIndice` runtime failure
+- a `ListeFixe` never changes after construction: neither its size nor its elements
+- assigning to an element reports a runtime failure
+- out-of-bounds reads report an `ErreurIndice` runtime failure
+- because it cannot change, a `ListeFixe` is compared by its contents and may be
+  used as a dictionary key
 - `ListeFixe` is iterable in index order, like `Liste`
 
 Current construction surface:
@@ -287,6 +303,12 @@ pour chaque note dans notes {
   afficher(note)
 }
 ```
+
+A `Liste`, a `ListeFixe`, an `Ensemble`, a `Dictionnaire` and a `Texte` are
+iterable. A dictionary yields its keys, and a text yields its Unicode scalars.
+The loop binds one name, and the sequence is snapshotted before the first
+iteration, so adding or replacing elements inside the loop does not change what
+is visited.
 
 ### Loop control
 
@@ -611,13 +633,16 @@ Notes:
 - `taille() -> Entier`
 - `vide() -> Logique`
 - `contient(cle) -> Logique`
-- `cles() -> Liste[K]`
+- `clés() -> Liste[K]`, also spelled `cles()`
 - `valeurs() -> Liste[V]`
 - `paires() -> Liste[ListeFixe[Universel, 2]]`
 - `retirer(cle) -> V`
 
 Notes:
 
+- a dictionary holds at most one entry per key; assigning an existing key
+  overwrites it in place and leaves it in its original position
+- `pour chaque cle dans dictionnaire` walks the keys, in insertion order
 - missing keys in `retirer` raise an error
 - dictionary index assignment also enforces key/value annotations
 - `paires()` returns ordered two-element fixed lists `[clé, valeur]`
@@ -625,7 +650,27 @@ Notes:
 
 ### `Ensemble`
 
-`Ensemble[T]` is a recognized type and is supported in runtime values, but this repository currently documents less surface behavior for it than for lists and dictionaries. Treat it as implemented but less mature.
+`Ensemble[T]` holds each element once. A `{` opens a dictionary when the first
+entry is followed by `:` and a set otherwise, so `{1, 2, 3}` is a set and `{}` is
+the empty dictionary; the empty set is written `[].en_ensemble()`. Duplicates
+collapse on construction, and elements keep insertion order so iteration is
+reproducible.
+
+- `taille() -> Entier`
+- `vide() -> Logique`
+- `contient(élément) -> Logique`
+- `joindre(séparateur) -> Texte`
+- `ajouter(élément) -> Logique`, true when the element was not already present
+- `retirer(élément) -> Logique`, false when it was absent
+- `en_liste() -> Liste[T]`
+- `union(autre) -> Ensemble[T]`
+- `intersection(autre) -> Ensemble[T]`
+- `différence(autre) -> Ensemble[T]`, also spelled `difference`
+- `sous_ensemble_de(autre) -> Logique`
+
+A `Liste[T]` converts with `en_ensemble()`. Elements follow the dictionary key
+rule: they are compared with `==`, and a non-number cannot be stored. Two sets
+are compared by identity, like lists and dictionaries, not by their contents.
 
 ## 14. `Texte` methods and module
 

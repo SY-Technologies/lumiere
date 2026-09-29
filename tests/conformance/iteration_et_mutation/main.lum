@@ -1,0 +1,23 @@
+// 'pour chaque' prend un instantané de la séquence à l'entrée : muter la liste
+// pendant la boucle ne change ni le nombre de tours ni les éléments visités.
+fonction principal() {
+    soit liste = [1, 2, 3]
+    pour chaque v dans liste {
+        si v == 1 { liste.ajouter(99) }
+        afficher(v)
+    }
+    afficher(liste.taille())
+
+    // Un dictionnaire s'itère sur ses clés, dans l'ordre d'insertion.
+    soit dictionnaire = {"z": 1, "a": 2, "m": 3}
+    pour chaque cle dans dictionnaire { afficher(cle) }
+    afficher(dictionnaire.clés().taille())
+
+    // Un ensemble ne garde qu'un exemplaire de chaque élément.
+    soit ensemble = [3, 1, 3, 2].en_ensemble()
+    afficher(ensemble.taille())
+    afficher(ensemble.contient(3))
+
+    // Un texte s'itère par valeur scalaire Unicode, pas par octet.
+    pour chaque scalaire dans "aé中" { afficher(scalaire) }
+}

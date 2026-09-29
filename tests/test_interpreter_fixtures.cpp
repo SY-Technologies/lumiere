@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -14,6 +15,7 @@
 #endif
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -26,6 +28,11 @@
 #include <vector>
 
 #include "luminet_shared.hpp"
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+// Only the LumiDessin window smoke tests need this -- see their own
+// comments for why the test process itself pushes a real SDL event.
+#include <SDL3/SDL.h>
+#endif
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 #include "lumiere/lexer/lexer.hpp"
 #include "lumiere/parser/parser.hpp"
@@ -34,6 +41,24 @@ namespace
 {
 
 std::mutex g_stdio_capture_mutex;
+
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+// setenv isn't available on MSVC; _putenv_s is its Windows equivalent but
+// always overwrites, so an existing value is checked first to match
+// setenv's "third argument 0" no-overwrite behaviour the call sites rely
+// on (a CI environment that already set SDL_VIDEODRIVER is respected).
+void set_env_if_unset(const char *name, const char *value)
+{
+#ifdef _WIN32
+    if (std::getenv(name) == nullptr)
+    {
+        _putenv_s(name, value);
+    }
+#else
+    setenv(name, value, 0);
+#endif
+}
+#endif
 
 using lumiere::Lexer;
 using lumiere::Parser;
@@ -173,13 +198,6 @@ bool test_tcp_binding_available()
         }                                                                                \
     } while (false)
 
-std::string read_text_file(const std::filesystem::path &path)
-{
-    std::ifstream file(path);
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
 
 std::string trim_trailing_whitespace(std::string text)
 {
@@ -190,38 +208,30 @@ std::string trim_trailing_whitespace(std::string text)
     return text;
 }
 
-bool file_exists(const std::filesystem::path &path)
-{
-    return std::filesystem::exists(path) && std::filesystem::is_regular_file(path);
-}
 
-std::string normalize_fixture_paths(std::string text)
-{
-    std::replace(text.begin(), text.end(), '\\', '/');
-    const std::string marker = "/tests/fixtures/interpreter/";
-    std::size_t marker_pos = text.find(marker);
-    while (marker_pos != std::string::npos)
-    {
-        std::size_t start = marker_pos;
-        while (start > 0)
-        {
-            const char ch = text[start - 1];
-            if (ch == '"' || ch == '(' || ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t')
-            {
-                break;
-            }
-            --start;
-        }
-
-        text.erase(start, marker_pos - start);
-        marker_pos = text.find(marker, start + marker.size());
-    }
-    return text;
-}
 
 std::string normalize_path_text(const std::filesystem::path &path)
 {
     return path.generic_string();
+}
+
+// A path embedded in Lumière *source* text has to escape the Lumière
+// lexer's own \n/\t/\\/\" syntax: on Windows, path.string() contains
+// raw backslashes ("C:\Users\...") that the lexer otherwise tries to
+// parse as escape sequences (producing "échappement invalide" errors).
+std::string lumiere_string_literal_text(const std::string &raw)
+{
+    std::string escaped;
+    escaped.reserve(raw.size());
+    for (const char ch : raw)
+    {
+        if (ch == '\\' || ch == '"')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
 }
 
 std::pair<std::string, bool> execute_program(const std::string &source)
@@ -506,110 +516,14 @@ void write_module(const std::filesystem::path &path, const std::string &source)
     module_file << source;
 }
 
-TEST(InterpreterFixtures, MatchesFixtureExpectations)
-{
-#ifndef LUMIERE_INTERPRETER_FIXTURE_DIR
-    GTEST_SKIP() << "interpreter fixture directory not configured";
-#else
-    const std::filesystem::path fixtures_dir(LUMIERE_INTERPRETER_FIXTURE_DIR);
-    ASSERT_TRUE(std::filesystem::exists(fixtures_dir));
-
-    bool saw_fixture = false;
-    for (const auto &entry : std::filesystem::directory_iterator(fixtures_dir))
-    {
-        if (!entry.is_directory())
-        {
-            continue;
-        }
-
-        saw_fixture = true;
-        const std::filesystem::path case_dir = entry.path();
-        const std::filesystem::path source_path = case_dir / "main.lum";
-        ASSERT_TRUE(std::filesystem::exists(source_path)) << case_dir.string();
-
-        Lexer lexer(read_text_file(source_path));
-        Parser parser(lexer.tokenise());
-
-        Program program;
-        program.statements = parser.parse();
-        program.source_path = source_path.string();
-        program.source_text = read_text_file(source_path);
-
-        ASSERT_FALSE(parser.had_error()) << case_dir.string();
-
-        TreeWalker walker;
-        walker.add_import_path(case_dir);
-
-        std::ostringstream captured;
-        std::istringstream provided_input(file_exists(case_dir / "stdin.txt")
-                                              ? read_text_file(case_dir / "stdin.txt")
-                                              : std::string{});
-        auto *previous = std::cout.rdbuf(captured.rdbuf());
-        auto *previous_input = std::cin.rdbuf(provided_input.rdbuf());
-        bool completed = true;
-        std::string error_message;
-
-        try
-        {
-            walker.execute(program);
-        }
-        catch (const RuntimeError &err)
-        {
-            completed = false;
-            error_message = err.what();
-        }
-        catch (...)
-        {
-            completed = false;
-            error_message = "unknown error";
-        }
-
-        std::cout.rdbuf(previous);
-        std::cin.rdbuf(previous_input);
-
-        const std::filesystem::path stdout_path = case_dir / "expected.stdout";
-        const std::filesystem::path stderr_path = case_dir / "expected.stderr";
-        const std::filesystem::path stderr_contains_path = case_dir / "expected.stderr.contains";
-        const std::filesystem::path stdout_contains_path = case_dir / "expected.stdout.contains";
-
-        if (std::filesystem::exists(stdout_path))
-        {
-            EXPECT_EQ(trim_trailing_whitespace(captured.str()),
-                      trim_trailing_whitespace(read_text_file(stdout_path)))
-                << case_dir.string();
-        }
-        else if (std::filesystem::exists(stdout_contains_path))
-        {
-            const std::string expected_fragment = trim_trailing_whitespace(read_text_file(stdout_contains_path));
-            EXPECT_NE(captured.str().find(expected_fragment), std::string::npos) << case_dir.string();
-        }
-        else
-        {
-            EXPECT_TRUE(trim_trailing_whitespace(captured.str()).empty()) << case_dir.string();
-        }
-
-        if (std::filesystem::exists(stderr_path))
-        {
-            EXPECT_FALSE(completed) << case_dir.string();
-            EXPECT_EQ(trim_trailing_whitespace(normalize_fixture_paths(error_message)),
-                      trim_trailing_whitespace(normalize_fixture_paths(read_text_file(stderr_path))))
-                << case_dir.string();
-        }
-        else if (std::filesystem::exists(stderr_contains_path))
-        {
-            EXPECT_FALSE(completed) << case_dir.string();
-            const std::string expected_fragment = trim_trailing_whitespace(read_text_file(stderr_contains_path));
-            EXPECT_NE(error_message.find(expected_fragment), std::string::npos) << case_dir.string();
-        }
-        else
-        {
-            EXPECT_TRUE(completed) << case_dir.string() << "\n" << error_message;
-        }
-    }
-
-    EXPECT_TRUE(saw_fixture);
-#endif
-}
+// The fixture corpus under tests/fixtures/interpreter used to be replayed here,
+// through Lexer -> Parser -> TreeWalker. That pipeline skips the analyzer and
+// only ever ran one engine, so the expectations drifted onto a path no user
+// takes: three of them pinned a runtime message for a program the CLI rejects
+// statically, with a better diagnostic. scripts/conformance owns the corpus now
+// -- it runs each case through the real CLI under both engines and checks that
+// they agree, which is the property a single-engine replay cannot check. See the
+// `conformance` test registered in CMakeLists.txt.
 
 TEST(InterpreterRuntimeCall, ExecutesUserPrincipalThroughRuntimeCall)
 {
@@ -780,7 +694,7 @@ TEST(InterpreterExpressions, RejectsRedeclarationInSameScope)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterExpressions, AllowsShadowingInInnerScope)
@@ -906,7 +820,7 @@ TEST(InterpreterCollections, RejectsDictionaryLookupForMissingKey)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("cle introuvable"), std::string::npos);
+    EXPECT_NE(error.find("clé introuvable"), std::string::npos);
 }
 
 TEST(InterpreterCollections, RejectsNonIterablePourTarget)
@@ -920,7 +834,7 @@ TEST(InterpreterCollections, RejectsNonIterablePourTarget)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("n'est pas iterable"), std::string::npos);
+    EXPECT_NE(error.find("n'est pas itérable"), std::string::npos);
 }
 
 TEST(InterpreterCollections, RejectsNegativeTextIndex)
@@ -1035,7 +949,7 @@ TEST(InterpreterCasts, SupportsPrimitiveCasts)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "42\n123\nvrai\n65\nB\n9\n");
+    EXPECT_EQ(output, "42.0\n123\nvrai\n65\nB\n9\n");
 }
 
 TEST(InterpreterCasts, SupportsUnicodeSymbolLiteralsAndTextToSymbolCast)
@@ -1193,7 +1107,7 @@ TEST(InterpreterObjects, RejectsOverrideWithMismatchedSignature)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("meme signature"), std::string::npos);
+    EXPECT_NE(error.find("même signature"), std::string::npos);
 }
 
 TEST(InterpreterObjects, SupportsMemberAndIndexedAssignment)
@@ -1231,7 +1145,7 @@ TEST(InterpreterObjects, RejectsPrivateFieldAccessOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("champ prive"), std::string::npos);
+    EXPECT_NE(error.find("champ privé"), std::string::npos);
 }
 
 TEST(InterpreterObjects, AcceptsAccentlessAliasesForAccentedKeywords)
@@ -1288,7 +1202,7 @@ TEST(InterpreterObjects, RejectsPrivateMethodAccessOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("methode privee"), std::string::npos);
+    EXPECT_NE(error.find("méthode privée"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsBareParentUsage)
@@ -1343,7 +1257,7 @@ TEST(InterpreterObjects, RejectsMemberAccessOnNonObject)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("acces membre impossible"), std::string::npos);
+    EXPECT_NE(error.find("membre introuvable"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsAssignmentToPrivateFieldOutsideIci)
@@ -1359,7 +1273,7 @@ TEST(InterpreterObjects, RejectsAssignmentToPrivateFieldOutsideIci)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("champ prive"), std::string::npos);
+    EXPECT_NE(error.find("champ privé"), std::string::npos);
 }
 
 TEST(InterpreterObjects, EnforcesTypedConstructorFieldsAndAssignments)
@@ -1437,7 +1351,7 @@ TEST(InterpreterObjects, RejectsPrivateInterfaceImplementationMethod)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("ne peut pas etre privee"), std::string::npos);
+    EXPECT_NE(error.find("ne peut pas être privée"), std::string::npos);
 }
 
 TEST(InterpreterObjects, RejectsMethodCallOnNonCallableMember)
@@ -1512,7 +1426,7 @@ TEST(InterpreterObjects, RejectsRemplaceWithoutParentMethod)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("remplace utilise sans methode parente"), std::string::npos);
+    EXPECT_NE(error.find("remplace utilise sans méthode parente"), std::string::npos);
 }
 
 
@@ -1642,7 +1556,7 @@ TEST(InterpreterModules, RejectsSelectiveImportOfInternalMember)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("membre non exporte"), std::string::npos);
+    EXPECT_NE(error.find("membre non exporté"), std::string::npos);
 }
 
 TEST(InterpreterModules, RejectsUnknownModule)
@@ -1682,7 +1596,7 @@ TEST(InterpreterModules, RejectsDuplicateSelectiveBindings)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterModules, RejectsNamespaceAliasCollision)
@@ -1703,7 +1617,7 @@ TEST(InterpreterModules, RejectsNamespaceAliasCollision)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("deja declare"), std::string::npos);
+    EXPECT_NE(error.find("déjà déclaré"), std::string::npos);
 }
 
 TEST(InterpreterModules, PreservesInheritedBehaviorAcrossNamespaceImports)
@@ -1751,7 +1665,7 @@ TEST(InterpreterModules, RejectsSelectiveImportOfUnknownExportedName)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("membre non exporte"), std::string::npos);
+    EXPECT_NE(error.find("membre non exporté"), std::string::npos);
 }
 
 TEST(InterpreterModules, NamespaceAndSelectiveImportCanCoexist)
@@ -1860,7 +1774,7 @@ TEST(InterpreterBuiltinModules, SupportsCheminAndFichierModules)
         "importer Chemin.{joindre, nom, nom_sans_extension, dossier}\n"
         "importer Fichier.{existe, lire_texte}\n"
         "fonction principal() {\n"
-        "  soit chemin = joindre(\"" + import_root.string() + "\", \"note.txt\")\n"
+        "  soit chemin = joindre(\"" + lumiere_string_literal_text(import_root.string()) + "\", \"note.txt\")\n"
         "  afficher(existe(chemin) ou propager)\n"
         "  afficher(nom(chemin))\n"
         "  afficher(nom_sans_extension(chemin))\n"
@@ -1956,10 +1870,10 @@ TEST(InterpreterBuiltinModules, SupportsExpandedFichierModuleOperations)
     const std::string source =
         "importer Fichier.{ajouter_texte, creer_dossiers, ecrire_texte, est_dossier, est_fichier, existe, lire_lignes, lire_texte, lister, modifie_le, taille}\n"
         "fonction principal() {\n"
-        "  soit dossier = \"" + (import_root / "crees" / "nested").string() + "\"\n"
-        "  soit texte = \"" + (import_root / "sortie.txt").string() + "\"\n"
-        "  soit source = \"" + source_file.string() + "\"\n"
-        "  soit liste = \"" + (import_root / "liste").string() + "\"\n"
+        "  soit dossier = \"" + lumiere_string_literal_text((import_root / "crees" / "nested").string()) + "\"\n"
+        "  soit texte = \"" + lumiere_string_literal_text((import_root / "sortie.txt").string()) + "\"\n"
+        "  soit source = \"" + lumiere_string_literal_text(source_file.string()) + "\"\n"
+        "  soit liste = \"" + lumiere_string_literal_text((import_root / "liste").string()) + "\"\n"
         "  ignorer creer_dossiers(dossier)\n"
         "  ignorer ecrire_texte(texte, \"alpha\")\n"
         "  ignorer ajouter_texte(texte, \"-beta\")\n"
@@ -2024,9 +1938,9 @@ TEST(InterpreterBuiltinModules, SupportsFichierWriteLinesCopyMoveAndDelete)
     const std::string source =
         "importer Fichier.{copier, deplacer, ecrire_lignes, existe, lire_lignes, lire_texte, supprimer}\n"
         "fonction principal() {\n"
-        "  soit source = \"" + (import_root / "source.txt").string() + "\"\n"
-        "  soit copie = \"" + (import_root / "copie.txt").string() + "\"\n"
-        "  soit deplace = \"" + (import_root / "deplace.txt").string() + "\"\n"
+        "  soit source = \"" + lumiere_string_literal_text((import_root / "source.txt").string()) + "\"\n"
+        "  soit copie = \"" + lumiere_string_literal_text((import_root / "copie.txt").string()) + "\"\n"
+        "  soit deplace = \"" + lumiere_string_literal_text((import_root / "deplace.txt").string()) + "\"\n"
         "  ignorer ecrire_lignes(source, [\"un\", \"deux\", \"trois\"])\n"
         "  ignorer copier(source, copie)\n"
         "  ignorer deplacer(copie, deplace)\n"
@@ -2065,8 +1979,8 @@ TEST(InterpreterBuiltinModules, SupportsRecursiveListingAndSplitDirectoryDeletio
     const std::string source =
         "importer Fichier.{est_dossier, existe, lister_recursif, supprimer_arbre, supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  soit arbre = \"" + (import_root / "arbre").string() + "\"\n"
-        "  soit vide = \"" + (import_root / "vide").string() + "\"\n"
+        "  soit arbre = \"" + lumiere_string_literal_text((import_root / "arbre").string()) + "\"\n"
+        "  soit vide = \"" + lumiere_string_literal_text((import_root / "vide").string()) + "\"\n"
         "  soit elements = lister_recursif(arbre) ou propager\n"
         "  afficher(elements.taille())\n"
         "  afficher(elements[0])\n"
@@ -2121,6 +2035,87 @@ TEST(InterpreterBuiltinModules, RejectsInvalidCheminArguments)
     EXPECT_NE(error.find("Chemin.joindre"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, RejectsAnEmptyCheminJoindreSegmentInsteadOfLeavingAStrayTrailingSeparator)
+{
+    // A trailing empty segment used to be silently accepted: joindre("a",
+    // "b", "") returned "a/b/" (a stray trailing separator, via
+    // std::filesystem::path::operator/= appending "" as a real component)
+    // instead of being rejected or ignored.
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Chemin.{joindre}\n"
+        "fonction principal() {\n"
+        "  afficher(joindre(\"a\", \"b\", \"\"))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Chemin.joindre n'accepte pas de segment vide"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, ExposesCheminSeparateurAsForwardSlashRegardlessOfPlatform)
+{
+    // Chemin's other outputs are all normalized to forward-slash form (see
+    // path_to_text in chemin.cpp); separateur used to expose the
+    // platform-native separator instead, which is "\" on Windows and
+    // contradicts every other value this module produces.
+    const auto [output, completed] = execute_program(
+        "importer Chemin.{separateur}\n"
+        "fonction principal() {\n"
+        "  afficher(separateur)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "/\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsANegativeBaseToANonIntegerPower)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  afficher(Maths.puissance(-1.0, 0.5))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find(
+                  "Maths.puissance ne peut pas élever une valeur négative à une puissance non entière"),
+              std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, ComputesExactIntegerPowersInsteadOfLosingPrecisionThroughDouble)
+{
+    // Maths.puissance's general path converts both operands to double and
+    // calls std::pow. For Entier operands whose true result exceeds 2^53,
+    // that loses precision -- confirmed against this machine's libm:
+    // pow(3.0, 34.0) rounds to 16677181699666570.0, while the true value
+    // 3**34 = 16677181699666569 is only 16677181699666568.0 once rounded to
+    // the nearest double. When both operands are Entier with a
+    // non-negative exponent, the result is computed exactly with int64
+    // repeated squaring instead, and only converted to Decimal at the end.
+    const auto [output, completed] = execute_program(
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  afficher(Maths.puissance(3, 34))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "16677181699666568.0\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsAnActualDotDotPathSegment)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Fichier\n"
+        "fonction principal() {\n"
+        "  afficher(Fichier.existe(\"../en-dehors\"))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Fichier.existe rejette les chemins contenant '..'"), std::string::npos);
+}
+
 TEST(InterpreterBuiltinModules, RejectsReadingMissingFile)
 {
     const auto [output, completed, error] = execute_program_with_error(
@@ -2132,6 +2127,31 @@ TEST(InterpreterBuiltinModules, RejectsReadingMissingFile)
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
     EXPECT_NE(error.find("principal a échoué"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, ReportsADiskFullWriteFailureInsteadOfSilentlySucceeding)
+{
+    // /dev/full is a standard POSIX/Linux device that accepts any write and
+    // always reports it as failed with ENOSPC, and is the deterministic
+    // stand-in this codebase's own tooling can't otherwise construct for "the
+    // disk is full": std::ofstream's internal buffer can accept `<<` without
+    // complaint and only discover the failure once that buffer is actually
+    // flushed, which previously happened only in the stream's destructor,
+    // after ecrire_texte had already returned success.
+    if (!std::filesystem::exists("/dev/full"))
+    {
+        GTEST_SKIP() << "/dev/full is not available on this platform";
+    }
+
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Fichier.{ecrire_texte}\n"
+        "fonction principal() {\n"
+        "  ecrire_texte(\"/dev/full\", \"un contenu assez long pour forcer un vidage du tampon\") ou propager\n"
+        "}\n");
+
+    EXPECT_FALSE(completed) << "a full disk must be reported, not silently accepted";
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("échec pendant l'écriture"), std::string::npos) << error;
 }
 
 TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
@@ -2195,7 +2215,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output6, completed6, error6] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "non_vide").string() + "\") ou propager\n"
+        "  supprimer_dossier(\"" + lumiere_string_literal_text((import_root / "non_vide").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2206,7 +2226,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output7, completed7, error7] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_dossier}\n"
         "fonction principal() {\n"
-        "  supprimer_dossier(\"" + (import_root / "pas_dossier.txt").string() + "\") ou propager\n"
+        "  supprimer_dossier(\"" + lumiere_string_literal_text((import_root / "pas_dossier.txt").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2217,7 +2237,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidExpandedFichierUsage)
     const auto [output8, completed8, error8] = execute_program_with_error_and_import_path(
         "importer Fichier.{supprimer_arbre}\n"
         "fonction principal() {\n"
-        "  supprimer_arbre(\"" + (import_root / "introuvable").string() + "\") ou propager\n"
+        "  supprimer_arbre(\"" + lumiere_string_literal_text((import_root / "introuvable").string()) + "\") ou propager\n"
         "}\n",
         import_root);
 
@@ -2247,7 +2267,7 @@ TEST(InterpreterBuiltinModules, RejectsNamedArgumentsWhereUnsupported)
 
     EXPECT_FALSE(completed2);
     EXPECT_TRUE(output2.empty());
-    EXPECT_NE(error2.find("arguments nommes"), std::string::npos);
+    EXPECT_NE(error2.find("arguments nommés"), std::string::npos);
 }
 
 TEST(InterpreterBuiltinModulesMatrix, RejectsInvalidBuiltinArityAndTypes)
@@ -2579,7 +2599,7 @@ TEST(InterpreterBuiltinModules, RejectsInvalidTempsUsage)
             "fonction principal() {\n"
             "  Temps.attendre(Temps.millisecondes(-1))\n"
             "}\n",
-            "Temps.attendre attend une duree positive"
+            "Temps.attendre attend une durée positive"
         },
         {
             "importer Temps\n"
@@ -2909,7 +2929,196 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetTcpClientAndServer)
 
     EXPECT_TRUE(client_completed) << client_error;
     EXPECT_EQ(client_output, "vrai\n");
-    EXPECT_EQ(server_line, "bonjour\\n");
+    EXPECT_EQ(server_line, "bonjour");
+}
+
+TEST(InterpreterBuiltinModules, RejectsAnOversizedLireOctetsRequest)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    const TestSocket server_fd =
+        test_open_socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(server_fd));
+    test_set_reuseaddr(server_fd);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&addr),
+            sizeof(addr)) != 0)
+    {
+        test_close_socket(server_fd);
+        GTEST_SKIP() << "TCP binding is unavailable";
+    }
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(
+        ::getsockname(
+            server_fd,
+            reinterpret_cast<sockaddr *>(&bound),
+            &bound_len),
+        0);
+    ASSERT_EQ(::listen(server_fd, 1), 0);
+    const int port = ntohs(bound.sin_port);
+
+    // The server only needs to accept and hold the connection open long
+    // enough for the client to call lire_octets; it never has to send
+    // anything, because the size cap is checked before any recv.
+    auto future = std::async(
+        std::launch::async,
+        [server_fd]() -> bool {
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return false;
+        }
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        const bool accepted = test_socket_valid(client_fd);
+        if (accepted)
+        {
+            test_wait_until_readable(client_fd, std::chrono::milliseconds(500));
+            test_close_socket(client_fd);
+        }
+        test_close_socket(server_fd);
+        return accepted;
+    });
+
+    const auto [client_output, client_completed, client_error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "fonction principal() {\n"
+        "  soit connexion = LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ") ou propager\n"
+        "  afficher(connexion.lire_octets(20971521) ou propager)\n"
+        "  connexion.fermer()\n"
+        "}\n");
+
+    EXPECT_TRUE(future.get());
+    EXPECT_FALSE(client_completed);
+    EXPECT_TRUE(client_output.empty());
+    EXPECT_NE(client_error.find("ConnexionTCP.lire_octets ne peut pas lire plus de 10 Mo en un seul appel"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RespectsConnectTimeoutInsteadOfHangingUntilTheOsGivesUp)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_TRUE(test_socket_valid(server_fd));
+    test_set_reuseaddr(server_fd);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+    {
+        test_close_socket(server_fd);
+        GTEST_SKIP() << "TCP binding is unavailable";
+    }
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    ASSERT_EQ(::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
+    // A backlog of 1, never accepted, is the black hole this test needs: once
+    // the accept queue is full, this platform drops further SYNs silently
+    // (tcp_abort_on_overflow=0) instead of sending RST, which is exactly the
+    // "connect() never gets a reply" scenario a connect timeout has to bound.
+    ASSERT_EQ(::listen(server_fd, 1), 0);
+    const int port = ntohs(bound.sin_port);
+
+    // Fire a few non-blocking connects to fill (and overflow) that queue.
+    // Non-blocking so this setup can never itself hang on the OS's own SYN
+    // retry timeout; the sockets are left open and unaccepted for the
+    // duration of the test below.
+    std::vector<TestSocket> filler_sockets;
+    for (int i = 0; i < 4; ++i)
+    {
+        TestSocket filler = test_open_socket(AF_INET, SOCK_STREAM, 0);
+        ASSERT_TRUE(test_socket_valid(filler));
+#ifdef _WIN32
+        u_long non_blocking = 1;
+        ::ioctlsocket(filler, FIONBIO, &non_blocking);
+#else
+        const int filler_flags = ::fcntl(filler, F_GETFL, 0);
+        ::fcntl(filler, F_SETFL, filler_flags | O_NONBLOCK);
+#endif
+        sockaddr_in target{};
+        target.sin_family = AF_INET;
+        target.sin_port = htons(static_cast<uint16_t>(port));
+        target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        ::connect(filler, reinterpret_cast<sockaddr *>(&target), sizeof(target));
+        filler_sockets.push_back(filler);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  afficher(LumiNet.TCP.connecter(\"127.0.0.1\", " + std::to_string(port) + ", délai: Temps.millisecondes(300)) ou propager)\n"
+        "}\n");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    for (TestSocket &filler : filler_sockets)
+    {
+        test_close_socket(filler);
+    }
+    test_close_socket(server_fd);
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_LT(elapsed, std::chrono::seconds(5))
+        << "connect() should be bounded by délai, not the OS's own much longer SYN retry timeout";
+    EXPECT_NE(error.find("LumiNet.TCP.connecter"), std::string::npos) << error;
+}
+
+TEST(InterpreterBuiltinModules, BoundsDnsResolutionInsteadOfBlockingForever)
+{
+    SKIP_IF_LUMINET_DISABLED();
+
+    // A 0ms deadline can never be met: even the fastest possible run still has
+    // to spin up the background thread and reach the wait, so this reliably
+    // exercises the abandon-and-return-EAI_AGAIN path rather than the
+    // happens-to-finish-in-time path, deterministically and without depending
+    // on any real DNS slowness. Looped, under ASan, to also prove the
+    // abandoned lookup's own result never leaks once it finishes late.
+    bool observed_timeout = false;
+    for (int i = 0; i < 20; ++i)
+    {
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        addrinfo *result = nullptr;
+
+        const auto started = std::chrono::steady_clock::now();
+        const int rc = lumiere::getaddrinfo_with_timeout("localhost", nullptr, &hints, &result, 0);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+
+        EXPECT_LT(elapsed, std::chrono::seconds(2))
+            << "a 0ms deadline must not block on the resolver's own timing";
+
+        if (rc == EAI_AGAIN)
+        {
+            observed_timeout = true;
+        }
+        else
+        {
+            ASSERT_EQ(rc, 0);
+            ASSERT_NE(result, nullptr);
+            ::freeaddrinfo(result);
+        }
+    }
+    EXPECT_TRUE(observed_timeout) << "expected at least one 0ms lookup to be abandoned";
+
+    // The normal, generously-timed path still resolves correctly.
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    addrinfo *result = nullptr;
+    ASSERT_EQ(lumiere::getaddrinfo_with_timeout("localhost", nullptr, &hints, &result), 0);
+    ASSERT_NE(result, nullptr);
+    ::freeaddrinfo(result);
 }
 
 TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
@@ -2933,14 +3142,16 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
     socklen_t bound_len = sizeof(bound);
     ASSERT_EQ(::getsockname(probe_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len), 0);
     const int port = ntohs(bound.sin_port);
-    test_close_socket(probe_fd);
 
+    // Keep the native endpoint bound. The language endpoint asks the OS for
+    // its own port and announces readiness before we send the test packet.
     const std::string receiver_source =
         "importer LumiNet\n"
         "importer Temps\n"
         "fonction principal() {\n"
-        "  soit socket = LumiNet.UDP.ouvrir(" + std::to_string(port) + ") ou propager\n"
+        "  soit socket = LumiNet.UDP.ouvrir(0) ou propager\n"
         "  socket.définir_délai(Temps.secondes(2))\n"
+        "  socket.envoyer(\"pret\", \"127.0.0.1\", " + std::to_string(port) + ") ou propager\n"
         "  soit paquet = socket.recevoir() ou propager\n"
         "  afficher(paquet.données)\n"
         "  afficher(paquet.adresse != \"\")\n"
@@ -2952,30 +3163,28 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetUdp)
         return execute_program_with_error(receiver_source);
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    const TestSocket sender_fd = test_open_socket(AF_INET, SOCK_DGRAM, 0);
-    ASSERT_TRUE(test_socket_valid(sender_fd));
-    sockaddr_in sender_addr{};
-    sender_addr.sin_family = AF_INET;
-    sender_addr.sin_port = htons(static_cast<uint16_t>(port));
-    sender_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    const std::string payload = "salut";
-    for (int attempt = 0; attempt < 20; ++attempt)
+    const bool ready = test_wait_until_readable(probe_fd, std::chrono::seconds(2));
+    if (ready)
     {
-        ASSERT_GT(::sendto(sender_fd,
-                           payload.data(),
-                           static_cast<int>(payload.size()),
+        char announcement[4]{};
+        sockaddr_in receiver_addr{};
+        socklen_t receiver_len = sizeof(receiver_addr);
+        const auto received = ::recvfrom(probe_fd, announcement, sizeof(announcement), 0,
+                                         reinterpret_cast<sockaddr *>(&receiver_addr), &receiver_len);
+        EXPECT_EQ(received, 4);
+        EXPECT_EQ(std::string(announcement, sizeof(announcement)), "pret");
+        const std::string payload = "salut";
+        EXPECT_GT(::sendto(probe_fd, payload.data(), static_cast<int>(payload.size()),
                            0,
-                           reinterpret_cast<const sockaddr *>(&sender_addr),
-                           sizeof(sender_addr)),
+                           reinterpret_cast<const sockaddr *>(&receiver_addr),
+                           receiver_len),
                   0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    test_close_socket(sender_fd);
+    test_close_socket(probe_fd);
 
     const auto [receiver_output, receiver_completed, receiver_error] = future.get();
 
+    EXPECT_TRUE(ready) << receiver_error;
     EXPECT_TRUE(receiver_completed) << receiver_error;
     EXPECT_EQ(receiver_output, "salut\nvrai\nvrai\n");
 }
@@ -3387,7 +3596,7 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetHttpServerFileResponsesWithHtmlCo
             "importer LumiNet\n"
             "soit serveur_global = rien\n"
             "fonction page(req: Universel, rep: Universel) {\n"
-            "  rep.envoyer_fichier(200, \"" + html_path.string() + "\")\n"
+            "  rep.envoyer_fichier(200, \"" + lumiere_string_literal_text(html_path.string()) + "\")\n"
             "  serveur_global.arreter()\n"
             "}\n"
             "fonction principal() {\n"
@@ -3890,6 +4099,247 @@ TEST(InterpreterBuiltinModules, SupportsLumiNetCanalWithFragmentedFrameHeader)
     EXPECT_EQ(output, "bonjour\n");
 }
 
+TEST(InterpreterBuiltinModules, ReportsAWebSocketFrameTruncatedMidPayloadAsAnErrorNotAGracefulClose)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
+    std::promise<int> port_promise;
+    std::future<int> port_future = port_promise.get_future();
+    auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
+        {
+            return "socket";
+        }
+
+        test_set_reuseaddr(server_fd);
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(0);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+        {
+            test_close_socket(server_fd);
+            return "bind";
+        }
+
+        sockaddr_in bound{};
+        socklen_t bound_len = sizeof(bound);
+        ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
+        if (::listen(server_fd, 1) != 0)
+        {
+            test_close_socket(server_fd);
+            return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
+        }
+
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
+        {
+            test_close_socket(server_fd);
+            return "accept";
+        }
+
+        std::string request;
+        char buffer[4096];
+        while (request.find("\r\n\r\n") == std::string::npos)
+        {
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
+            if (received <= 0)
+            {
+                test_close_socket(client_fd);
+                test_close_socket(server_fd);
+                return "recv";
+            }
+            request.append(buffer, buffer + received);
+        }
+
+        const std::string ws_key_prefix = "Sec-WebSocket-Key: ";
+        const std::size_t ws_key_start = request.find(ws_key_prefix);
+        std::string ws_accept;
+        if (ws_key_start != std::string::npos)
+        {
+            const std::size_t ws_key_end = request.find("\r\n", ws_key_start);
+            const std::string ws_key = request.substr(ws_key_start + ws_key_prefix.size(),
+                                                       ws_key_end - ws_key_start - ws_key_prefix.size());
+            ws_accept = lumiere::websocket_accept_key(ws_key);
+        }
+        const std::string response =
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: " + ws_accept + "\r\n"
+            "\r\n";
+        test_send(client_fd, response.data(), response.size(), 0);
+
+        // A complete, valid header announcing a 7-byte payload ("bonjour"),
+        // then only 3 of those bytes, then a clean close: the frame started
+        // and never finished, which is not the same thing as the channel
+        // ending cleanly between frames.
+        const unsigned char header[2] = {0x81, 0x07};
+        test_send(client_fd, header, sizeof(header), 0);
+        test_send(client_fd, "bon", 3, 0);
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
+        return "ok";
+    });
+
+    const int port = port_future.get();
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "fonction reçu(message: Universel) {\n"
+        "  afficher(message)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
+        "  canal.quand_message(reçu)\n"
+        "  canal.attendre() ou propager\n"
+        "}\n");
+
+    EXPECT_EQ(future.get(), "ok");
+    EXPECT_FALSE(completed) << "a truncated mid-frame payload must surface as an error, not be treated as a graceful close";
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("a reçu une trame websocket incomplète"), std::string::npos) << error;
+}
+
+TEST(InterpreterBuiltinModules, RejectsAnOversizedFragmentedWebSocketMessage)
+{
+    SKIP_IF_LUMINET_DISABLED();
+    SKIP_IF_TCP_BINDING_UNAVAILABLE();
+    std::promise<int> port_promise;
+    std::future<int> port_future = port_promise.get_future();
+    auto future = std::async(std::launch::async, [promise = std::move(port_promise)]() mutable -> std::string {
+        const TestSocket server_fd = test_open_socket(AF_INET, SOCK_STREAM, 0);
+        if (!test_socket_valid(server_fd))
+        {
+            return "socket";
+        }
+
+        test_set_reuseaddr(server_fd);
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(0);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(server_fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0)
+        {
+            test_close_socket(server_fd);
+            return "bind";
+        }
+
+        sockaddr_in bound{};
+        socklen_t bound_len = sizeof(bound);
+        ::getsockname(server_fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
+        if (::listen(server_fd, 1) != 0)
+        {
+            test_close_socket(server_fd);
+            return "listen";
+        }
+        promise.set_value(ntohs(bound.sin_port));
+        if (!test_wait_until_readable(server_fd, std::chrono::seconds(5)))
+        {
+            test_close_socket(server_fd);
+            return "accept timeout";
+        }
+
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
+        const TestSocket client_fd = ::accept(server_fd, reinterpret_cast<sockaddr *>(&client_addr), &client_len);
+        if (!test_socket_valid(client_fd))
+        {
+            test_close_socket(server_fd);
+            return "accept";
+        }
+
+        std::string request;
+        char buffer[4096];
+        while (request.find("\r\n\r\n") == std::string::npos)
+        {
+            const TestRecvSize received = test_recv(client_fd, buffer, sizeof(buffer), 0);
+            if (received <= 0)
+            {
+                test_close_socket(client_fd);
+                test_close_socket(server_fd);
+                return "recv";
+            }
+            request.append(buffer, buffer + received);
+        }
+
+        const std::string ws_key_prefix = "Sec-WebSocket-Key: ";
+        const std::size_t ws_key_start = request.find(ws_key_prefix);
+        std::string ws_accept;
+        if (ws_key_start != std::string::npos)
+        {
+            const std::size_t ws_key_end = request.find("\r\n", ws_key_start);
+            const std::string ws_key = request.substr(ws_key_start + ws_key_prefix.size(),
+                                                       ws_key_end - ws_key_start - ws_key_prefix.size());
+            ws_accept = lumiere::websocket_accept_key(ws_key);
+        }
+        const std::string response =
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Accept: " + ws_accept + "\r\n"
+            "\r\n";
+        test_send(client_fd, response.data(), response.size(), 0);
+
+        // kMaxWebSocketMessageBytes (canal_runtime.cpp) is 10 MiB. Each frame's
+        // payload is capped at 65535 bytes by the parser, so this sends one
+        // opening text fragment (fin=0) plus enough 0x0 continuation frames
+        // (fin=0) to push the reassembled total past the cap without ever
+        // sending a fin=1 frame -- exactly the "endless small continuation
+        // frames" shape the cap exists to stop.
+        const std::size_t frame_payload_size = 65535;
+        const std::string payload(frame_payload_size, 'a');
+        auto send_frame = [&](unsigned char opcode, bool fin) {
+            unsigned char header[4];
+            header[0] = static_cast<unsigned char>((fin ? 0x80 : 0x00) | opcode);
+            header[1] = 126; // extended 16-bit length follows
+            header[2] = static_cast<unsigned char>((frame_payload_size >> 8) & 0xFF);
+            header[3] = static_cast<unsigned char>(frame_payload_size & 0xFF);
+            test_send(client_fd, header, sizeof(header), 0);
+            test_send(client_fd, payload.data(), payload.size(), 0);
+        };
+
+        send_frame(0x1, false);
+        constexpr int kFramesToExceedCap = 161; // 161 * 65535 > 10 MiB
+        for (int i = 0; i < kFramesToExceedCap; ++i)
+        {
+            send_frame(0x0, false);
+        }
+
+        if (test_wait_until_readable(client_fd, std::chrono::milliseconds(500)))
+        {
+            char discard_buf[256];
+            test_recv(client_fd, discard_buf, sizeof(discard_buf), 0);
+        }
+
+        test_close_socket(client_fd);
+        test_close_socket(server_fd);
+        return "ok";
+    });
+
+    const int port = port_future.get();
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer LumiNet\n"
+        "fonction principal() {\n"
+        "  soit canal = LumiNet.Canal.connecter(\"ws://127.0.0.1:" + std::to_string(port) + "/\") ou propager\n"
+        "  canal.attendre() ou propager\n"
+        "}\n");
+
+    EXPECT_EQ(future.get(), "ok");
+    EXPECT_FALSE(completed);
+    EXPECT_NE(error.find("trop volumineux"), std::string::npos) << error;
+}
+
 TEST(InterpreterBuiltinModules, SupportsMathsModule)
 {
     const auto [output, completed] = execute_program(
@@ -3923,7 +4373,14 @@ TEST(InterpreterBuiltinModules, SupportsMathsModule)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "vrai\n7\n2.5\n4\n2\n4\n3\n4\n3\n9\n3\n32\n1\n2\n3\n1\n1\n1\nvrai\n3.14159\n180\nvrai\nvrai\nvrai\nvrai\n");
+    // tan(pi/4) is 0.9999999999999999 in double arithmetic, and pi is not
+    // 3.14159. Both used to print rounded to six significant digits, which hid
+    // what the runtime had actually computed; decimals now print the shortest
+    // text that reads back as the same value, and a whole-numbered Décimal
+    // keeps its point so it cannot be mistaken for an Entier.
+    EXPECT_EQ(output,
+              "vrai\n7\n2.5\n4\n2.0\n4\n3\n4\n3\n9.0\n3.0\n32.0\n1.0\n2.0\n3.0\n1.0\n1.0\n"
+              "0.9999999999999999\nvrai\n3.141592653589793\n180.0\nvrai\nvrai\nvrai\nvrai\n");
 }
 
 TEST(InterpreterBuiltinModules, SupportsSelectiveImportFromMathsModule)
@@ -3938,7 +4395,7 @@ TEST(InterpreterBuiltinModules, SupportsSelectiveImportFromMathsModule)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "8\n3\n27\nvrai\n");
+    EXPECT_EQ(output, "8\n3\n27.0\nvrai\n");
 }
 
 TEST(InterpreterBuiltinModules, PreservesMathsAliasesForCompatibility)
@@ -3954,7 +4411,8 @@ TEST(InterpreterBuiltinModules, PreservesMathsAliasesForCompatibility)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "6\n3\n1\n1\n1\n");
+    // tangente(pi/4) is not exactly 1; see SupportsMathsModule above.
+    EXPECT_EQ(output, "6\n3\n1.0\n1.0\n0.9999999999999999\n");
 }
 
 TEST(InterpreterBuiltinModules, RejectsInvalidMathsUsage)
@@ -3990,6 +4448,1595 @@ TEST(InterpreterBuiltinModules, RejectsInvalidMathsUsage)
     EXPECT_NE(error3.find("Maths.racine_n"), std::string::npos);
 }
 
+TEST(InterpreterBuiltinModules, SupportsCollectionsModuleCoreOperations)
+{
+    const auto [output, completed] = execute_program(
+        "importer Collections.{étendue, transformer, filtrer, réduire, trouver, position, tout, au_moins_un, trier, trier_par, inverser}\n"
+        "fonction principal() {\n"
+        "  afficher(étendue(0, 5, 1))\n"
+        "  afficher(étendue(5, 0, -1))\n"
+        "  afficher(étendue(0, 0, 1))\n"
+        "  afficher(transformer(étendue(1, 5, 1), fonction(x: Universel) -> Universel { retourne x * x }))\n"
+        "  afficher(filtrer(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x % 2 == 0 }))\n"
+        "  afficher(réduire(étendue(1, 5, 1), 0, fonction(acc: Universel, x: Universel) -> Universel { retourne acc + x }))\n"
+        "  afficher(trouver(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x > 5 }))\n"
+        "  afficher(trouver(étendue(0, 3, 1), fonction(x: Universel) -> Universel { retourne x > 50 }))\n"
+        "  afficher(position(étendue(0, 10, 1), fonction(x: Universel) -> Universel { retourne x > 5 }))\n"
+        "  afficher(position(étendue(0, 3, 1), fonction(x: Universel) -> Universel { retourne x > 50 }))\n"
+        "  afficher(tout(étendue(0, 5, 1), fonction(x: Universel) -> Universel { retourne x >= 0 }))\n"
+        "  afficher(tout([], fonction(x: Universel) -> Universel { retourne faux }))\n"
+        "  afficher(au_moins_un(étendue(0, 5, 1), fonction(x: Universel) -> Universel { retourne x == 3 }))\n"
+        "  afficher(au_moins_un([], fonction(x: Universel) -> Universel { retourne vrai }))\n"
+        "  afficher(trier([3, 1, 2]))\n"
+        "  afficher(trier([3, 1.5, 2]))\n"
+        "  afficher(trier([\"banane\", \"abricot\", \"cerise\"]))\n"
+        "  afficher(trier_par([\"bb\", \"a\", \"ccc\"], fonction(x: Universel) -> Universel { retourne x.taille() }))\n"
+        "  afficher(inverser([1, 2, 3]))\n"
+        "  afficher(inverser([]))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "[0, 1, 2, 3, 4]\n"
+        "[5, 4, 3, 2, 1]\n"
+        "[]\n"
+        "[1, 4, 9, 16]\n"
+        "[0, 2, 4, 6, 8]\n"
+        "10\n"
+        "6\n"
+        "rien\n"
+        "6\n"
+        "rien\n"
+        "vrai\n"
+        "vrai\n"
+        "vrai\n"
+        "faux\n"
+        "[1, 2, 3]\n"
+        "[1.5, 2, 3]\n"
+        "[abricot, banane, cerise]\n"
+        "[a, bb, ccc]\n"
+        "[3, 2, 1]\n"
+        "[]\n");
+}
+
+TEST(InterpreterBuiltinModules, CollectionsAlgorithmsAcceptEveryIterableKindMatchingPourChaque)
+{
+    // Collections algorithms must accept the same five iterable kinds as
+    // `pour chaque`, with the same contract: a Dictionnaire yields its keys.
+    const auto [output, completed] = execute_program(
+        "importer Collections.{transformer}\n"
+        "fonction principal() {\n"
+        "  soit liste_fixe = [1, 2, 3].en_liste_fixe(3)\n"
+        "  soit ensemble = [3, 1, 2].en_ensemble()\n"
+        "  soit dictionnaire = {\"un\": 1, \"deux\": 2}\n"
+        "  afficher(transformer(liste_fixe, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(ensemble, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(dictionnaire, fonction(x: Universel) -> Universel { retourne x }))\n"
+        "  afficher(transformer(\"abc\", fonction(x: Universel) -> Universel { retourne x }))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "[1, 2, 3]\n[3, 1, 2]\n[un, deux]\n[a, b, c]\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsANonIterableCollectionsArgument)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{filtrer}\n"
+        "fonction principal() {\n"
+        "  afficher(filtrer(5, fonction(x: Universel) -> Universel { retourne vrai }))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(
+        error.find("Collections.filtrer attend une valeur itérable (Liste, ListeFixe, Ensemble, Dictionnaire ou Texte)"),
+        std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsACollectionsPredicateThatDoesNotReturnLogique)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{filtrer}\n"
+        "fonction principal() {\n"
+        "  afficher(filtrer([1, 2, 3], fonction(x: Universel) -> Universel { retourne 5 }))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.filtrer : le prédicat doit retourner Logique"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsAZeroStepInCollectionsÉtendue)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{étendue}\n"
+        "fonction principal() {\n"
+        "  afficher(étendue(0, 5, 0))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.étendue: pas ne peut pas être zéro"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsMixedTypesInCollectionsTrier)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Collections.{trier}\n"
+        "fonction principal() {\n"
+        "  afficher(trier([1, \"a\"]))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.trier ne peut pas trier des valeurs de types différents ensemble"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, RejectsSortingNonNombreInCollectionsTrier)
+{
+    // non_nombre has no order relative to anything (including itself), and
+    // letting it reach std::stable_sort's comparator would be undefined
+    // behavior, not just a surprising result.
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer Maths\n"
+        "importer Collections.{trier}\n"
+        "fonction principal() {\n"
+        "  afficher(trier([1.0, Maths.non_nombre]))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Collections.trier ne peut pas trier non_nombre"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, SupportsJsonParsingEncodingAndErrors)
+{
+    // Mirrors what was manually verified against both engines on the CLI
+    // before this test was written. Lumiere text literals have no escape
+    // syntax, so JSON source text containing '"' is built by concatenating
+    // a Symbole quote ('"') in, exactly as a real Lumiere program would have
+    // to.
+    const auto [output, completed] = execute_program(
+        "importer JSON\n"
+        "importer Maths\n"
+        "fonction principal() {\n"
+        "  soit q = '\"'\n"
+        "  soit texte = \"{\" + q + \"nom\" + q + \": \" + q + \"Ada\" + q + \", \" + q + \"age\" + q + \": 36, \" + q + \"actif\" + q + \": true, \" + q + \"tags\" + q + \": [1, 2.5, null, \" + q + \"x\" + q + \"]}\"\n"
+        "  soit v = agir selon JSON.analyser(texte) {\n"
+        "    Succès(val) -> val\n"
+        "    Échec(e) -> { afficher(\"echec inattendu: \" + e.cause) rien }\n"
+        "  }\n"
+        "  afficher(\"nom: \" + v[\"nom\"])\n"
+        "  afficher(\"age: \" + v[\"age\"])\n"
+        "  afficher(\"actif: \" + v[\"actif\"])\n"
+        "  afficher(\"tags: \" + v[\"tags\"])\n"
+        "  soit compact = agir selon JSON.encoder(v) {\n"
+        "    Succès(t) -> t\n"
+        "    Échec(e) -> \"echec: \" + e.cause\n"
+        "  }\n"
+        "  afficher(compact)\n"
+        "  soit joli = agir selon JSON.encoder_indenté(v, 2) {\n"
+        "    Succès(t) -> t\n"
+        "    Échec(e) -> \"echec: \" + e.cause\n"
+        "  }\n"
+        "  afficher(joli)\n"
+        "  soit mauvais = \"{\" + q + \"a\" + q + \": 1,}\"\n"
+        "  agir selon JSON.analyser(mauvais) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur: \" + e.cause + \" ligne=\" + e.ligne + \" colonne=\" + e.colonne)\n"
+        "  }\n"
+        "  soit texte_dup = \"{\" + q + \"a\" + q + \": 1, \" + q + \"a\" + q + \": 2}\"\n"
+        "  agir selon JSON.analyser(texte_dup) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur dup: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon JSON.analyser(\"99999999999999999999\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur gros: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon JSON.encoder(Maths.non_nombre) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur non_nombre: \" + e.cause)\n"
+        "  }\n"
+        "  soit cyclique_liste = [1, 2, 3]\n"
+        "  cyclique_liste[0] = cyclique_liste\n"
+        "  agir selon JSON.encoder(cyclique_liste) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur cycle: \" + e.cause + \" chemin=\" + e.chemin)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "nom: Ada\n"
+        "age: 36\n"
+        "actif: vrai\n"
+        "tags: [1, 2.5, rien, x]\n"
+        "{\"nom\":\"Ada\",\"age\":36,\"actif\":true,\"tags\":[1,2.5,null,\"x\"]}\n"
+        "{\n"
+        "  \"nom\": \"Ada\",\n"
+        "  \"age\": 36,\n"
+        "  \"actif\": true,\n"
+        "  \"tags\": [\n"
+        "    1,\n"
+        "    2.5,\n"
+        "    null,\n"
+        "    \"x\"\n"
+        "  ]\n"
+        "}\n"
+        "erreur: clé de chaîne attendue dans un objet JSON ligne=1 colonne=9\n"
+        "erreur dup: clé d'objet dupliquée: \"a\"\n"
+        "erreur gros: nombre entier hors des limites de Entier\n"
+        "erreur non_nombre: infini et non_nombre ne sont pas des nombres JSON\n"
+        "erreur cycle: structure cyclique détectée chemin=$[0]\n");
+}
+
+TEST(InterpreterBuiltinModules, JsonAnalyserDecodesUnicodeEscapesAndRejectsRawControlCharacters)
+{
+    const auto [output, completed] = execute_program(
+        "importer JSON\n"
+        "fonction principal() {\n"
+        "  soit q = '\"'\n"
+        "  soit texte = \"\" + q + \"A\\\\u00e9\\\\ud83d\\\\ude00\" + q\n"
+        "  agir selon JSON.analyser(texte) {\n"
+        "    Succès(v) -> afficher(v)\n"
+        "    Échec(e) -> afficher(\"erreur: \" + e.cause)\n"
+        "  }\n"
+        "  soit avec_controle = \"\" + q + \"a\" + \"\t\" + \"b\" + q\n"
+        "  agir selon JSON.analyser(avec_controle) {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur controle: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "Aé😀\n"
+        "erreur controle: caractère de contrôle non échappé dans une chaîne\n");
+}
+
+TEST(InterpreterBuiltinModules, RejectsJsonEncoderIndenteOutOfRangeSpaces)
+{
+    const auto [output, completed, error] = execute_program_with_error(
+        "importer JSON\n"
+        "fonction principal() {\n"
+        "  afficher(JSON.encoder_indenté(42, 9))\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("JSON.encoder_indenté attend un nombre d'espaces entre 0 et 8"), std::string::npos);
+}
+
+
+TEST(InterpreterBuiltinModules, RegexSupportsAnalyserCorrespondChercherTrouverTousAndRemplacer)
+{
+    // Mirrors what was manually verified against both engines on the CLI
+    // before this test was written (a(b+)c against several inputs).
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction principal() {\n"
+        "  soit motif = agir selon Regex.analyser(\"a(b+)c\") {\n"
+        "    Succès(m) -> m\n"
+        "    Échec(e) -> { afficher(\"echec analyser: \" + e.cause) rien }\n"
+        "  }\n"
+        "  afficher(\"correspond abc: \" + Regex.correspond(motif, \"abc\"))\n"
+        "  afficher(\"correspond abbbc: \" + Regex.correspond(motif, \"abbbc\"))\n"
+        "  afficher(\"correspond xabcx: \" + Regex.correspond(motif, \"xabcx\"))\n"
+        "  soit trouve = Regex.chercher(motif, \"xxabbcyy\")\n"
+        "  si trouve != rien {\n"
+        "    afficher(\"texte: \" + trouve.texte())\n"
+        "    afficher(\"début: \" + trouve.début())\n"
+        "    afficher(\"fin: \" + trouve.fin())\n"
+        "    afficher(\"groupe1: \" + trouve.groupe(1))\n"
+        "    afficher(\"groupes: \" + trouve.groupes())\n"
+        "  } sinon {\n"
+        "    afficher(\"pas trouvé\")\n"
+        "  }\n"
+        "  soit sans_match = Regex.chercher(motif, \"zzz\")\n"
+        "  afficher(\"sans_match est rien: \" + (sans_match == rien))\n"
+        "  soit tous = Regex.trouver_tous(motif, \"ac abc abbc\")\n"
+        "  afficher(\"nombre de correspondances: \" + tous.taille())\n"
+        "  pour chaque m dans tous {\n"
+        "    afficher(\"  match: \" + m.texte())\n"
+        "  }\n"
+        "  afficher(Regex.remplacer(motif, \"abc et abbc\", \"[$1]\"))\n"
+        "  afficher(Regex.remplacer_tout(motif, \"abc et abbc\", \"[$1]\"))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "correspond abc: vrai\n"
+        "correspond abbbc: vrai\n"
+        "correspond xabcx: faux\n"
+        "texte: abbc\n"
+        "début: 2\n"
+        "fin: 6\n"
+        "groupe1: bb\n"
+        "groupes: [bb]\n"
+        "sans_match est rien: vrai\n"
+        "nombre de correspondances: 2\n"
+        "  match: abc\n"
+        "  match: abbc\n"
+        "[b] et abbc\n"
+        "[b] et [bb]\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexSupportsAnchorsClassesBoundedRepetitionAlternationAndShorthand)
+{
+    // Mirrors what was manually verified against both engines on the CLI:
+    // ^/$ anchors, [a-c] ranges, [^0-9] negation, {m,n} bounded repetition
+    // (greedy), alternation, ASCII \d\s\w shorthand classes, malformed
+    // patterns, and a non-ASCII (Unicode scalar) literal match.
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit m1 = Regex.analyser(\"^abc$\") ou propager\n"
+        "  afficher(\"anchors abc: \" + Regex.correspond(m1, \"abc\"))\n"
+        "  afficher(\"anchors xabc: \" + Regex.correspond(m1, \"xabc\"))\n"
+        "\n"
+        "  soit m2 = Regex.analyser(\"[a-c]+\") ou propager\n"
+        "  soit r2 = Regex.chercher(m2, \"zzabccbaZZ\")\n"
+        "  si r2 != rien { afficher(\"class match: \" + r2.texte()) } sinon { afficher(\"class: aucun\") }\n"
+        "\n"
+        "  soit m3 = Regex.analyser(\"[^0-9]+\") ou propager\n"
+        "  soit r3 = Regex.chercher(m3, \"123abc456\")\n"
+        "  si r3 != rien { afficher(\"neg class match: \" + r3.texte()) } sinon { afficher(\"neg class: aucun\") }\n"
+        "\n"
+        "  soit m4 = Regex.analyser(\"a{2,3}\") ou propager\n"
+        "  soit r4 = Regex.chercher(m4, \"aaaaa\")\n"
+        "  si r4 != rien { afficher(\"bounded match: \" + r4.texte()) } sinon { afficher(\"bounded: aucun\") }\n"
+        "\n"
+        "  soit m5 = Regex.analyser(\"colou?r|chat\") ou propager\n"
+        "  afficher(\"alt1: \" + Regex.correspond(m5, \"color\"))\n"
+        "  afficher(\"alt2: \" + Regex.correspond(m5, \"colour\"))\n"
+        "  afficher(\"alt3: \" + Regex.correspond(m5, \"chat\"))\n"
+        "  afficher(\"alt4: \" + Regex.correspond(m5, \"dog\"))\n"
+        "\n"
+        "  soit m6 = Regex.analyser(\"\\\\d+\\\\s\\\\w+\") ou propager\n"
+        "  soit r6 = Regex.chercher(m6, \"xx 42 salut99 yy\")\n"
+        "  si r6 != rien { afficher(\"shorthand match: \" + r6.texte()) } sinon { afficher(\"shorthand: aucun\") }\n"
+        "\n"
+        "  agir selon Regex.analyser(\"a(b\") { Succès(_) -> afficher(\"inattendu succès\") Échec(e) -> afficher(\"erreur motif: \" + e.cause) }\n"
+        "  agir selon Regex.analyser(\"a**\") { Succès(_) -> afficher(\"inattendu succès\") Échec(e) -> afficher(\"erreur motif2: \" + e.cause) }\n"
+        "\n"
+        "  soit m8 = Regex.analyser(\"é+\") ou propager\n"
+        "  soit r8 = Regex.chercher(m8, \"cafés très bééé chic\")\n"
+        "  si r8 != rien { afficher(\"unicode match: \" + r8.texte() + \" début=\" + r8.début() + \" fin=\" + r8.fin()) } sinon { afficher(\"unicode: aucun\") }\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec executer: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "anchors abc: vrai\n"
+        "anchors xabc: faux\n"
+        "class match: abccba\n"
+        "neg class match: abc\n"
+        "bounded match: aaa\n"
+        "alt1: vrai\n"
+        "alt2: vrai\n"
+        "alt3: vrai\n"
+        "alt4: faux\n"
+        "shorthand match: 42 salut99\n"
+        "erreur motif: parenthèse fermante ')' attendue\n"
+        "erreur motif2: quantificateur sans opérande\n"
+        "unicode match: é début=3 fin=4\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexTrouverTousHandlesEmptyMatchesAcrossMultipleRunCalls)
+{
+    // Regression test for a bug found during manual verification: the NFA
+    // simulation's per-step instruction-dedup generation counter used to be
+    // local to RegexMatcher::run(), reset to 0 on every call, while the
+    // dedup marks array (m_visited) is a member that persists across calls.
+    // trouver_tous() constructs one RegexMatcher and calls run() repeatedly
+    // to scan forward, so the second call's fresh generation 0 collided with
+    // marks the first call had already left behind, and add_thread()
+    // wrongly treated the start instruction as "already visited this step",
+    // silently finding nothing after the first match. Fixed by making the
+    // generation counter a persistent member (m_gen). "a*" against "bab"
+    // must find all four matches: "", "a", "", "".
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit motif = Regex.analyser(\"a*\") ou propager\n"
+        "  soit tous = Regex.trouver_tous(motif, \"bab\")\n"
+        "  afficher(\"empty-match count: \" + tous.taille())\n"
+        "  pour chaque m dans tous { afficher(\"  [\" + m.texte() + \"] \" + m.début() + \"-\" + m.fin()) }\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "empty-match count: 4\n"
+        "  [] 0-0\n"
+        "  [a] 1-2\n"
+        "  [] 2-2\n"
+        "  [] 3-3\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexSupportsCaptureGroupAccessAndNonParticipatingGroupsAndEmptyPattern)
+{
+    const auto [output, completed] = execute_program(
+        "importer Regex\n"
+        "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+        "  soit m1 = Regex.analyser(\"(a)(b)(c)\") ou propager\n"
+        "  soit r1 = Regex.chercher(m1, \"xabcx\")\n"
+        "  si r1 != rien {\n"
+        "    afficher(\"g0: \" + r1.groupe(0))\n"
+        "    afficher(\"g1: \" + r1.groupe(1))\n"
+        "    afficher(\"g2: \" + r1.groupe(2))\n"
+        "    afficher(\"g3: \" + r1.groupe(3))\n"
+        "    afficher(\"groupes: \" + r1.groupes())\n"
+        "  }\n"
+        "\n"
+        "  soit m2 = Regex.analyser(\"(a)|(b)\") ou propager\n"
+        "  soit r2 = Regex.chercher(m2, \"b\")\n"
+        "  si r2 != rien {\n"
+        "    afficher(\"g1 non participant: \" + r2.groupe(1))\n"
+        "    afficher(\"g2 participant: \" + r2.groupe(2))\n"
+        "  }\n"
+        "\n"
+        "  soit m3 = Regex.analyser(\"\") ou propager\n"
+        "  afficher(\"motif vide correspond vide: \" + Regex.correspond(m3, \"\"))\n"
+        "  afficher(\"motif vide correspond a: \" + Regex.correspond(m3, \"a\"))\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "g0: abc\n"
+        "g1: a\n"
+        "g2: b\n"
+        "g3: c\n"
+        "groupes: [a, b, c]\n"
+        "g1 non participant: rien\n"
+        "g2 participant: b\n"
+        "motif vide correspond vide: vrai\n"
+        "motif vide correspond a: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, RegexRaisesRuntimeErrorsForOutOfRangeGroupAccess)
+{
+    // Correspondance.groupe(N) and remplacer's "$N" placeholders both treat
+    // an out-of-range capture-group number as a caller contract violation
+    // (a direct runtime error), not a Résultat failure — mirroring how the
+    // rest of the stdlib distinguishes programmer errors from expected
+    // failure modes. This also exercises the CALL_MEMBER-on-native-function
+    // path on both backends, whose call-site tracking (source path,
+    // line/column) was fixed alongside this module.
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer Regex\n"
+            "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+            "  soit motif = Regex.analyser(\"(a)(b)\") ou propager\n"
+            "  soit r = Regex.chercher(motif, \"ab\")\n"
+            "  si r != rien {\n"
+            "    afficher(r.groupe(5))\n"
+            "  }\n"
+            "  retourne Succès(rien)\n"
+            "}\n"
+            "fonction principal() {\n"
+            "  agir selon executer() {\n"
+            "    Succès(_) -> rien\n"
+            "    Échec(e) -> afficher(e.cause)\n"
+            "  }\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Correspondance.groupe: numéro de groupe invalide"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer Regex\n"
+            "fonction executer() -> Résultat[Rien, Regex.ErreurRegex] {\n"
+            "  soit motif = Regex.analyser(\"(a)\") ou propager\n"
+            "  afficher(Regex.remplacer(motif, \"abc\", \"[$5]\"))\n"
+            "  retourne Succès(rien)\n"
+            "}\n"
+            "fonction principal() {\n"
+            "  agir selon executer() {\n"
+            "    Succès(_) -> rien\n"
+            "    Échec(e) -> afficher(e.cause)\n"
+            "  }\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Regex.remplacer: numéro de groupe invalide dans le remplacement: $5"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, TempsSupportsIso8601ParsingAndFormattingRoundTrip)
+{
+    // Mirrors what was manually verified against both engines on the CLI:
+    // Z and numeric-offset inputs that name the same instant parse to the
+    // same Instant, sub-second fractions truncate to milliseconds, and
+    // formater_iso8601's output is always UTC/Z and round-trips exactly.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction executer() -> Résultat[Rien, Temps.ErreurTemps] {\n"
+        "  soit i1 = Temps.analyser_iso8601(\"2024-07-01T12:00:00Z\") ou propager\n"
+        "  afficher(\"formater: \" + Temps.formater_iso8601(i1))\n"
+        "  soit i2 = Temps.analyser_iso8601(\"2024-07-01T14:00:00+02:00\") ou propager\n"
+        "  afficher(\"memes horodatages: \" + (i1.en_horodatage() == i2.en_horodatage()))\n"
+        "  soit i3 = Temps.analyser_iso8601(\"2024-07-01T14:30:00.250+0200\") ou propager\n"
+        "  afficher(\"fraction: \" + Temps.formater_iso8601(i3))\n"
+        "  soit roundtrip = Temps.analyser_iso8601(Temps.formater_iso8601(i3)) ou propager\n"
+        "  afficher(\"aller-retour: \" + (roundtrip.en_horodatage() == i3.en_horodatage()))\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "formater: 2024-07-01T12:00:00.000Z\n"
+        "memes horodatages: vrai\n"
+        "fraction: 2024-07-01T12:30:00.250Z\n"
+        "aller-retour: vrai\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsSupportsNamedTimezoneConversionAcrossDstBoundaries)
+{
+    // Mirrors what was manually verified against both engines on the CLI,
+    // and independently against Python's zoneinfo reading the same host
+    // tzdata: dans_fuseau derives correct calendar fields and UTC offsets in
+    // both a Northern-hemisphere zone (Europe/Paris, CEST in July, CET in
+    // January) and a Southern-hemisphere one (Australia/Sydney, whose DST
+    // months are inverted relative to Paris's).
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction executer() -> Résultat[Rien, Temps.ErreurTemps] {\n"
+        "  soit paris = Temps.fuseau(\"Europe/Paris\") ou propager\n"
+        "  afficher(\"nom: \" + paris.nom())\n"
+        "\n"
+        "  soit été = Temps.analyser_iso8601(\"2024-07-01T12:00:00Z\") ou propager\n"
+        "  soit dh_été = Temps.dans_fuseau(été, paris)\n"
+        "  afficher(\"été: \" + dh_été.année() + \"-\" + dh_été.mois() + \"-\" + dh_été.jour() + \" \" + dh_été.heure() + \":\" + dh_été.minute() + \":\" + dh_été.seconde())\n"
+        "  afficher(\"été décalage: \" + dh_été.décalage_utc_secondes())\n"
+        "  afficher(\"dh.fuseau().nom(): \" + dh_été.fuseau().nom())\n"
+        "  afficher(\"dh.instant(): \" + (dh_été.instant().en_horodatage() == été.en_horodatage()))\n"
+        "\n"
+        "  soit hiver = Temps.analyser_iso8601(\"2024-01-15T12:00:00Z\") ou propager\n"
+        "  soit dh_hiver = Temps.dans_fuseau(hiver, paris)\n"
+        "  afficher(\"hiver décalage: \" + dh_hiver.décalage_utc_secondes())\n"
+        "\n"
+        "  soit sydney = Temps.fuseau(\"Australia/Sydney\") ou propager\n"
+        "  soit sydney_été = Temps.analyser_iso8601(\"2024-01-15T00:00:00Z\") ou propager\n"
+        "  soit dh_sydney_été = Temps.dans_fuseau(sydney_été, sydney)\n"
+        "  afficher(\"sydney janvier décalage: \" + dh_sydney_été.décalage_utc_secondes())\n"
+        "  soit sydney_hiver = Temps.analyser_iso8601(\"2024-07-01T00:00:00Z\") ou propager\n"
+        "  soit dh_sydney_hiver = Temps.dans_fuseau(sydney_hiver, sydney)\n"
+        "  afficher(\"sydney juillet décalage: \" + dh_sydney_hiver.décalage_utc_secondes())\n"
+        "\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "nom: Europe/Paris\n"
+        "été: 2024-7-1 14:0:0\n"
+        "été décalage: 7200\n"
+        "dh.fuseau().nom(): Europe/Paris\n"
+        "dh.instant(): vrai\n"
+        "hiver décalage: 3600\n"
+        "sydney janvier décalage: 39600\n"
+        "sydney juillet décalage: 36000\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsRejectsUnknownAndUnsafeTimezoneNamesAndAmbiguousIso8601)
+{
+    // Temps.fuseau must reject both a name that isn't a real IANA zone and
+    // one crafted to escape the zoneinfo directory (path traversal), and
+    // analyser_iso8601 must reject a timestamp with no Z/offset rather than
+    // silently treating it as local time -- all three explicit Échecs, not
+    // runtime errors, since a caller-supplied string is expected to fail
+    // sometimes.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  agir selon Temps.fuseau(\"Pas/UnFuseau\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"erreur fuseau: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.fuseau(\"../../../etc/passwd\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès traversal\")\n"
+        "    Échec(e) -> afficher(\"erreur traversal: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.analyser_iso8601(\"2024-07-01T12:00:00\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès sans fuseau\")\n"
+        "    Échec(e) -> afficher(\"erreur sans fuseau: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon Temps.analyser_iso8601(\"2024-13-01T12:00:00Z\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès mois invalide\")\n"
+        "    Échec(e) -> afficher(\"erreur mois: \" + e.cause)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "erreur fuseau: fuseau horaire introuvable: Pas/UnFuseau\n"
+        "erreur traversal: nom de fuseau horaire invalide: \"../../../etc/passwd\"\n"
+        "erreur sans fuseau: fuseau UTC requis (Z ou décalage numérique)\n"
+        "erreur mois: valeurs de date/heure invalides\n");
+}
+
+TEST(InterpreterBuiltinModules, TempsMonotonicClockMeasuresRealElapsedTimeAndNeverGoesNegative)
+{
+    // repère()/écoulé() use steady_clock, independent of Temps.horodatage's
+    // wall clock. Sleeping ~30ms between the mark and the read must show up
+    // as elapsed time bounded well below a full second (guards against a
+    // unit mixup, e.g. nanoseconds mistaken for milliseconds), and écoulé
+    // must never be negative even for a repère taken this instant.
+    const auto [output, completed] = execute_program(
+        "importer Temps\n"
+        "fonction principal() {\n"
+        "  soit r1 = Temps.repère()\n"
+        "  Temps.attendre(Temps.millisecondes(30))\n"
+        "  soit d1 = Temps.écoulé(r1)\n"
+        "  afficher(\"au moins 25ms: \" + (d1.en_millisecondes() >= 25))\n"
+        "  afficher(\"moins de 2000ms: \" + (d1.en_millisecondes() < 2000))\n"
+        "  soit r2 = Temps.repère()\n"
+        "  soit d2 = Temps.écoulé(r2)\n"
+        "  afficher(\"jamais negatif: \" + (d2.en_millisecondes() >= 0))\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "au moins 25ms: vrai\n"
+        "moins de 2000ms: vrai\n"
+        "jamais negatif: vrai\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSupportsColorConstructionAndComponentAccess)
+{
+    // couleur builds straight-alpha Couleur values (alpha defaults to
+    // 255), couleur_hex accepts both #RRGGBB and #RRGGBBAA case-insensitively
+    // and reports a structured Échec(ErreurCouleur) otherwise, and the
+    // Couleurs.* constants match the table in docs/stdlib-lumidessin.md.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {\n"
+        "  soit c1 = LumiDessin.couleur(10, 20, 30)\n"
+        "  afficher(\"couleur: \" + c1.rouge() + \",\" + c1.vert() + \",\" + c1.bleu() + \",\" + c1.alpha())\n"
+        "  soit c2 = LumiDessin.couleur(10, 20, 30, 40)\n"
+        "  afficher(\"couleur+alpha: \" + c2.rouge() + \",\" + c2.vert() + \",\" + c2.bleu() + \",\" + c2.alpha())\n"
+        "  soit c3 = LumiDessin.couleur_hex(\"#a1B2c3\") ou propager\n"
+        "  afficher(\"hex6: \" + c3.rouge() + \",\" + c3.vert() + \",\" + c3.bleu() + \",\" + c3.alpha())\n"
+        "  soit c4 = LumiDessin.couleur_hex(\"#000000FF\") ou propager\n"
+        "  afficher(\"hex8: \" + c4.rouge() + \",\" + c4.vert() + \",\" + c4.bleu() + \",\" + c4.alpha())\n"
+        "  afficher(\"blanc: \" + LumiDessin.Couleurs.blanc.rouge() + \",\" + LumiDessin.Couleurs.blanc.alpha())\n"
+        "  afficher(\"transparent alpha: \" + LumiDessin.Couleurs.transparent.alpha())\n"
+        "  retourne Succès(rien)\n"
+        "}\n"
+        "fonction principal() {\n"
+        "  agir selon executer() {\n"
+        "    Succès(_) -> rien\n"
+        "    Échec(e) -> afficher(\"echec: \" + e.cause)\n"
+        "  }\n"
+        "  agir selon LumiDessin.couleur_hex(\"pas-hex\") {\n"
+        "    Succès(_) -> afficher(\"inattendu: succès\")\n"
+        "    Échec(e) -> afficher(\"echec attendu: \" + e.opération + \" / \" + e.valeur)\n"
+        "  }\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "couleur: 10,20,30,255\n"
+        "couleur+alpha: 10,20,30,40\n"
+        "hex6: 161,178,195,255\n"
+        "hex8: 0,0,0,255\n"
+        "blanc: 255,255\n"
+        "transparent alpha: 0\n"
+        "echec attendu: couleur_hex / pas-hex\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSupportsOffScreenCanvasLifecycleClearPixelReadWriteAndCapture)
+{
+    // canevas starts opaque white and invisible; effacer replaces
+    // every pixel including alpha; lire_pixel and capturer both observe the
+    // replaced pixels; fermer is idempotent and est_ouvert reflects it.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.canevas(3, 2)\n"
+        "  afficher(\"taille: \" + c.largeur() + \"x\" + c.hauteur())\n"
+        "  afficher(\"visible: \" + c.est_visible())\n"
+        "  soit blanc_initial = c.lire_pixel(0, 0)\n"
+        "  afficher(\"blanc initial: \" + blanc_initial.rouge() + \",\" + blanc_initial.alpha())\n"
+        "  c.effacer(LumiDessin.couleur(1, 2, 3, 4))\n"
+        "  soit p = c.lire_pixel(2, 1)\n"
+        "  afficher(\"apres effacer: \" + p.rouge() + \",\" + p.vert() + \",\" + p.bleu() + \",\" + p.alpha())\n"
+        "  soit image = c.capturer()\n"
+        "  afficher(\"capture: \" + image.largeur() + \"x\" + image.hauteur())\n"
+        "  afficher(\"ouvert: \" + c.est_ouvert())\n"
+        "  c.fermer()\n"
+        "  c.fermer()\n"
+        "  afficher(\"ouvert apres fermer x2: \" + c.est_ouvert())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "taille: 3x2\n"
+        "visible: faux\n"
+        "blanc initial: 255,255\n"
+        "apres effacer: 1,2,3,4\n"
+        "capture: 3x2\n"
+        "ouvert: vrai\n"
+        "ouvert apres fermer x2: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSupportsPointConstruction)
+{
+    // Point exposes x/y as plain readable fields (no parentheses), per
+    // docs/stdlib-lumidessin.md's "Public types" section, and accepts
+    // integer literals coerced to Décimal like every other Décimal
+    // parameter in this stdlib.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit p1 = LumiDessin.point(1.5, -2.25)\n"
+        "  afficher(\"p1: \" + p1.x + \",\" + p1.y)\n"
+        "  soit p2 = LumiDessin.point(3, 4)\n"
+        "  afficher(\"p2: \" + p2.x + \",\" + p2.y)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "p1: 1.5,-2.25\np2: 3.0,4.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinRaisesRuntimeErrorsForInvalidDimensionsColorComponentsPixelBoundsAndClosedCanvas)
+{
+    // Invalid canvas dimensions, out-of-range color components, an
+    // out-of-bounds pixel read, and any method but est_ouvert()/fermer() on
+    // a closed canvas are all programmer-error runtime errors, not
+    // Résultat failures -- docs/stdlib-lumidessin.md's Failure policy.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.canevas(0, 5) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.canevas attend des dimensions entre 1 et 16384"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.canevas(16384, 16384) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.canevas attend un canevas d'au plus 16777216 pixels"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() { LumiDessin.couleur(0, 0, 0, 256) }\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("LumiDessin.couleur attend une composante de couleur entre 0 et 255"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(4, 4)\n"
+                                       "  c.lire_pixel(4, 0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.lire_pixel attend des coordonnées à l'intérieur du canevas"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(4, 4)\n"
+                                       "  c.fermer()\n"
+                                       "  c.effacer(LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.effacer ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesClipAndComposite)
+{
+    // dessiner_pixel, tracer_ligne, remplir_rectangle, remplir_cercle and
+    // remplir_polygone all land where geometry says they should and leave
+    // untouched pixels alone; a translucent fill over an opaque background
+    // composites with the exact source-over formula from
+    // docs/stdlib-lumidessin.md's "Compositing" section (verified against
+    // both engines on the CLI before being pinned here); drawing past the
+    // canvas edge is clipped rather than an error.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.canevas(10, 10)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_pixel(3, 3, LumiDessin.Couleurs.noir)\n"
+        "  soit px = c.lire_pixel(3, 3)\n"
+        "  afficher(\"pixel: \" + px.rouge() + \",\" + px.alpha())\n"
+        "  c.tracer_ligne(-5.0, 5.0, 20.0, 5.0, LumiDessin.Couleurs.rouge, 3.0)\n"
+        "  soit ligne = c.lire_pixel(5, 5)\n"
+        "  afficher(\"ligne: \" + ligne.rouge() + \",\" + ligne.vert() + \",\" + ligne.bleu())\n"
+        "  c.remplir_cercle(8.0, 8.0, 3.0, LumiDessin.Couleurs.vert)\n"
+        "  soit cercle = c.lire_pixel(8, 8)\n"
+        "  afficher(\"cercle: \" + cercle.rouge() + \",\" + cercle.vert() + \",\" + cercle.bleu())\n"
+        "  soit coin = c.lire_pixel(0, 0)\n"
+        "  afficher(\"coin intact: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n"
+        "  soit triangle = [LumiDessin.point(0.0, 0.0), LumiDessin.point(9.0, 0.0), LumiDessin.point(4.0, 9.0)]\n"
+        "  soit c2 = LumiDessin.canevas(10, 10)\n"
+        "  c2.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c2.remplir_polygone(triangle, LumiDessin.Couleurs.noir)\n"
+        "  soit dedans = c2.lire_pixel(4, 2)\n"
+        "  soit dehors = c2.lire_pixel(9, 9)\n"
+        "  afficher(\"polygone: \" + dedans.rouge() + \",\" + dehors.rouge())\n"
+        "  soit c3 = LumiDessin.canevas(4, 4)\n"
+        "  c3.effacer(LumiDessin.couleur(255, 0, 0))\n"
+        "  c3.remplir_rectangle(0.0, 0.0, 4.0, 4.0, LumiDessin.couleur(0, 0, 255, 128))\n"
+        "  soit fondu = c3.lire_pixel(2, 2)\n"
+        "  afficher(\"fondu: \" + fondu.rouge() + \",\" + fondu.vert() + \",\" + fondu.bleu() + \",\" + fondu.alpha())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "pixel: 0,255\n"
+        "ligne: 255,0,0\n"
+        "cercle: 0,255,0\n"
+        "coin intact: 255,255,255\n"
+        "polygone: 0,255\n"
+        "fondu: 127,0,128,255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinTreatsZeroThicknessAndZeroAreaAsNoOpsAndArcSweepsClockwiseFromTheRight)
+{
+    // A zero-thickness stroke and a zero-area fill both leave the canvas
+    // untouched (symmetric no-ops, not errors) per the Drawing primitives
+    // section; tracer_arc's angle convention is 0 degrees pointing right,
+    // sweeping clockwise (matching direct-drawing's y-down coordinates), and
+    // it stops exactly at its swept endpoints rather than drawing a full ring.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.canevas(10, 10)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.tracer_ligne(0.0, 0.0, 9.0, 9.0, LumiDessin.Couleurs.noir, 0.0)\n"
+        "  c.remplir_rectangle(0.0, 0.0, 0.0, 5.0, LumiDessin.Couleurs.noir)\n"
+        "  c.remplir_cercle(5.0, 5.0, 0.0, LumiDessin.Couleurs.noir)\n"
+        "  soit intact = c.lire_pixel(5, 5)\n"
+        "  afficher(\"toujours blanc: \" + intact.rouge() + \",\" + intact.vert() + \",\" + intact.bleu())\n"
+        "\n"
+        "  soit arc_c = LumiDessin.canevas(40, 40)\n"
+        "  arc_c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  arc_c.tracer_arc(20.0, 20.0, 10.0, 0.0, 90.0, LumiDessin.Couleurs.noir, 2.0)\n"
+        "  soit droite = arc_c.lire_pixel(30, 20)\n"
+        "  soit bas = arc_c.lire_pixel(20, 30)\n"
+        "  soit gauche = arc_c.lire_pixel(10, 20)\n"
+        "  soit haut = arc_c.lire_pixel(20, 10)\n"
+        "  afficher(\"arc droite(0deg): \" + droite.rouge())\n"
+        "  afficher(\"arc bas(90deg): \" + bas.rouge())\n"
+        "  afficher(\"arc gauche(hors sweep): \" + gauche.rouge())\n"
+        "  afficher(\"arc haut(hors sweep): \" + haut.rouge())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "toujours blanc: 255,255,255\n"
+        "arc droite(0deg): 3\n"
+        "arc bas(90deg): 3\n"
+        "arc gauche(hors sweep): 255\n"
+        "arc haut(hors sweep): 255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinDrawingPrimitivesRaiseRuntimeErrorsForInvalidGeometry)
+{
+    // Negative fill dimensions, negative stroke thickness, a non-finite
+    // coordinate, and too few points for a polyline/polygon are all
+    // programmer errors (direct runtime errors), matching the same
+    // Failure-policy distinction the rest of the module makes.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.remplir_rectangle(0.0, 0.0, -1.0, 5.0, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.remplir_rectangle attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.tracer_ligne(0.0, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, -1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_ligne attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "importer Maths\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.tracer_ligne(Maths.infini, 0.0, 5.0, 5.0, LumiDessin.Couleurs.noir, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_ligne attend une valeur numérique finie"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.tracer_polyligne([LumiDessin.point(0.0, 0.0)], faux, LumiDessin.Couleurs.noir, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.tracer_polyligne attend au moins 2 points"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] = execute_program_with_error(
+            "importer LumiDessin\n"
+            "fonction principal() {\n"
+            "  soit c = LumiDessin.canevas(10, 10)\n"
+            "  c.remplir_polygone([LumiDessin.point(0.0, 0.0), LumiDessin.point(1.0, 1.0)], LumiDessin.Couleurs.noir)\n"
+            "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.remplir_polygone attend au moins 3 points"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinMeasuresAndDrawsTextConsistentlyAcrossLinesTabsAndMissingGlyphs)
+{
+    // mesurer_texte and dessiner_texte share one layout path
+    // (docs/stdlib-lumidessin.md, "Text"), so their agreement is checked
+    // structurally here rather than by hard-coding font-metric pixel
+    // values that would just be re-deriving stb_truetype's own output:
+    // three lines measure exactly 3x one line's height, a tab advances
+    // further than no tab, and an empty string is a single zero-width
+    // line. A codepoint the bundled font has no glyph for (an emoji) must
+    // not crash and must still paint something -- Inter's .notdef glyph is
+    // a drawn box, not empty (see text.cpp's "Missing glyphs" comment).
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit c = LumiDessin.canevas(200, 120)\n"
+        "  soit une_ligne = c.mesurer_texte(\"Bonjour\", 20)\n"
+        "  soit trois_lignes = c.mesurer_texte(\"a\n"
+        "b\n"
+        "c\", 20)\n"
+        "  afficher(\"hauteur x3: \" + (trois_lignes.hauteur == une_ligne.hauteur * 3))\n"
+        "  soit vide = c.mesurer_texte(\"\", 20)\n"
+        "  afficher(\"vide: \" + vide.largeur + \"x\" + (vide.hauteur == une_ligne.hauteur))\n"
+        "  soit sans_tab = c.mesurer_texte(\"a\", 20)\n"
+        "  soit avec_tab = c.mesurer_texte(\"a	b\", 20)\n"
+        "  afficher(\"tab avance: \" + (avec_tab.largeur > sans_tab.largeur))\n"
+        "  soit accents = c.mesurer_texte(\"éèàçùâêîôû\", 20)\n"
+        "  afficher(\"accents mesurables: \" + (accents.largeur > 0))\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_texte(\"Ai\", 10.0, 10.0, 40, LumiDessin.Couleurs.noir)\n"
+        "  soit encre = faux\n"
+        "  soit y = 0\n"
+        "  tant que y < 120 {\n"
+        "    soit x = 0\n"
+        "    tant que x < 200 {\n"
+        "      soit p = c.lire_pixel(x, y)\n"
+        "      si p.rouge() != 255 { encre = vrai }\n"
+        "      x = x + 1\n"
+        "    }\n"
+        "    y = y + 1\n"
+        "  }\n"
+        "  afficher(\"encre deposee: \" + encre)\n"
+        "  c.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  c.dessiner_texte(\"🎉\", 10.0, 10.0, 60, LumiDessin.Couleurs.noir)\n"
+        "  soit notdef_encre = faux\n"
+        "  y = 0\n"
+        "  tant que y < 120 {\n"
+        "    soit x = 0\n"
+        "    tant que x < 200 {\n"
+        "      soit p = c.lire_pixel(x, y)\n"
+        "      si p.rouge() != 255 { notdef_encre = vrai }\n"
+        "      x = x + 1\n"
+        "    }\n"
+        "    y = y + 1\n"
+        "  }\n"
+        "  afficher(\"glyphe manquant dessine quelque chose: \" + notdef_encre)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "hauteur x3: vrai\n"
+        "vide: 0xvrai\n"
+        "tab avance: vrai\n"
+        "accents mesurables: vrai\n"
+        "encre deposee: vrai\n"
+        "glyphe manquant dessine quelque chose: vrai\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinTextRaisesRuntimeErrorsForInvalidSizesAndClosedCanvas)
+{
+    // taille outside 1..1024 and any text method on a closed canvas are
+    // programmer errors, matching every other Canevas method
+    // (docs/stdlib-lumidessin.md's Failure policy).
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.mesurer_texte(\"x\", 0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.mesurer_texte attend une taille entre 1 et 1024"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.dessiner_texte(\"x\", 0.0, 0.0, 1025, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_texte attend une taille entre 1 et 1024"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.mesurer_texte(\"x\", 20)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.mesurer_texte ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.dessiner_texte(\"x\", 0.0, 0.0, 20, LumiDessin.Couleurs.noir)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_texte ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinSavesAndLoadsPngRoundTripAndDrawsImages)
+{
+    // enregistrer_png/charger_image round-trip losslessly; dessiner_image
+    // copies 1:1, dessiner_image_redimensionnée/nette sample a scaled copy,
+    // and opacité scales the composite -- all through the same blend_pixel
+    // path raster.cpp's shapes use (docs/stdlib-lumidessin.md, "Images").
+    const std::filesystem::path png_root = std::filesystem::temp_directory_path() / "lumiere_lumidessin_png_test";
+    std::filesystem::create_directories(png_root);
+    const std::filesystem::path png_path = png_root / "carre.png";
+    const std::filesystem::path non_png_path = png_root / "pas_une_image.png";
+    {
+        std::ofstream junk(non_png_path, std::ios::binary);
+        junk << "ceci n'est pas un PNG";
+    }
+
+    const std::string program =
+        "importer LumiDessin\nfonction principal() {\n  soit source = LumiDessin.canevas(4, 4)\n  source.effacer(LumiDessin.Couleurs.blanc)\n  source.remplir_rectangle(1.0, 1.0, 2.0, 2.0, LumiDessin.Couleurs.rouge)\n  agir selon source.enregistrer_png(\""
+        + lumiere_string_literal_text(png_path.string())
+        + "\") {\n    Succès(_) -> afficher(\"sauvegarde: ok\")\n    Échec(e) -> afficher(\"BUG sauvegarde: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + lumiere_string_literal_text(png_path.string())
+        + "\") {\n    Succès(img) -> {\n      afficher(\"chargee: \" + img.largeur() + \"x\" + img.hauteur())\n      soit copie = LumiDessin.canevas(4, 4)\n      copie.effacer(LumiDessin.Couleurs.blanc)\n      copie.dessiner_image(img, 0.0, 0.0)\n      soit coin = copie.lire_pixel(0, 0)\n      soit centre = copie.lire_pixel(2, 2)\n      afficher(\"copie coin: \" + coin.rouge() + \",\" + coin.vert() + \",\" + coin.bleu())\n      afficher(\"copie centre: \" + centre.rouge() + \",\" + centre.vert() + \",\" + centre.bleu())\n      soit agrandie = LumiDessin.canevas(8, 8)\n      agrandie.effacer(LumiDessin.Couleurs.blanc)\n      agrandie.dessiner_image_redimensionnée(img, 0.0, 0.0, 8.0, 8.0, 1.0)\n      soit p_agrandie = agrandie.lire_pixel(4, 4)\n      afficher(\"redim centre: \" + p_agrandie.rouge() + \",\" + p_agrandie.vert() + \",\" + p_agrandie.bleu())\n      soit demi_opacite = LumiDessin.canevas(8, 8)\n      demi_opacite.effacer(LumiDessin.Couleurs.blanc)\n      demi_opacite.dessiner_image_nette(img, 0.0, 0.0, 8.0, 8.0, 0.5)\n      soit p_demi = demi_opacite.lire_pixel(4, 4)\n      afficher(\"nette demi-opacite centre: \" + p_demi.rouge() + \",\" + p_demi.vert() + \",\" + p_demi.bleu())\n    }\n    Échec(e) -> afficher(\"BUG chargement: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + lumiere_string_literal_text((png_root / "absent.png").string())
+        + "\") {\n    Succès(_) -> afficher(\"BUG: fichier absent charge\")\n    Échec(e) -> afficher(\"fichier absent: \" + e.cause)\n  }\n  agir selon LumiDessin.charger_image(\""
+        + lumiere_string_literal_text(non_png_path.string())
+        + "\") {\n    Succès(_) -> afficher(\"BUG: non-png charge\")\n    Échec(e) -> afficher(\"non-png: \" + e.cause)\n  }\n}\n";
+
+    const auto [output, completed] = execute_program(program);
+
+    std::filesystem::remove_all(png_root);
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "sauvegarde: ok\n"
+        "chargee: 4x4\n"
+        "copie coin: 255,255,255\n"
+        "copie centre: 255,0,0\n"
+        "redim centre: 255,0,0\n"
+        "nette demi-opacite centre: 255,128,128\n"
+        "fichier absent: impossible d'ouvrir le fichier\n"
+        "non-png: format non pris en charge\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinImageRaisesRuntimeErrorsForInvalidGeometryOpacityAndClosedCanvas)
+{
+    // Negative width/height, opacité outside 0.0..1.0, and any image method
+    // on a closed canvas are programmer errors, matching the rest of the
+    // module's Failure policy.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.dessiner_image_redimensionnée(img, 0.0, 0.0, -1.0, 5.0, 1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image_redimensionnée attend une valeur non négative"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.dessiner_image_nette(img, 0.0, 0.0, 5.0, 5.0, 1.5)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image_nette attend une opacité entre 0.0 et 1.0"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit img = c.capturer()\n"
+                                       "  c.fermer()\n"
+                                       "  c.dessiner_image(img, 0.0, 0.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.dessiner_image ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.enregistrer_png(\"/tmp/inaccessible.png\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.enregistrer_png ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCrayonMovesRotatesAndReportsStateConsistently)
+{
+    // Mirrors what was manually verified byte-identical against both
+    // engines on the CLI: default state, avancer/reculer/tourner_*,
+    // aller_à, recentrer (which also resets heading), lever/baisser,
+    // régler_couleur/épaisseur/cap, montrer/cacher, and heading
+    // normalization for a negative angle.
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(100, 100)\n"
+        "  soit t = toile.crayon()\n"
+        "  afficher(\"pos0: \" + t.position().x + \",\" + t.position().y)\n"
+        "  afficher(\"cap0: \" + t.cap())\n"
+        "  afficher(\"baisse0: \" + t.est_baissé())\n"
+        "  afficher(\"visible0: \" + t.est_visible())\n"
+        "  t.avancer(10.0)\n"
+        "  afficher(\"apres avancer: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.tourner_gauche(90.0)\n"
+        "  afficher(\"cap apres gauche90: \" + t.cap())\n"
+        "  t.avancer(5.0)\n"
+        "  afficher(\"apres avancer2: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.tourner_droite(180.0)\n"
+        "  afficher(\"cap apres droite180: \" + t.cap())\n"
+        "  t.reculer(5.0)\n"
+        "  afficher(\"apres reculer x: \" + t.position().x)\n"
+        "  t.aller_à(20.0, -30.0)\n"
+        "  afficher(\"apres aller_a: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.recentrer()\n"
+        "  afficher(\"apres recentrer: \" + t.position().x + \",\" + t.position().y + \" cap=\" + t.cap())\n"
+        "  t.lever()\n"
+        "  afficher(\"baisse apres lever: \" + t.est_baissé())\n"
+        "  t.avancer(50.0)\n"
+        "  afficher(\"apres avancer leve: \" + t.position().x + \",\" + t.position().y)\n"
+        "  t.baisser()\n"
+        "  afficher(\"baisse apres baisser: \" + t.est_baissé())\n"
+        "  t.régler_couleur(LumiDessin.couleur(255, 0, 0))\n"
+        "  t.régler_épaisseur(3.0)\n"
+        "  t.régler_cap(45.0)\n"
+        "  afficher(\"cap apres regler_cap: \" + t.cap())\n"
+        "  t.cacher()\n"
+        "  afficher(\"visible apres cacher: \" + t.est_visible())\n"
+        "  t.montrer()\n"
+        "  afficher(\"visible apres montrer: \" + t.est_visible())\n"
+        "  t.régler_cap(-30.0)\n"
+        "  afficher(\"cap negatif normalise: \" + t.cap())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "pos0: 0.0,0.0\n"
+        "cap0: 0.0\n"
+        "baisse0: vrai\n"
+        "visible0: vrai\n"
+        "apres avancer: 10.0,0.0\n"
+        "cap apres gauche90: 90.0\n"
+        "apres avancer2: 10.0,5.0\n"
+        "cap apres droite180: 270.0\n"
+        "apres reculer x: 10.000000000000002\n"
+        "apres aller_a: 20.0,-30.0\n"
+        "apres recentrer: 0.0,0.0 cap=0.0\n"
+        "baisse apres lever: faux\n"
+        "apres avancer leve: 50.0,0.0\n"
+        "baisse apres baisser: vrai\n"
+        "cap apres regler_cap: 45.0\n"
+        "visible apres cacher: faux\n"
+        "visible apres montrer: vrai\n"
+        "cap negatif normalise: 330.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCrayonDrawsOnlyWhenPenIsDownAndIndependentlyOfOtherCrayons)
+{
+    // A crayon's trail is a real capsule stroke on the shared framebuffer
+    // (raster_capsule, the same primitive tracer_ligne uses): its own color
+    // and thickness, only while the pen is down. Two crayons created from
+    // the same canvas move independently -- crayon() docs/stdlib-lumidessin
+    // .md, "Each call creates independent crayon state".
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(20, 20)\n"
+        "  toile.effacer(LumiDessin.Couleurs.blanc)\n"
+        "  soit a = toile.crayon()\n"
+        "  a.avancer(5.0)\n"
+        "  soit trait = toile.lire_pixel(12, 10)\n"
+        "  afficher(\"trait: \" + trait.rouge() + \",\" + trait.vert() + \",\" + trait.bleu())\n"
+        "  soit loin = toile.lire_pixel(2, 2)\n"
+        "  afficher(\"loin: \" + loin.rouge() + \",\" + loin.vert() + \",\" + loin.bleu())\n"
+        "  soit b = toile.crayon()\n"
+        "  b.tourner_gauche(90.0)\n"
+        "  b.avancer(5.0)\n"
+        "  afficher(\"a pos: \" + a.position().x + \",\" + a.position().y)\n"
+        "  afficher(\"b pos y: \" + b.position().y)\n"
+        "  afficher(\"a cap: \" + a.cap() + \" b cap: \" + b.cap())\n"
+        "  soit c = toile.crayon()\n"
+        "  c.lever()\n"
+        "  c.tourner_droite(90.0)\n"
+        "  c.avancer(3.0)\n"
+        "  soit vide_sous_c = toile.lire_pixel(10, 13)\n"
+        "  afficher(\"pixel sous c leve reste blanc: \" + vide_sous_c.rouge() + \",\" + vide_sous_c.vert() + \",\" +\n"
+        "    vide_sous_c.bleu())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "trait: 128,128,128\n"
+        "loin: 255,255,255\n"
+        "a pos: 5.0,0.0\n"
+        "b pos y: 5.0\n"
+        "a cap: 0.0 b cap: 90.0\n"
+        "pixel sous c leve reste blanc: 255,255,255\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCrayonRaisesRuntimeErrorsForClosedCanvas)
+{
+    // A crayon operation after its canvas is closed raises a runtime error
+    // at the crayon call site (docs/stdlib-lumidessin.md, "Crayon API"),
+    // including crayon() itself, since it is a Canevas method like any
+    // other that requires an open canvas.
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  c.fermer()\n"
+                                       "  c.crayon()\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.crayon ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.avancer(1.0)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.avancer ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.position()\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.position ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+    {
+        // The crayon itself keeps the canvas alive past fermer() (a strong
+        // Ref<CanvasState>), so this is a documented use-after-close error,
+        // never a use-after-free.
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit c = LumiDessin.canevas(10, 10)\n"
+                                       "  soit t = c.crayon()\n"
+                                       "  c.fermer()\n"
+                                       "  t.régler_couleur(LumiDessin.Couleurs.rouge)\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Crayon.régler_couleur ne peut pas utiliser un canevas fermé"), std::string::npos);
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasFrameMethodsPaceAndReportElapsedTime)
+{
+    // Off-screen frame lifecycle (docs/stdlib-lumidessin.md, "Frame
+    // lifecycle"): régler_cadence takes effect, présenter is a
+    // valid no-op without a window, and écart_image is zero on the
+    // first call and nonnegative thereafter -- exercised for real, at 240
+    // fps (the shortest legal interval, so the real sleep this performs
+    // stays small), since an off-screen canvas's cadence timing is a real
+    // sleep by design (docs/stdlib-lumidessin.md, "Frame lifecycle": "For
+    // an open off-screen canvas, prochaine_image performs cadence timing").
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(4, 4)\n"
+        "  toile.régler_cadence(240)\n"
+        "  soit premiere = toile.prochaine_image()\n"
+        "  afficher(\"premiere: \" + premiere)\n"
+        "  afficher(\"ecart1: \" + toile.écart_image())\n"
+        "  soit deuxieme = toile.prochaine_image()\n"
+        "  afficher(\"deuxieme: \" + deuxieme)\n"
+        "  afficher(\"ecart2 non negatif: \" + (toile.écart_image() >= 0.0))\n"
+        "  toile.présenter()\n"
+        "  afficher(\"presente sans fenetre: ok\")\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "premiere: vrai\n"
+        "ecart1: 0.0\n"
+        "deuxieme: vrai\n"
+        "ecart2 non negatif: vrai\n"
+        "presente sans fenetre: ok\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasRejectsCadenceOutsideOneToTwoHundredForty)
+{
+    for (const char *bad : {"0", "241", "-1"})
+    {
+        const std::string source = std::string("importer LumiDessin\n"
+                                                "fonction principal() {\n"
+                                                "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                                "  toile.régler_cadence(") +
+                                    bad + ")\n}\n";
+        const auto [output, completed, error] = execute_program_with_error(source);
+        EXPECT_FALSE(completed) << bad;
+        EXPECT_TRUE(output.empty()) << bad;
+        EXPECT_NE(error.find("Canevas.régler_cadence attend une cadence entre 1 et 240"), std::string::npos)
+            << bad << ": " << error;
+    }
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasAttendreFermetureRaisesOffScreen)
+{
+    // docs/stdlib-lumidessin.md, "Frame lifecycle": "Calling it on an
+    // off-screen canvas is a runtime error."
+    const auto [output, completed, error] =
+        execute_program_with_error("importer LumiDessin\n"
+                                   "fonction principal() {\n"
+                                   "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                   "  toile.attendre_fermeture()\n"
+                                   "}\n");
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("Canevas.attendre_fermeture attend un canevas visible"), std::string::npos);
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasInputMethodsAreNeutralOffScreen)
+{
+    // docs/stdlib-lumidessin.md, "Input": "Input methods on an off-screen
+    // canvas return neutral state. They do not raise."
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit toile = LumiDessin.canevas(4, 4)\n"
+        "  afficher(\"touche: \" + toile.touche_enfoncée(\"a\"))\n"
+        "  afficher(\"pressee: \" + toile.touche_pressée(\"espace\"))\n"
+        "  afficher(\"relachee: \" + toile.touche_relâchée(\"entrée\"))\n"
+        "  afficher(\"texte: [\" + toile.texte_saisi() + \"]\")\n"
+        "  afficher(\"souris: \" + toile.position_souris().x + \",\" + toile.position_souris().y)\n"
+        "  afficher(\"presente: \" + toile.souris_présente())\n"
+        "  afficher(\"bouton: \" + toile.bouton_enfoncé(\"gauche\"))\n"
+        "  afficher(\"defilement: \" + toile.défilement().x + \",\" + toile.défilement().y)\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(
+        output,
+        "touche: faux\n"
+        "pressee: faux\n"
+        "relachee: faux\n"
+        "texte: []\n"
+        "souris: 0.0,0.0\n"
+        "presente: faux\n"
+        "bouton: faux\n"
+        "defilement: 0.0,0.0\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinCanevasInputRejectsUnknownNames)
+{
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                       "  toile.touche_enfoncée(\"xyz\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.touche_enfoncée ne reconnaît pas le nom de touche"), std::string::npos) << error;
+    }
+    {
+        const auto [output, completed, error] =
+            execute_program_with_error("importer LumiDessin\n"
+                                       "fonction principal() {\n"
+                                       "  soit toile = LumiDessin.canevas(4, 4)\n"
+                                       "  toile.bouton_enfoncé(\"haut\")\n"
+                                       "}\n");
+        EXPECT_FALSE(completed);
+        EXPECT_TRUE(output.empty());
+        EXPECT_NE(error.find("Canevas.bouton_enfoncé ne reconnaît pas le nom de bouton"), std::string::npos) << error;
+    }
+}
+
+#if LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreOpensPresentsAndClosesUnderTheDummyDriver)
+{
+    // Bounded visible-window smoke test (docs/stdlib-lumidessin.md,
+    // "Platform tests": "creates, presents, injects or receives a close
+    // event, and exits"). SDL's dummy video driver needs no real display,
+    // so this runs in ordinary headless CI; it is only compiled when
+    // window support is built in. set_env_if_unset only sets it when unset,
+    // so a CI environment that already configured SDL_VIDEODRIVER is respected.
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
+
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit f = LumiDessin.fenêtre(64, 48, \"Test\")\n"
+        "  afficher(\"visible: \" + f.est_visible())\n"
+        "  f.effacer(LumiDessin.Couleurs.rouge)\n"
+        "  f.présenter()\n"
+        "  soit suite = f.prochaine_image()\n"
+        "  afficher(\"suite: \" + suite)\n"
+        "  f.fermer()\n"
+        "  afficher(\"ouvert apres fermer: \" + f.est_ouvert())\n"
+        "}\n");
+
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "visible: vrai\nsuite: vrai\nouvert apres fermer: faux\n");
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreRaisesWhenAlreadyOpen)
+{
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
+
+    const auto [output, completed, error] =
+        execute_program_with_error("importer LumiDessin\n"
+                                   "fonction principal() {\n"
+                                   "  soit a = LumiDessin.fenêtre(32, 32, \"A\")\n"
+                                   "  soit b = LumiDessin.fenêtre(32, 32, \"B\")\n"
+                                   "}\n");
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("LumiDessin.fenêtre : une fenêtre visible est déjà ouverte"), std::string::npos) << error;
+}
+
+TEST(InterpreterBuiltinModules, LumiDessinFenetreRespondsToAnInjectedCloseEvent)
+{
+    // The real SDL close path: a genuine SDL_EVENT_QUIT is pushed onto
+    // SDL's own event queue from a separate thread while the interpreter
+    // thread blocks inside attendre_fermeture()'s event pump, exercising
+    // the "injects or receives a close event" half of the platform smoke
+    // test the doc describes, rather than only the fermer()-from-Lumière
+    // path the previous test covers.
+    set_env_if_unset("SDL_VIDEODRIVER", "dummy");
+    ASSERT_TRUE(SDL_InitSubSystem(SDL_INIT_VIDEO));
+
+    std::thread closer([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
+    });
+
+    const auto [output, completed] = execute_program(
+        "importer LumiDessin\n"
+        "fonction principal() {\n"
+        "  soit f = LumiDessin.fenêtre(64, 48, \"Test\")\n"
+        "  f.attendre_fermeture()\n"
+        "  afficher(\"ouvert apres attendre_fermeture: \" + f.est_ouvert())\n"
+        "}\n");
+
+    closer.join();
+    EXPECT_TRUE(completed);
+    EXPECT_EQ(output, "ouvert apres attendre_fermeture: faux\n");
+}
+
+#endif // LUMIERE_ENABLE_LUMIDESSIN_WINDOW
+
 TEST(InterpreterStandardLibrary, SupportsTexteMethods)
 {
     const auto [output, completed] = execute_program(
@@ -4022,7 +6069,7 @@ TEST(InterpreterStandardLibrary, SupportsTexteMethods)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "Bonjour Monde\nBONJOUR MONDE\nlumiere\nfaux\nvrai\n3\nvrai\nvrai\nruojnob\nababab\nbonsoir\nbbb\nbonjour monde\n monde!\njour\nmonde!\n3\nb\na\\nb\\nc\n42\n3.14\nvrai\n");
+    EXPECT_EQ(output, "Bonjour Monde\nBONJOUR MONDE\nlumiere\nfaux\nvrai\n3\nvrai\nvrai\nruojnob\nababab\nbonsoir\nbbb\nbonjour monde\n monde!\njour\nmonde!\n3\nb\na|b|c\n42\n3.14\nvrai\n");
 }
 
 TEST(InterpreterStandardLibrary, SupportsTexteModuleHelpers)
@@ -4050,7 +6097,7 @@ TEST(InterpreterStandardLibrary, SupportsTexteModuleHelpers)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "19\nvrai\nvrai\n11\nvrai\nvrai\nBonjour, monde!\nbonjour\nBONJOUR\na|b|c\na\\nb\nbonjour lumiere\nbonjour, monde\n42\n3.14\nvrai\n");
+    EXPECT_EQ(output, "19\nvrai\nvrai\n11\nvrai\nvrai\nBonjour, monde!\nbonjour\nBONJOUR\na|b|c\na|b\nbonjour lumiere\nbonjour, monde\n42\n3.14\nvrai\n");
 }
 
 TEST(InterpreterStandardLibrary, CoversTexteBoundaryCasesComprehensively)
@@ -4087,7 +6134,11 @@ TEST(InterpreterStandardLibrary, CoversTexteBoundaryCasesComprehensively)
         "}\n");
 
     EXPECT_TRUE(completed);
-    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbaa\nbb\n1\n2\n1\n\n-42\n2\nfaux\n");
+    // Texte.convertir_decimal(2) is a Décimal, so it is written "2.0": that is
+    // the language's one way of writing a Décimal, and the "2" pinned here was
+    // a stream's default formatting, which also turned 123456789.125 into
+    // "1.23457e+08".
+    EXPECT_EQ(output, "0\nvrai\n-1\nvrai\nvrai\nvrai\n\n-abc\nabc-\nabc\na\nabc\n\n\n\nabc\nabc\nbaa\nbb\n1\n2\n1\n\n-42\n2.0\nfaux\n");
 }
 
 TEST(InterpreterStandardLibrary, KeepsTexteMethodAndModuleFormsConsistent)
@@ -4234,7 +6285,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteOperations)
 
     EXPECT_FALSE(completed7);
     EXPECT_TRUE(output7.empty());
-    EXPECT_NE(error7.find("longueur negative interdite"), std::string::npos);
+    EXPECT_NE(error7.find("longueur négative interdite"), std::string::npos);
 
     auto [output8, completed8, error8] = execute_program_with_error(
         "fonction principal() {\n"
@@ -4343,7 +6394,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.contient(\"abc\", valeur: \"a\"))\n"
             "}\n",
-            "n'accepte pas d'arguments nommes"
+            "n'accepte pas d'arguments nommés"
         },
         {
             "importer Texte\n"
@@ -4371,7 +6422,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.convertir_decimal(\"3.14\"))\n"
             "}\n",
-            "Texte.convertir_decimal attend une valeur numerique"
+            "Texte.convertir_decimal attend une valeur numérique"
         },
         {
             "importer Texte\n"
@@ -4392,7 +6443,7 @@ TEST(InterpreterStandardLibrary, RejectsInvalidTexteModuleUsageComprehensively)
             "fonction principal() {\n"
             "  afficher(Texte.separer(\"abc\", \"\"))\n"
             "}\n",
-            "Texte.separer attend un separateur non vide"
+            "Texte.separer attend un séparateur non vide"
         },
     };
 
@@ -4488,7 +6539,7 @@ TEST(InterpreterFunctions, RejectsMismatchedNamedArgument)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("aucun parametre nomme"), std::string::npos);
+    EXPECT_NE(error.find("aucun paramètre nommé"), std::string::npos);
 }
 
 TEST(InterpreterFunctions, RejectsTooManyArguments)
@@ -4666,13 +6717,16 @@ TEST(InterpreterFunctions, SupportsFixedListConversionAndPreservesElementType)
         "  soit notes: Liste[Entier] = [1, 2, 3]\n"
         "  soit fixe trio: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)\n"
         "  afficher(trio.taille())\n"
-        "  trio[1] = 9\n"
+        "  afficher(trio[1])\n"
+        "  notes[1] = 9\n"
         "  afficher(trio[1])\n"
         "}\n");
 
     EXPECT_TRUE(completed);
     EXPECT_TRUE(error.empty());
-    EXPECT_EQ(output, "3\n9\n");
+    // The conversion copies, so later writes to the source list do not reach the
+    // fixed list.
+    EXPECT_EQ(output, "3\n2\n2\n");
 }
 
 TEST(InterpreterFunctions, SupportsFixedListFactoryAndIteration)
@@ -4703,19 +6757,18 @@ TEST(InterpreterFunctions, RejectsFixedListLengthMismatchDuringConversion)
     EXPECT_NE(error.find("Liste.en_liste_fixe"), std::string::npos);
 }
 
-TEST(InterpreterFunctions, EnforcesFixedListElementTypeOnAssignment)
+TEST(InterpreterFunctions, RejectsFixedListElementAssignment)
 {
     const auto [output, completed, error] = execute_program_with_error(
         "fonction principal() {\n"
         "  soit notes: Liste[Entier] = [1, 2, 3]\n"
         "  soit fixe trio = notes.en_liste_fixe(3)\n"
-        "  trio[0] = \"oops\"\n"
+        "  trio[0] = 9\n"
         "}\n");
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("liste fixe"), std::string::npos);
-    EXPECT_NE(error.find("Entier"), std::string::npos);
+    EXPECT_NE(error.find("immuable"), std::string::npos);
 }
 
 TEST(InterpreterFunctions, EnforcesFixedListFactoryElementType)
@@ -4729,6 +6782,23 @@ TEST(InterpreterFunctions, EnforcesFixedListFactoryElementType)
     EXPECT_TRUE(output.empty());
     EXPECT_NE(error.find("ListeFixe.remplir"), std::string::npos);
     EXPECT_NE(error.find("Entier"), std::string::npos);
+}
+
+TEST(InterpreterFunctions, RejectsAnUnrepresentableFixedListSizeInsteadOfLeakingACppException)
+{
+    // INT64_MAX elements can never fit in a std::vector<Value> on any real
+    // machine: std::vector::assign throws std::length_error the moment the
+    // request exceeds max_size(), before attempting any allocation, which
+    // makes this deterministic and safe regardless of how much memory the
+    // machine actually has.
+    const auto [output, completed, error] = execute_program_with_error(
+        "fonction principal() {\n"
+        "  soit zeros = ListeFixe.remplir(Entier, 9223372036854775807, 0)\n"
+        "}\n");
+
+    EXPECT_FALSE(completed);
+    EXPECT_TRUE(output.empty());
+    EXPECT_NE(error.find("la taille demandée dépasse ce que cette opération peut représenter"), std::string::npos) << error;
 }
 
 TEST(InterpreterFunctions, ConvertsFixedListBackToDynamicListWithTypeMetadata)
@@ -4843,7 +6913,7 @@ TEST(InterpreterFunctions, EnforcesParameterTypes)
 
     EXPECT_FALSE(completed);
     EXPECT_TRUE(output.empty());
-    EXPECT_NE(error.find("parametre 'n'"), std::string::npos);
+    EXPECT_NE(error.find("paramètre 'n'"), std::string::npos);
     EXPECT_NE(error.find("Entier"), std::string::npos);
 }
 

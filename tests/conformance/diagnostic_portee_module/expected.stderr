@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "diagnostic_portee_module/main.lum", line 6, column 20
+    soit quotient = 10 / diviseur
+                       ^
+erreur d'exécution: division par zéro

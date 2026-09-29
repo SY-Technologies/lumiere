@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lumiere/analysis/semantic_index.hpp"
+#include "lumiere/analysis/semantic_symbol_kind.hpp"
 #include "lumiere/analysis/semantic_type.hpp"
 #include "lumiere/diagnostics/diagnostic.hpp"
 #include "lumiere/parser/ast.hpp"
@@ -18,29 +20,27 @@ class SemanticAnalyzer;
 struct SemanticAnalysis;
 struct SemanticAnalysisOptions;
 
-enum class SemanticSymbolKind
-{
-    VARIABLE,
-    PARAMETER,
-    FUNCTION,
-    CLASS,
-    INTERFACE,
-    MODULE,
-};
-
 struct SemanticModuleExports
 {
     struct Callable
     {
         std::vector<std::string> parameter_names;
         std::vector<TypeExpr> parameter_types;
+        // Constructors use this instead of parameter_types to retain private aliases.
+        std::vector<SemanticTypeRef> resolved_parameter_types;
         std::vector<bool> optional_parameters;
         TypeExpr return_type;
         bool has_explicit_return_type = false;
+        // When set, calls may supply any number of trailing positional
+        // arguments beyond parameter_names, each checked against
+        // variadic_type -- mirrors CallableSignature::variadic below.
+        bool variadic = false;
+        TypeExpr variadic_type;
     };
 
     std::unordered_map<std::string, SemanticTypeKind> types;
     std::unordered_map<std::string, TypeExpr> aliases;
+    std::unordered_map<std::string, SemanticTypeRef> resolved_aliases;
     std::unordered_map<std::string, SemanticSymbolKind> values;
     std::unordered_map<std::string, TypeExpr> value_types;
     std::unordered_map<std::string, Callable> callables;
@@ -90,13 +90,23 @@ public:
 
     TypeInterner types;
 
+    /**
+     * @brief Every declaration and resolved occurrence this analysis
+     * recorded, keyed by stable, snapshot-local ids -- see
+     * docs/stage1-semantic-index-design.md. Additive: find_type/find_value/
+     * type_of above are unaffected by anything stored here and keep working
+     * exactly as they always have.
+     */
+    SemanticIndex index;
+
 private:
     friend class SemanticAnalyzer;
     friend struct SemanticAnalysis;
     friend SemanticAnalysis analyze_semantics(const StmtList &,
                                               std::string,
                                               const SemanticImportEnvironment &,
-                                              SemanticAnalysisOptions);
+                                              SemanticAnalysisOptions,
+                                              const SemanticModel *);
 
     std::unordered_map<std::string, SemanticTypeRef> m_type_symbols;
     std::unordered_map<std::string, SemanticSymbol> m_value_symbols;
@@ -119,6 +129,7 @@ struct SemanticAnalysis
 struct SemanticAnalysisOptions
 {
     bool consume_last_expression = false;
+    bool require_entry_point = false;
 };
 
 /**
@@ -128,14 +139,25 @@ struct SemanticAnalysisOptions
  * analysis becomes mandatory. It resolves callable signatures before bodies,
  * which permits forward type references.
  */
+/**
+ * @param previous What an earlier analysis established, or nullptr.
+ *
+ * Only the shell passes this. It analyzes one submission at a time while the
+ * interpreter carries every earlier one, so without it a name declared on an
+ * earlier line looks undeclared. The model that is handed in keeps pointers
+ * into the statements it was built from: those must outlive this call, which
+ * in the shell they do because every accepted submission is kept.
+ */
 [[nodiscard]] SemanticAnalysis analyze_semantics(const StmtList &statements,
                                                  std::string source_path = {},
                                                  const SemanticImportEnvironment &imports = {},
-                                                 SemanticAnalysisOptions options = {});
+                                                 SemanticAnalysisOptions options = {},
+                                                 const SemanticModel *previous = nullptr);
 
 /**
  * Builds the public type/value manifest consumed by importing modules.
  */
-[[nodiscard]] SemanticModuleExports collect_semantic_exports(const StmtList &statements);
+[[nodiscard]] SemanticModuleExports collect_semantic_exports(const StmtList &statements,
+                                                             const SemanticModel &model);
 
 } // namespace lumiere

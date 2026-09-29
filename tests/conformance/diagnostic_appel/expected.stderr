@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_appel/main.lum)
+  File "diagnostic_appel/main.lum", line 4, column 5
+        valeur()
+        ^
+erreur d'exécution: la valeur appelée n'est pas une fonction : elle est de type Entier

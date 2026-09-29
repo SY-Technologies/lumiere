@@ -1,0 +1,10 @@
+// Une erreur d'exécution levée par le code de plus haut niveau, hors de toute
+// fonction. La VM enveloppe ce code dans une fonction synthétique ; celle-ci ne
+// doit pas apparaître dans la trace, puisque le tree-walker n'a aucune image
+// d'elle et rapporterait donc la même panne autrement.
+soit diviseur = 0
+soit quotient = 10 / diviseur
+
+fonction principal() {
+    afficher(quotient)
+}

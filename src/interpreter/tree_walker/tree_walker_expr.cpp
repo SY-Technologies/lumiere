@@ -1,6 +1,9 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
+#include "lumiere/interpreter/runtime/conversions.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
+#include "lumiere/diagnostics/runtime_messages.hpp"
 
 #include <functional>
 #include <iostream>
@@ -13,9 +16,12 @@ namespace lumiere
 namespace
 {
 
-std::string describe_binary_operand_types(const Value &left, const Value &right)
+Value checked_integer(TreeWalker &runtime, const Token &site,
+                      std::optional<int64_t> value)
 {
-    return "types recus: " + left.type_name() + " et " + right.type_name();
+    if (!value)
+        runtime.raise_runtime_error(site, "valeur hors limites pour Entier");
+    return Value::entier(*value);
 }
 
 std::string describe_expected_binary_types(const std::string &operation,
@@ -23,15 +29,14 @@ std::string describe_expected_binary_types(const std::string &operation,
                                            const Value &right,
                                            const std::string &expected_types)
 {
-    return operation + " attend " + expected_types + "; " + describe_binary_operand_types(left, right);
+    return messages::operandes_attendues(operation, expected_types, left.type_name(), right.type_name());
 }
 
 std::string describe_expected_unary_type(const std::string &operation,
                                          const Value &operand,
                                          const std::string &expected_type)
 {
-    return operation + " attend une valeur de type " + expected_type +
-           "; type recu: " + operand.type_name();
+    return messages::type_attendu(operation, expected_type, operand.type_name());
 }
 
 } // namespace
@@ -41,18 +46,22 @@ void TreeWalker::visit(LiteralExpr &expr)
     switch (expr.token.type)
     {
     case TokenType::ENTIER_LIT:
-        m_result = Value::entier(std::stoll(expr.token.lexeme));
+        // The lexer already refused a literal that does not fit.
+        m_result = Value::entier(numeric::parse_integer_literal(expr.token.lexeme).value_or(0));
         return;
     case TokenType::DECIMAL_LIT:
-        m_result = Value::decimal(std::stod(expr.token.lexeme));
+        // The tokenizer refuses a literal this cannot parse, so the value is
+        // always there by the time execution reaches it.
+        m_result = Value::decimal(numeric::parse_decimal_literal(expr.token.lexeme).value_or(0.0));
         return;
     case TokenType::TEXTE_LIT:
-        m_result = Value::texte(expr.token.lexeme.substr(1, expr.token.lexeme.size() - 2));
+        // decoded is the escape-resolved literal body (see Tokenizer::scan_string);
+        // lexeme is the raw quoted source slice, kept only for diagnostics.
+        m_result = Value::texte(expr.token.decoded);
         return;
     case TokenType::SYMBOLE_LIT:
     {
-        const std::optional<char32_t> symbol_char =
-            utf8::decode_single_character(std::string_view(expr.token.lexeme).substr(1, expr.token.lexeme.size() - 2));
+        const std::optional<char32_t> symbol_char = utf8::decode_single_character(expr.token.decoded);
         if (!symbol_char.has_value())
         {
             throw_runtime_error(expr.token, "symbole invalide");
@@ -70,7 +79,7 @@ void TreeWalker::visit(LiteralExpr &expr)
         m_result = Value::rien();
         return;
     default:
-        throw_runtime_error(expr.token, "litteral non pris en charge");
+        throw_runtime_error(expr.token, "littéral non pris en charge");
     }
 }
 
@@ -83,12 +92,12 @@ void TreeWalker::visit(IdentifierExpr &expr)
     }
     if (expr.name.type == TokenType::PARENT)
     {
-        throw_runtime_error(expr.name, "parent doit etre utilise avec un acces membre");
+        throw_runtime_error(expr.name, "parent doit être utilise avec un accès membre");
     }
 
     if (m_env == nullptr)
     {
-        throw_runtime_error(expr.name, "environnement d'execution absent");
+        throw_runtime_error(expr.name, "environnement d'exécution absent");
     }
 
     try
@@ -116,7 +125,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         if (!left.is_logique())
         {
             throw_runtime_error(expr.op,
-                                "l'operateur 'et' attend une operande gauche de type Logique; type recu: " +
+                                "l'opérateur 'et' attend une operande gauche de type Logique; type reçu: " +
                                     left.type_name());
         }
 
@@ -131,7 +140,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         {
             throw_runtime_error(
                 expr.op,
-                describe_expected_binary_types("l'operateur 'et'", left, right, "deux operandes de type Logique"));
+                describe_expected_binary_types("l'opérateur 'et'", left, right, "deux operandes de type Logique"));
         }
 
         m_result = Value::logique(right.as_logique());
@@ -143,7 +152,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         if (!left.is_logique())
         {
             throw_runtime_error(expr.op,
-                                "l'operateur 'ou' attend une operande gauche de type Logique; type recu: " +
+                                "l'opérateur 'ou' attend une operande gauche de type Logique; type reçu: " +
                                     left.type_name());
         }
 
@@ -158,7 +167,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         {
             throw_runtime_error(
                 expr.op,
-                describe_expected_binary_types("l'operateur 'ou'", left, right, "deux operandes de type Logique"));
+                describe_expected_binary_types("l'opérateur 'ou'", left, right, "deux operandes de type Logique"));
         }
 
         m_result = Value::logique(right.as_logique());
@@ -172,7 +181,7 @@ void TreeWalker::visit(BinaryExpr &expr)
     case TokenType::PLUS:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() + right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::add(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -187,11 +196,11 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("l'addition", left, right, "deux valeurs numeriques ou au moins un Texte"));
+            describe_expected_binary_types("l'addition", left, right, "deux valeurs numériques ou au moins un Texte"));
     case TokenType::MOINS:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() - right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::subtract(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -201,11 +210,11 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la soustraction", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la soustraction", left, right, "deux valeurs numériques"));
     case TokenType::ETOILE:
         if (left.is_entier() && right.is_entier())
         {
-            m_result = Value::entier(left.as_entier() * right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::multiply(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -215,15 +224,15 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la multiplication", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la multiplication", left, right, "deux valeurs numériques"));
     case TokenType::SLASH:
         if (left.is_entier() && right.is_entier())
         {
             if (right.as_entier() == 0)
             {
-                throw_runtime_error(expr.op, "division par zéro");
+                throw_runtime_error(expr.op, messages::division_par_zero());
             }
-            m_result = Value::entier(left.as_entier() / right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::divide(left.as_entier(), right.as_entier()));
             return;
         }
         if (left.is_numeric() && right.is_numeric())
@@ -231,22 +240,22 @@ void TreeWalker::visit(BinaryExpr &expr)
             const double divisor = assert_decimal(right, expr.op);
             if (divisor == 0.0)
             {
-                throw_runtime_error(expr.op, "division par zero interdite");
+                throw_runtime_error(expr.op, messages::division_par_zero());
             }
             m_result = Value::decimal(assert_decimal(left, expr.op) / divisor);
             return;
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la division", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la division", left, right, "deux valeurs numériques"));
     case TokenType::MODULO:
         if (left.is_entier() && right.is_entier())
         {
             if (right.as_entier() == 0)
             {
-                throw_runtime_error(expr.op, "modulo par zéro");
+                throw_runtime_error(expr.op, messages::modulo_par_zero());
             }
-            m_result = Value::entier(left.as_entier() % right.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::remainder(left.as_entier(), right.as_entier()));
             return;
         }
         throw_runtime_error(
@@ -271,7 +280,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '<'", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '<'", left, right, "deux valeurs numériques"));
     case TokenType::INFERIEUR_EGAL:
         if (left.is_entier() && right.is_entier())
         {
@@ -285,7 +294,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '<='", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '<='", left, right, "deux valeurs numériques"));
     case TokenType::SUPERIEUR:
         if (left.is_entier() && right.is_entier())
         {
@@ -299,7 +308,7 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '>'", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '>'", left, right, "deux valeurs numériques"));
     case TokenType::SUPERIEUR_EGAL:
         if (left.is_entier() && right.is_entier())
         {
@@ -313,9 +322,9 @@ void TreeWalker::visit(BinaryExpr &expr)
         }
         throw_runtime_error(
             expr.op,
-            describe_expected_binary_types("la comparaison '>='", left, right, "deux valeurs numeriques"));
+            describe_expected_binary_types("la comparaison '>='", left, right, "deux valeurs numériques"));
     default:
-        throw_runtime_error(expr.op, "operateur binaire non pris en charge");
+        throw_runtime_error(expr.op, "opérateur binaire non pris en charge");
     }
 }
 
@@ -339,14 +348,14 @@ void TreeWalker::evaluate_assignment(BinaryExpr &expr)
         return;
     }
 
-    throw_runtime_error(expr.op, "cible d'affectation invalide: une variable, un champ ou un acces par indice est attendu");
+    throw_runtime_error(expr.op, "cible d'affectation invalide: une variable, un champ ou un accès par indice est attendu");
 }
 
 void TreeWalker::assign_identifier(IdentifierExpr &target, Expr &value_expr)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(target.name, "environnement d'execution absent");
+        throw_runtime_error(target.name, "environnement d'exécution absent");
     }
 
     Value value = evaluate(value_expr);
@@ -390,29 +399,30 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
     }
 
     auto instance = object.as_objet();
-    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
+    Ref<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
-            throw_runtime_error(target.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
+            throw_runtime_error(target.member, "'parent' ne peut être utilise ici: aucune classe parente n'est disponible");
         }
     }
 
-    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme) : nullptr;
+    Ref<LumiereClass> declaring_class;
+    VarDeclStmt *field_decl = lookup_class ? find_field_decl(lookup_class, target.member.lexeme, &declaring_class) : nullptr;
     if (field_decl == nullptr)
     {
         throw_runtime_error(target.member, "champ introuvable: '" + target.member.lexeme + "'");
     }
     if (field_decl->is_prive && !access_uses_ici(*target.object))
     {
-        throw_runtime_error(target.member, "acces interdit au champ prive '" + target.member.lexeme + "'");
+        throw_runtime_error(target.member, "accès interdit au champ privé '" + target.member.lexeme + "'");
     }
 
     Value value = evaluate(value_expr);
     ensure_value_matches_annotation(
         value,
-        field_decl->type,
+        class_annotation(declaring_class, field_decl->type),
         target.member,
         "le champ '" + target.member.lexeme + "'");
     instance->fields[target.member.lexeme] = value;
@@ -421,38 +431,33 @@ void TreeWalker::assign_member(MemberAccessExpr &target, Expr &value_expr)
 
 void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
 {
+    const Token &index_site = target.index->start_token();
     const Value object = evaluate(*target.object);
     const Value key = evaluate(*target.index);
     Value value = evaluate(value_expr);
 
+    if (object.is_liste_fixe())
+    {
+        throw_runtime_error(index_site,
+                            messages::liste_fixe_immuable());
+    }
+
     if (!supports_mutable_index_assignment(object))
     {
-        throw_runtime_error(target.bracket, "affectation par indice impossible: la cible doit etre une Liste, une ListeFixe ou un Dictionnaire");
+        throw_runtime_error(index_site,
+                            messages::affectation_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
     {
-        const int64_t position = assert_entier(key, target.bracket);
+        const int64_t position = assert_entier(key, index_site);
         auto list = object.as_liste();
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(target.bracket, "indice hors limites");
+            throw_runtime_error(index_site,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
-        enforce_list_element_constraint(list, value, target.bracket, "l'element de liste");
-        list->elements[static_cast<std::size_t>(position)] = value;
-        m_result = std::move(value);
-        return;
-    }
-
-    if (object.is_liste_fixe())
-    {
-        const int64_t position = assert_entier(key, target.bracket);
-        auto list = object.as_liste_fixe();
-        if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
-        {
-            throw_runtime_error(target.bracket, "indice hors limites");
-        }
-        enforce_fixed_list_element_constraint(list, value, target.bracket, "l'element de liste fixe");
+        enforce_list_element_constraint(list, value, index_site, "Liste.ajouter");
         list->elements[static_cast<std::size_t>(position)] = value;
         m_result = std::move(value);
         return;
@@ -461,32 +466,43 @@ void TreeWalker::assign_index(IndexAccessExpr &target, Expr &value_expr)
     if (object.is_dictionnaire())
     {
         auto dict = object.as_dictionnaire();
-        enforce_dict_entry_constraint(dict, key, value, target.bracket, "l'entree du dictionnaire");
-        for (auto &entry : dict->entries)
-        {
-            if (is_equal(entry.first, key))
-            {
-                entry.second = value;
-                m_result = std::move(value);
-                return;
-            }
-        }
-        dict->entries.push_back({key, value});
-        m_result = dict->entries.back().second;
+        enforce_dict_entry_constraint(dict, key, value, index_site, "l'entrée du dictionnaire");
+        require_dictionary_key(key, index_site);
+        dict->set(key, value);
+        m_result = std::move(value);
         return;
     }
 
-    throw_runtime_error(target.bracket, "affectation par indice impossible: la cible doit etre une Liste, une ListeFixe ou un Dictionnaire");
+    throw_runtime_error(index_site,
+                        messages::affectation_indice_impossible(object.type_name()));
+}
+
+void TreeWalker::visit(SetExpr &expr)
+{
+    auto data = make_ref<EnsembleData>();
+    data->reserve(expr.elements.size());
+
+    for (auto &element : expr.elements)
+    {
+        Value value = evaluate(*element);
+        require_dictionary_key(value, expr.brace);
+        data->insert(std::move(value));
+    }
+
+    m_result = Value::ensemble(std::move(data));
 }
 
 void TreeWalker::visit(DictionaryExpr &expr)
 {
-    auto data = std::make_shared<DictData>();
-    data->entries.reserve(expr.entries.size());
+    auto data = make_ref<DictData>();
+    data->reserve(expr.entries.size());
 
     for (auto &entry : expr.entries)
     {
-        data->entries.push_back({evaluate(*entry.key), evaluate(*entry.value)});
+        Value key = evaluate(*entry.key);
+        Value value = evaluate(*entry.value);
+        require_dictionary_key(key, expr.brace);
+        data->set(std::move(key), std::move(value));
     }
 
     m_result = Value::dictionnaire(std::move(data));
@@ -501,7 +517,7 @@ void TreeWalker::visit(UnaryExpr &expr)
     case TokenType::MOINS:
         if (operand.is_entier())
         {
-            m_result = Value::entier(-operand.as_entier());
+            m_result = checked_integer(*this, expr.op, numeric::negate(operand.as_entier()));
             return;
         }
         if (operand.is_numeric())
@@ -509,7 +525,7 @@ void TreeWalker::visit(UnaryExpr &expr)
             m_result = Value::decimal(-assert_decimal(operand, expr.op));
             return;
         }
-        throw_runtime_error(expr.op, describe_expected_unary_type("l'operateur unaire '-'", operand, "numerique"));
+        throw_runtime_error(expr.op, describe_expected_unary_type("l'opérateur unaire '-'", operand, "numerique"));
     case TokenType::NON:
         m_result = Value::logique(!is_truthy(operand));
         return;
@@ -517,136 +533,19 @@ void TreeWalker::visit(UnaryExpr &expr)
         break;
     }
 
-    throw_runtime_error(expr.op, "operateur unaire non pris en charge");
+    throw_runtime_error(expr.op, "opérateur unaire non pris en charge");
 }
 
 void TreeWalker::visit(CastExpr &expr)
 {
     const Value operand = evaluate(*expr.operand);
-    const std::string target = expr.target_type.to_string();
-
-    if (target == "Entier")
-    {
-        if (operand.is_entier())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_decimal())
-        {
-            m_result = Value::entier(static_cast<int64_t>(operand.as_decimal()));
-            return;
-        }
-        if (operand.is_symbole())
-        {
-            m_result = Value::entier(static_cast<int64_t>(operand.as_symbole()));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            try
-            {
-                m_result = Value::entier(std::stoll(operand.as_texte()));
-                return;
-            }
-            catch (...)
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Entier impossible pour une valeur de type Texte");
-            }
-        }
-    }
-
-    if (target == "Décimal" || target == "Decimal")
-    {
-        if (operand.is_decimal())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_entier())
-        {
-            m_result = Value::decimal(static_cast<double>(operand.as_entier()));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            try
-            {
-                m_result = Value::decimal(std::stod(operand.as_texte()));
-                return;
-            }
-            catch (...)
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Décimal impossible pour une valeur de type Texte");
-            }
-        }
-    }
-
-    if (target == "Logique")
-    {
-        if (operand.is_logique())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_texte())
-        {
-            if (operand.as_texte() == "vrai")
-            {
-                m_result = Value::logique(true);
-                return;
-            }
-            if (operand.as_texte() == "faux")
-            {
-                m_result = Value::logique(false);
-                return;
-            }
-            throw_runtime_error(expr.target_type.source, "conversion vers Logique impossible: le texte doit valoir 'vrai' ou 'faux'");
-        }
-    }
-
-    if (target == "Symbole")
-    {
-        if (operand.is_symbole())
-        {
-            m_result = operand;
-            return;
-        }
-        if (operand.is_entier())
-        {
-            const int64_t unicode_value = operand.as_entier();
-            if (unicode_value < 0 || unicode_value > 0x10FFFF)
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le point de code Unicode est invalide");
-            }
-            m_result = Value::symbole(static_cast<char32_t>(unicode_value));
-            return;
-        }
-        if (operand.is_texte())
-        {
-            const std::optional<char32_t> symbol_char = utf8::decode_single_character(operand.as_texte());
-            if (!symbol_char.has_value())
-            {
-                throw_runtime_error(expr.target_type.source, "conversion vers Symbole impossible: le texte doit contenir exactement un caractere");
-            }
-            m_result = Value::symbole(*symbol_char);
-            return;
-        }
-    }
-
-    if (target == "Texte")
-    {
-        m_result = Value::texte(to_texte(operand));
-        return;
-    }
-
-    if (target == "Universel")
-    {
-        m_result = operand;
-        return;
-    }
-
-    throw_runtime_error(expr.target_type.source, "conversion explicite non prise en charge vers le type '" + target + "'");
+    // An alias is transparent, and the VM's compiler expands it; this engine
+    // compared the alias's own name against the builtin ones and refused it.
+    const Token &site = expr.target_type.source;
+    m_result = convert(*this,
+                       operand,
+                       resolved_annotation_name(expr.target_type),
+                       RuntimeSite{{}, static_cast<int>(site.line), static_cast<int>(site.column)});
 }
 
 void TreeWalker::visit(TypeCheckExpr &expr)
@@ -656,15 +555,16 @@ void TreeWalker::visit(TypeCheckExpr &expr)
 
 void TreeWalker::visit(FunctionExpr &expr)
 {
-    m_result = Value::fonction(make_declared_function(expr, m_self, m_env));
+    m_result = Value::fonction(make_declared_function(expr, m_self, m_env_owner));
 }
 
 void TreeWalker::visit(CallExpr &expr)
 {
+    const Token &call_site = call_site_token(expr);
     if (auto *identifier = dynamic_cast<IdentifierExpr *>(expr.callee.get()))
     {
         const std::string &builtin_name = identifier->name.lexeme;
-        if (builtin_name == "afficher" ||
+        if ((builtin_name == "afficher" ||
             builtin_name == "lire" ||
             builtin_name == "lire_entier" ||
             builtin_name == "lire_décimal" ||
@@ -672,9 +572,10 @@ void TreeWalker::visit(CallExpr &expr)
             builtin_name == "lire_logique" ||
             builtin_name == "type_de" ||
             builtin_name == "Succès" ||
-            builtin_name == "Échec")
+            builtin_name == "Échec") &&
+            (m_env == nullptr || !m_env->contains(builtin_name)))
         {
-            m_result = call_builtin(builtin_name, expr.args, expr.paren);
+            m_result = call_builtin(builtin_name, expr.args, call_site);
             return;
         }
     }
@@ -688,46 +589,64 @@ void TreeWalker::visit(CallExpr &expr)
         {
             if (expr.args.size() != 3)
             {
-                throw_runtime_error(expr.paren, "ListeFixe.remplir requiert exactement 3 argument(s)");
+                throw_runtime_error(call_site, "ListeFixe.remplir requiert exactement 3 argument(s)");
             }
             for (const auto &arg : expr.args)
             {
                 if (!arg.name.empty())
                 {
-                    throw_runtime_error(expr.paren, "ListeFixe.remplir n'accepte pas d'arguments nommes");
+                    throw_runtime_error(arg.site, "ListeFixe.remplir n'accepte pas d'arguments nommés");
                 }
             }
 
             const auto *type_expr = dynamic_cast<IdentifierExpr *>(expr.args[0].value.get());
             if (type_expr == nullptr)
             {
-                throw_runtime_error(expr.paren, "ListeFixe.remplir attend un nom de type comme premier argument");
+                throw_runtime_error(expr.args[0].site, "ListeFixe.remplir attend un nom de type comme premier argument");
             }
 
             const std::string element_type = type_expr->name.lexeme;
             const Value length_value = evaluate(*expr.args[1].value);
-            const int64_t length = assert_entier(length_value, expr.paren);
+            const int64_t length = assert_entier(length_value, expr.args[1].site);
             if (length < 0)
             {
-                throw_runtime_error(expr.paren, "la taille d'une ListeFixe ne peut pas etre negative");
+                throw_runtime_error(expr.args[1].site, "la taille d'une ListeFixe ne peut pas être négative");
             }
 
             const Value fill_value = evaluate(*expr.args[2].value);
             ensure_value_matches_annotation(
                 fill_value,
                 Token(TokenType::IDENT, element_type, type_expr->name.line, type_expr->name.column),
-                expr.paren,
+                expr.args[2].site,
                 "ListeFixe.remplir");
 
-            auto data = std::make_shared<ListeFixeData>();
-            data->elements.assign(static_cast<std::size_t>(length), fill_value);
+            auto data = make_ref<ListeFixeData>();
+            // A user-supplied length flows straight into this allocation
+            // with nothing upstream capping it; unlike a native function
+            // call (see call_function below), this special form is handled
+            // inline and reaches this line directly from the expression
+            // evaluator, so it needs its own guard against the same
+            // std::bad_alloc/std::length_error escaping as a raw C++
+            // exception instead of a normal Lumiere runtime error.
+            try
+            {
+                data->elements.assign(static_cast<std::size_t>(length), fill_value);
+            }
+            catch (const std::bad_alloc &)
+            {
+                throw_runtime_error(expr.args[1].site, messages::memoire_insuffisante());
+            }
+            catch (const std::length_error &)
+            {
+                throw_runtime_error(expr.args[1].site, messages::taille_hors_limites());
+            }
             m_result = Value::liste_fixe(std::move(data));
             register_value_annotation(
                 m_result,
                 Token(TokenType::IDENT,
                       "ListeFixe[" + element_type + ", " + std::to_string(length) + "]",
-                      expr.paren.line,
-                      expr.paren.column));
+                      call_site.line,
+                      call_site.column));
             return;
         }
     }
@@ -735,20 +654,20 @@ void TreeWalker::visit(CallExpr &expr)
     const Value callee = evaluate(*expr.callee);
     if (callee.is_classe())
     {
-        m_result = instantiate_class(callee.as_classe(), expr.args, expr.paren);
+        m_result = instantiate_class(callee.as_classe(), expr.args, call_site);
         return;
     }
     if (!callee.is_fonction())
     {
-        throw_runtime_error(expr.paren, "la valeur appelee n'est pas une fonction");
+        throw_runtime_error(call_site, messages::valeur_non_appelable(callee.type_name()));
     }
 
-    m_result = call_function(callee.as_fonction(), expr.args, expr.paren);
+    m_result = call_function(callee.as_fonction(), expr.args, call_site);
 }
 
 void TreeWalker::visit(ListExpr &expr)
 {
-    auto data = std::make_shared<ListeData>();
+    auto data = make_ref<ListeData>();
     data->elements.reserve(expr.elements.size());
 
     for (auto &element : expr.elements)
@@ -773,16 +692,16 @@ void TreeWalker::visit(MemberAccessExpr &expr)
             return;
         }
 
-        throw_runtime_error(expr.member, "acces membre impossible: la cible avant '.' doit etre un Objet");
+        throw_runtime_error(expr.member, messages::membre_introuvable(expr.member.lexeme, object.type_name()));
     }
 
     auto instance = object.as_objet();
-    std::shared_ptr<LumiereClass> lookup_class = instance->klass;
+    Ref<LumiereClass> lookup_class = instance->klass;
     if (uses_super)
     {
         if (lookup_class == nullptr || (lookup_class = parent_class(lookup_class)) == nullptr)
         {
-            throw_runtime_error(expr.member, "'parent' ne peut etre utilise ici: aucune classe parente n'est disponible");
+            throw_runtime_error(expr.member, "'parent' ne peut être utilise ici: aucune classe parente n'est disponible");
         }
     }
 
@@ -801,7 +720,7 @@ void TreeWalker::visit(MemberAccessExpr &expr)
     {
         if (field_decl->is_prive && !access_uses_ici(*expr.object))
         {
-            throw_runtime_error(expr.member, "acces interdit au champ prive '" + expr.member.lexeme + "'");
+            throw_runtime_error(expr.member, "accès interdit au champ privé '" + expr.member.lexeme + "'");
         }
 
         auto field_it = instance->fields.find(expr.member.lexeme);
@@ -816,14 +735,19 @@ void TreeWalker::visit(MemberAccessExpr &expr)
 
     if (lookup_class != nullptr)
     {
-        if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme))
+        Ref<LumiereClass> declaring_class;
+        if (FunctionDeclStmt *function_decl = find_method_decl(lookup_class, expr.member.lexeme, &declaring_class))
         {
             if (function_decl->is_prive && !access_uses_ici(*expr.object))
             {
-                throw_runtime_error(expr.member, "acces interdit a la methode privee '" + expr.member.lexeme + "'");
+                throw_runtime_error(expr.member, "accès interdit à la méthode privée '" + expr.member.lexeme + "'");
             }
 
-            m_result = Value::fonction(make_declared_function(*function_decl, object, m_env));
+            m_result = Value::fonction(make_declared_function(
+                *function_decl,
+                object,
+                class_closure_owner(declaring_class),
+                class_source_identity(declaring_class)));
             return;
         }
 
@@ -835,27 +759,29 @@ void TreeWalker::visit(MemberAccessExpr &expr)
         }
     }
 
-    throw_runtime_error(expr.member, "membre introuvable: '" + expr.member.lexeme + "'");
+    throw_runtime_error(expr.member, messages::membre_introuvable(expr.member.lexeme, object.type_name()));
 }
 
 void TreeWalker::visit(IndexAccessExpr &expr)
 {
+    const Token &index_site = expr.index->start_token();
     const Value object = evaluate(*expr.object);
     const Value index = evaluate(*expr.index);
 
     if (!supports_index_read(object))
     {
-        throw_runtime_error(expr.bracket, "acces par indice impossible pour une valeur de type " + object.type_name());
+        throw_runtime_error(index_site, messages::acces_indice_impossible(object.type_name()));
     }
 
     if (object.is_liste())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         auto list = object.as_liste();
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(index_site,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
         m_result = list->elements[static_cast<std::size_t>(position)];
@@ -864,12 +790,13 @@ void TreeWalker::visit(IndexAccessExpr &expr)
 
     if (object.is_liste_fixe())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         auto list = object.as_liste_fixe();
 
         if (position < 0 || static_cast<std::size_t>(position) >= list->elements.size())
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(index_site,
+                                messages::indice_hors_limites(position, list->elements.size(), object.type_name()));
         }
 
         m_result = list->elements[static_cast<std::size_t>(position)];
@@ -880,45 +807,43 @@ void TreeWalker::visit(IndexAccessExpr &expr)
     {
         auto dict = object.as_dictionnaire();
 
-        for (const auto &entry : dict->entries)
+        if (const DictEntry *entry = dict->find(index))
         {
-            if (is_equal(entry.first, index))
-            {
-                m_result = entry.second;
-                return;
-            }
+            m_result = entry->second;
+            return;
         }
 
-        throw_runtime_error(expr.bracket, "cle introuvable dans le Dictionnaire");
+        throw_runtime_error(index_site, messages::cle_introuvable());
     }
 
     if (object.is_texte())
     {
-        const int64_t position = assert_entier(index, expr.bracket);
+        const int64_t position = assert_entier(index, index_site);
         const std::string &text = object.as_texte();
         const std::optional<std::size_t> length = utf8::character_count(text);
 
         if (!length.has_value())
         {
-            throw_runtime_error(expr.bracket, "texte UTF-8 invalide");
+            throw_runtime_error(index_site, "texte UTF-8 invalide");
         }
 
         if (position < 0 || static_cast<std::size_t>(position) >= *length)
         {
-            throw_runtime_error(expr.bracket, "indice hors limites");
+            throw_runtime_error(index_site,
+                                messages::indice_hors_limites(position, *length, object.type_name()));
         }
 
         const std::optional<char32_t> symbol_char = utf8::character_at(text, static_cast<std::size_t>(position));
         if (!symbol_char.has_value())
         {
-            throw_runtime_error(expr.bracket, "texte UTF-8 invalide");
+            throw_runtime_error(index_site, "texte UTF-8 invalide");
         }
 
         m_result = Value::symbole(*symbol_char);
         return;
     }
 
-    throw_runtime_error(expr.bracket, "acces par indice impossible pour une valeur de type " + object.type_name());
+    throw_runtime_error(index_site, messages::acces_indice_impossible(object.type_name()));
 }
 
 void TreeWalker::visit(PropagationExpr &expr)
@@ -940,7 +865,7 @@ void TreeWalker::visit(PropagationExpr &expr)
     }
 }
 
-Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function,
+Value TreeWalker::call_function(const Ref<LumiereFunction> &function,
                                 const std::vector<Argument> &args,
                                 const Token &call_site)
 {
@@ -952,11 +877,26 @@ Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function
     if (function->is_native())
     {
         const std::vector<RuntimeArgument> runtime_args = evaluate_runtime_arguments(args);
-        m_result = function->native_handler(
-            *this,
-            NativeArgs{function->is_method() ? &function->receiver : nullptr,
-                       &runtime_args,
-                       RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)}});
+        // See the matching comment in VmRuntimeServices::call: an uncaught
+        // std::bad_alloc/std::length_error from a native handler would
+        // otherwise unwind past every Lumiere-level error handling construct
+        // as a raw C++ exception and terminate the process.
+        try
+        {
+            m_result = function->native_handler(
+                *this,
+                NativeArgs{function->is_method() ? &function->receiver : nullptr,
+                           &runtime_args,
+                           RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)}});
+        }
+        catch (const std::bad_alloc &)
+        {
+            throw_runtime_error(call_site, messages::memoire_insuffisante());
+        }
+        catch (const std::length_error &)
+        {
+            throw_runtime_error(call_site, messages::taille_hors_limites());
+        }
         return m_result;
     }
 
@@ -967,7 +907,7 @@ Value TreeWalker::call_function(const std::shared_ptr<LumiereFunction> &function
         RuntimeSite{m_current_source_path, static_cast<int>(call_site.line), static_cast<int>(call_site.column)});
 }
 
-Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &function,
+Value TreeWalker::call_user_function(const Ref<LumiereFunction> &function,
                                      const std::vector<RuntimeArgument> &args,
                                      const RuntimeSite &call_site)
 {
@@ -984,7 +924,18 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
     }
 
     const std::vector<Parameter> &params = decl_ptr != nullptr ? decl_ptr->params : expr_ptr->params;
-    const TypeExpr &return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
+    TypeExpr return_type = decl_ptr != nullptr ? decl_ptr->return_type : expr_ptr->return_type;
+    // Return checks run after restoring the caller's value environment. Resolve
+    // their annotation in the function's lexical environment before entering it.
+    try
+    {
+        if (const auto closure = function_closure_owner(*function))
+            return_type = closure->resolve_type_aliases(return_type);
+    }
+    catch (const std::invalid_argument &error)
+    {
+        raise_runtime_error(call_site, error.what());
+    }
     Stmt *body = decl_ptr != nullptr ? decl_ptr->body.get() : expr_ptr->body.get();
     const std::string function_name = decl_ptr != nullptr ? decl_ptr->name.lexeme : "<anonyme>";
 
@@ -1011,18 +962,24 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
     };
 
     Environment *previous_env = m_env;
-    std::shared_ptr<Environment> previous_env_owner = m_env_owner;
+    Ref<Environment> previous_env_owner = m_env_owner;
     Value previous_self = m_self;
     // Start a fresh call frame whose parent is the function's saved closure.
     // Parameters and locals land in this new frame; captured names resolve
     // through the parent chain preserved by function_closure_owner(...).
-    m_env_owner = std::make_shared<Environment>(function_closure_owner(*function));
+    m_env_owner = make_ref<Environment>(function_closure_owner(*function));
     m_env = m_env_owner.get();
+    m_env->set_source_identity(function_source_identity(*function));
     m_self = function->receiver;
 
     try
     {
-        std::vector<std::optional<Value>> bound_arguments(params.size());
+        // One slot per parameter, holding the argument that filled it. It has
+        // to be one vector and not two -- a second one for the positions cost
+        // an allocation on every call, which is what this path spends its time
+        // on -- and a pointer rather than a copy of the value, which the
+        // parameter loop copies once at the end anyway.
+        std::vector<const RuntimeArgument *> bound_arguments(params.size(), nullptr);
         std::size_t next_positional_parameter = 0;
 
         for (std::size_t i = 0; i < args.size(); ++i)
@@ -1042,31 +999,31 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
 
                 if (target_index == params.size())
                 {
-                    raise_runtime_error(call_site, "aucun parametre nomme '" + args[i].name + "'");
+                    raise_runtime_error(args[i].site, "aucun paramètre nommé '" + args[i].name + "'");
                 }
             }
             else
             {
                 while (next_positional_parameter < params.size() &&
-                       bound_arguments[next_positional_parameter].has_value())
+                       bound_arguments[next_positional_parameter] != nullptr)
                 {
                     ++next_positional_parameter;
                 }
 
                 if (next_positional_parameter == params.size())
                 {
-                    raise_runtime_error(call_site, "trop d'arguments fournis a l'appel de fonction");
+                    raise_runtime_error(args[i].site, "trop d'arguments fournis a l'appel de fonction");
                 }
 
                 target_index = next_positional_parameter++;
             }
 
-            if (bound_arguments[target_index].has_value())
+            if (bound_arguments[target_index] != nullptr)
             {
-                raise_runtime_error(call_site, "le parametre '" + params[target_index].name + "' est fourni plusieurs fois");
+                raise_runtime_error(args[i].site, "le paramètre '" + params[target_index].name + "' est fourni plusieurs fois");
             }
 
-            bound_arguments[target_index] = args[i].value;
+            bound_arguments[target_index] = &args[i];
         }
 
         for (std::size_t i = 0; i < params.size(); ++i)
@@ -1074,9 +1031,9 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
             const Parameter &parameter = params[i];
             Value argument_value = Value::rien();
 
-            if (bound_arguments[i].has_value())
+            if (bound_arguments[i] != nullptr)
             {
-                argument_value = *bound_arguments[i];
+                argument_value = bound_arguments[i]->value;
             }
             else if (parameter.default_value)
             {
@@ -1084,15 +1041,23 @@ Value TreeWalker::call_user_function(const std::shared_ptr<LumiereFunction> &fun
             }
             else
             {
-                raise_runtime_error(call_site, "argument manquant pour le parametre '" + parameter.name + "'");
+                raise_runtime_error(call_site, "argument manquant pour le paramètre '" + parameter.name + "'");
             }
 
+            const RuntimeSite &argument_site =
+                bound_arguments[i] != nullptr ? bound_arguments[i]->site : call_site;
+            // This token is read for its position only, so it carries no
+            // lexeme: naming the parameter here copied a string per parameter
+            // per call and nothing ever looked at it.
             ensure_value_matches_annotation(
                 argument_value,
                 parameter.type,
-                site_token,
-                "le parametre '" + parameter.name + "'");
-            m_env->define(parameter.name, std::move(argument_value), parameter.type.to_string());
+                Token(TokenType::IDENT,
+                      {},
+                      static_cast<std::uint32_t>(argument_site.line),
+                      static_cast<std::uint32_t>(argument_site.column)),
+                "le paramètre '" + parameter.name + "'");
+            m_env->define(parameter.name, std::move(argument_value), resolved_annotation_name(parameter.type));
         }
 
         if (body != nullptr)
@@ -1184,7 +1149,7 @@ Value TreeWalker::call_builtin(const std::string &name,
         {
             if (!args[i].name.empty())
             {
-                throw_runtime_error(call_site, "les arguments nommes ne sont pas pris en charge pour 'afficher'");
+                throw_runtime_error(call_site, "les arguments nommés ne sont pas pris en charge pour 'afficher'");
             }
 
             if (i > 0)
@@ -1222,7 +1187,7 @@ Value TreeWalker::call_builtin(const std::string &name,
         }
         if (!args[0].name.empty())
         {
-            throw_runtime_error(call_site, "type_de n'accepte pas d'arguments nommes");
+            throw_runtime_error(call_site, "type_de n'accepte pas d'arguments nommés");
         }
 
         return Value::texte(runtime_type_name(evaluate(*args[0].value)));
@@ -1278,26 +1243,17 @@ Value TreeWalker::call_builtin(const std::string &name,
                 "lire_décimal",
                 "fin de l'entrée");
         }
-        try
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
         {
-            std::size_t parsed = 0;
-            const double value = std::stod(line, &parsed);
-            while (parsed < line.size() && std::isspace(static_cast<unsigned char>(line[parsed])))
-            {
-                ++parsed;
-            }
-            if (parsed != line.size())
-            {
-                throw std::invalid_argument("caractères restants");
-            }
-            return stdlib_success(Value::decimal(value));
+            line.pop_back();
         }
-        catch (...)
+        if (const auto value = numeric::parse_decimal(line))
         {
-            return input_failure(
-                "lire_décimal",
-                "décimal invalide: " + line);
+            return stdlib_success(Value::decimal(*value));
         }
+        return input_failure(
+            "lire_décimal",
+            "décimal invalide: " + line);
     }
 
     if (name == "lire_logique")
@@ -1330,7 +1286,7 @@ Value TreeWalker::call_builtin(const std::string &name,
     throw_runtime_error(call_site, "fonction native inconnue: " + name);
 }
 
-Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
+Value TreeWalker::instantiate_class(const Ref<LumiereClass> &klass,
                                     const std::vector<Argument> &args,
                                     const Token &call_site)
 {
@@ -1340,19 +1296,24 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         throw_runtime_error(call_site, "classe invalide");
     }
 
-    auto object = std::make_shared<LumiereObject>();
+    auto object = make_ref<LumiereObject>();
     object->klass = klass;
 
-    std::unordered_map<std::string, VarDeclStmt *> fields_by_name;
+    struct FieldInfo
+    {
+        VarDeclStmt *declaration;
+        Token annotation;
+    };
+    std::unordered_map<std::string, FieldInfo> fields_by_name;
     std::vector<std::string> field_order;
 
-    std::function<void(const std::shared_ptr<LumiereClass> &)> collect_fields = [&](const std::shared_ptr<LumiereClass> &current) {
+    std::function<void(const Ref<LumiereClass> &)> collect_fields = [&](const Ref<LumiereClass> &current) {
         if (current == nullptr)
         {
             return;
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(current))
+        if (Ref<LumiereClass> parent = parent_class(current))
         {
             collect_fields(parent);
         }
@@ -1367,7 +1328,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         {
             if (auto *field = dynamic_cast<VarDeclStmt *>(member.get()))
             {
-                fields_by_name[field->name.lexeme] = field;
+                fields_by_name.insert_or_assign(field->name.lexeme, FieldInfo{field, class_annotation(current, field->type)});
                 field_order.push_back(field->name.lexeme);
             }
         }
@@ -1418,14 +1379,15 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
         object->fields[field_name] = evaluate(*arg.value);
         ensure_value_matches_annotation(
             object->fields[field_name],
-            fields_by_name[field_name]->type,
+            fields_by_name.at(field_name).annotation,
             call_site,
             "le champ '" + field_name + "'");
         assigned_fields.insert(field_name);
     }
 
-    for (const auto &[field_name, field_decl] : fields_by_name)
+    for (const auto &[field_name, field] : fields_by_name)
     {
+        const auto *field_decl = field.declaration;
         if (!assigned_fields.count(field_name))
         {
             if (field_decl->initializer)
@@ -1438,7 +1400,7 @@ Value TreeWalker::instantiate_class(const std::shared_ptr<LumiereClass> &klass,
             }
             ensure_value_matches_annotation(
                 object->fields[field_name],
-                field_decl->type,
+                field.annotation,
                 field_decl->name,
                 "le champ '" + field_name + "'");
         }

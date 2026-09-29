@@ -6,11 +6,14 @@
 namespace lumiere
 {
 
-Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
+Value make_udp_socket_value(const Ref<UdpSocketState> &state_ref,
                             const NativeFunctionFactory &make_native_function)
 {
     auto object = make_hidden_typed_object("SocketUDP");
-    attach_native_state(object, state);
+    attach_native_state(object, state_ref);
+    // The methods below capture the state as a raw pointer; bind_object_method
+    // declares the owning reference on each one, so the collector sees it.
+    auto *const state = state_ref.get();
     object->fields["port"] = Value::entier(state->port);
 
     object->fields["fermer"] = Value::fonction(make_native_function(
@@ -56,7 +59,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             hints.ai_socktype = SOCK_DGRAM;
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(port);
-            const int rc = ::getaddrinfo(host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer", gai_strerror(rc));
@@ -89,7 +92,7 @@ Value make_udp_socket_value(const std::shared_ptr<UdpSocketState> &state,
             hints.ai_socktype = SOCK_DGRAM;
             addrinfo *result = nullptr;
             const std::string port_text = std::to_string(port);
-            const int rc = ::getaddrinfo(host.c_str(), port_text.c_str(), &hints, &result);
+            const int rc = getaddrinfo_with_timeout(host.c_str(), port_text.c_str(), &hints, &result);
             if (rc != 0)
             {
                 raise_network_error(runtime, native_args.site, "SocketUDP.envoyer_octets", gai_strerror(rc));

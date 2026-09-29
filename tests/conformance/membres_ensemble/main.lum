@@ -1,0 +1,46 @@
+// Chaque membre d'un Ensemble, avec ses cas limites : receveur vide, élément
+// déjà présent, élément absent, et les opérations d'ensemble contre elles-mêmes.
+fonction principal() {
+    soit sans_rien: Liste[Entier] = []
+    soit vide = sans_rien.en_ensemble()
+    afficher(vide.taille())
+    afficher(vide.vide())
+    afficher(vide.contient(1))
+    afficher("[" + vide.joindre(", ") + "]")
+    afficher(vide.en_liste().taille())
+
+    soit nombres: Ensemble[Entier] = {1, 2, 3}
+    afficher(nombres.taille())
+    afficher(nombres.vide())
+    afficher(nombres.contient(2))
+    afficher(nombres.contient(9))
+    afficher(nombres.joindre(","))
+
+    // ajouter et retirer disent si l'ensemble a changé.
+    afficher(nombres.ajouter(4))
+    afficher(nombres.ajouter(4))
+    afficher(nombres.retirer(4))
+    afficher(nombres.retirer(4))
+    afficher(nombres.joindre(","))
+
+    // L'ordre d'insertion est celui de l'itération, des deux côtés.
+    soit autres: Ensemble[Entier] = {3, 4, 5}
+    afficher(nombres.union(autres).joindre(","))
+    afficher(nombres.intersection(autres).joindre(","))
+    afficher(nombres.difference(autres).joindre(","))
+    afficher(nombres.différence(autres).joindre(","))
+    afficher(autres.difference(nombres).joindre(","))
+
+    afficher(nombres.sous_ensemble_de(nombres))
+    afficher(nombres.sous_ensemble_de(autres))
+    afficher(vide.sous_ensemble_de(nombres))
+    afficher(nombres.sous_ensemble_de(vide))
+
+    afficher(nombres.union(vide).joindre(","))
+    afficher(nombres.intersection(vide).joindre(","))
+
+    // Le contrat de la source suit la collection dérivée.
+    soit mots: Ensemble[Texte] = {"a", "b"}
+    afficher(mots.en_liste().joindre(""))
+    afficher(mots.union(mots).taille())
+}

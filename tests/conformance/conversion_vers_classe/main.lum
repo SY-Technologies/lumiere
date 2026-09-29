@@ -1,0 +1,12 @@
+// 'en' ne convertit que vers un type de base. Une conversion vers une classe
+// passait l'analyse puis échouait à chaque exécution, dans les deux moteurs :
+// elle est refusée avant de s'exécuter.
+classe Point {
+    x: Entier
+}
+
+fonction principal() {
+    soit valeurs: Liste[Point] = [Point(x: 1)]
+    soit premier = valeurs[0] en Point
+    afficher(premier.x)
+}

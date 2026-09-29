@@ -57,7 +57,7 @@ std::string RuntimeError::format() const
         out << "\n" << source_snippet;
     }
 
-    out << "\nerreur d'execution: " << message;
+    out << "\nerreur d'exécution: " << message;
 
     return out.str();
 }

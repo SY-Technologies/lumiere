@@ -14,6 +14,7 @@
 #include "lumiere/interpreter/tree_walker/environment.hpp"
 #include "lumiere/interpreter/tree_walker/runtime.hpp"
 #include "lumiere/interpreter/runtime/value.hpp"
+#include "lumiere/interpreter/runtime/runtime_type.hpp"
 
 namespace lumiere
 {
@@ -69,6 +70,16 @@ namespace lumiere
          * @brief Compares two runtime values using Lumiere equality rules.
          */
         bool is_equal(const Value &left, const Value &right) const override;
+
+        /**
+         * @brief Returns whether a value satisfies the language type `type_name`.
+         */
+        bool matches_declared_type(const Value &value, std::string_view type_name) const override;
+
+        /**
+         * @brief Rejects a value that cannot stay equal to itself while stored as a key.
+         */
+        void require_dictionary_key(const Value &key, const Token &site) const;
 
         /**
          * @brief Converts a value to text.
@@ -150,43 +161,22 @@ namespace lumiere
         LumiTestRunSummary lumitest_summary() const;
 
     private:
-        // Tree-walker-specific helper signature used while implementing native
-        // members such as `liste.ajouter(...)`. Unlike `LumiereFunction::NativeHandler`,
-        // this already assumes the backend is a TreeWalker and exposes a Token
-        // for error reporting instead of the generic RuntimeSite bundle.
-        using NativeMethodHandler = std::function<Value(
-            TreeWalker &,
-            const std::vector<RuntimeArgument> &,
-            const Token &)>;
-
         struct TreeWalkerFunctionBody;
         struct TreeWalkerClassBody;
         struct TreeWalkerInterfaceBody;
         struct TreeWalkerModuleState : RuntimeModuleState
         {
-            std::shared_ptr<Environment> environment;
-        };
+            Ref<Environment> environment;
 
-        struct ListConstraint
-        {
-            std::string element_type;
-        };
+            void trace_references(RefVisitor &visitor) const override
+            {
+                if (environment)
+                {
+                    visitor.visit(environment.get());
+                }
+            }
 
-        struct FixedListConstraint
-        {
-            std::string element_type;
-            std::size_t length = 0;
-        };
-
-        struct DictConstraint
-        {
-            std::string key_type;
-            std::string value_type;
-        };
-
-        struct SetConstraint
-        {
-            std::string element_type;
+            void clear_references() override { environment.reset(); }
         };
 
         class StackFrameGuard
@@ -204,7 +194,7 @@ namespace lumiere
 
         Value m_result;               // for expression results
         Environment *m_env = nullptr; // current scope, never null during execution
-        std::shared_ptr<Environment> m_env_owner;
+        Ref<Environment> m_env_owner;
         Value m_self; // current ici binding — RIEN if free function
         std::unordered_map<std::string, std::shared_ptr<Module>> m_modules;
         std::unordered_set<std::string> m_loading_modules;
@@ -213,12 +203,15 @@ namespace lumiere
         std::vector<StackFrame> m_stack_trace;
         std::string m_current_source_path;
         std::string m_current_source_text;
+        std::size_t m_incremental_unit = 0;
         LumiTestRuntimeOptions m_lumitest_options;
-        mutable std::unordered_map<const ListeData *, ListConstraint> m_list_constraints;
-        mutable std::unordered_map<const ListeFixeData *, FixedListConstraint> m_fixed_list_constraints;
-        mutable std::unordered_map<const DictData *, DictConstraint> m_dict_constraints;
-        mutable std::unordered_map<const EnsembleData *, SetConstraint> m_set_constraints;
-        std::unordered_map<std::string, TypeExpr> m_type_aliases;
+
+        // A type is read from its text once and kept for the rest of the run,
+        // keyed by that text -- see runtime_type.hpp. Every entry point ends up
+        // here: a collection's contract, IRuntime's by-name checks, and a
+        // declared annotation (a parameter, a field, a return type) once its
+        // aliases are resolved to text by `resolved_annotation_name`.
+        mutable RuntimeTypeCache m_type_cache;
 
         /**
          * @brief Evaluates an expression and returns its resulting runtime value.
@@ -231,7 +224,7 @@ namespace lumiere
          * This helper evaluates the call arguments, applies parameter binding,
          * and executes the function body in its captured environment.
          */
-        Value call_function(const std::shared_ptr<LumiereFunction> &function,
+        Value call_function(const Ref<LumiereFunction> &function,
                             const std::vector<Argument> &args,
                             const Token &call_site);
 
@@ -243,7 +236,7 @@ namespace lumiere
          * and named arguments, restores `ici` when needed, and executes the
          * saved AST body against the function's captured closure.
          */
-        Value call_user_function(const std::shared_ptr<LumiereFunction> &function,
+        Value call_user_function(const Ref<LumiereFunction> &function,
                                  const std::vector<RuntimeArgument> &args,
                                  const RuntimeSite &call_site);
 
@@ -255,7 +248,7 @@ namespace lumiere
          * through the ordinary call machinery so arity checks and runtime
          * errors behave the same as any other method call.
          */
-        Value instantiate_class(const std::shared_ptr<LumiereClass> &klass,
+        Value instantiate_class(const Ref<LumiereClass> &klass,
                                 const std::vector<Argument> &args,
                                 const Token &call_site);
 
@@ -297,7 +290,7 @@ namespace lumiere
         /**
          * @brief Wraps a plain C++ callback in a runtime function value with no receiver.
          */
-        std::shared_ptr<LumiereFunction> make_native_function(LumiereFunction::NativeHandler handler) const;
+        Ref<LumiereFunction> make_native_function(LumiereFunction::NativeHandler handler) const;
 
         /**
          * @brief Wraps a C++ callback in a runtime function value already bound to a receiver.
@@ -305,7 +298,7 @@ namespace lumiere
          * The resulting function reports itself as a method and will expose the
          * stored receiver through `NativeArgs.receiver` when called.
          */
-        std::shared_ptr<LumiereFunction> make_native_method(Value receiver,
+        Ref<LumiereFunction> make_native_method(Value receiver,
                                                             LumiereFunction::NativeHandler handler) const;
 
         /**
@@ -315,9 +308,10 @@ namespace lumiere
          * environment alive so later calls can re-enter the declaration with
          * the correct closure.
          */
-        std::shared_ptr<LumiereFunction> make_declared_function(FunctionDeclStmt &decl,
+        Ref<LumiereFunction> make_declared_function(FunctionDeclStmt &decl,
                                                                 Value receiver,
-                                                                Environment *closure) const;
+                                                                Ref<Environment> closure,
+                                                                std::string source_identity = {}) const;
 
         /**
          * @brief Captures an anonymous function expression as a callable runtime value.
@@ -325,9 +319,10 @@ namespace lumiere
          * This is the expression-form counterpart to the declaration overload:
          * same closure rules, but the body comes from a `FunctionExpr`.
          */
-        std::shared_ptr<LumiereFunction> make_declared_function(FunctionExpr &expr,
+        Ref<LumiereFunction> make_declared_function(FunctionExpr &expr,
                                                                 Value receiver,
-                                                                Environment *closure) const;
+                                                                Ref<Environment> closure,
+                                                                std::string source_identity = {}) const;
 
         /**
          * @brief Resolves a built-in member access on a runtime value.
@@ -346,79 +341,12 @@ namespace lumiere
         /**
          * @brief Creates a class value that points back to its class declaration node.
          */
-        std::shared_ptr<LumiereClass> make_runtime_class(ClassDeclStmt &decl) const;
+        Ref<LumiereClass> make_runtime_class(ClassDeclStmt &decl) const;
 
         /**
          * @brief Creates an interface value that points back to its interface declaration node.
          */
-        std::shared_ptr<LumiereInterface> make_runtime_interface(InterfaceDeclStmt &decl) const;
-
-        /**
-         * @brief Turns a tree-walker helper into the method value returned by `object.member`.
-         *
-         * Example: when `resolve_native_member(...)` handles `liste.ajouter`,
-         * it uses this helper to create the callable Lumiere value that already
-         * remembers which list instance is the receiver. Later, when user code
-         * calls that method, the shared native-call path invokes `handler` with:
-         *
-         * - the current `TreeWalker`
-         * - the evaluated runtime arguments
-         * - a token rebuilt from the call site for error reporting
-         */
-        Value make_tree_walker_native_method(
-            Value receiver,
-            NativeMethodHandler handler) const;
-
-        /**
-         * @brief Validates a native method call that only accepts positional arguments.
-         */
-        void require_positional_args(const std::vector<RuntimeArgument> &args,
-                                     std::size_t min_count,
-                                     std::size_t max_count,
-                                     const std::string &signature,
-                                     const Token &call_site) const;
-
-        /**
-         * @brief Resolves sequence methods shared by mutable and fixed-size sequence families.
-         *
-         * Keeping these here avoids duplicating method definitions such as
-         * `taille`, `vide`, `contient`, and `joindre` across list-like values.
-         */
-        Value resolve_sequence_common_native_member(const std::vector<Value> &elements,
-                                                   const std::string &family_name,
-                                                   const Token &member,
-                                                   Value receiver) const;
-
-        /**
-         * @brief Resolves methods specific to mutable `Liste` values.
-         *
-         * This adds mutation-oriented operations on top of the sequence-common
-         * methods, for example insertion and removal.
-         */
-        Value resolve_list_native_member(const std::shared_ptr<ListeData> &list,
-                                        const Token &member,
-                                        Value receiver) const;
-
-        /**
-         * @brief Resolves methods specific to `ListeFixe` values.
-         *
-         * These methods preserve fixed-length semantics while still exposing
-         * the read-only/common sequence surface where appropriate.
-         */
-        Value resolve_fixed_list_native_member(const std::shared_ptr<ListeFixeData> &list,
-                                              const Token &member,
-                                              Value receiver) const;
-
-        /**
-         * @brief Resolves methods specific to `Dictionnaire` values.
-         *
-         * This is the dictionary counterpart to the list/member helpers above:
-         * turn a member token into a bound native method when the runtime owns
-         * that operation.
-         */
-        Value resolve_dict_native_member(const std::shared_ptr<DictData> &dict,
-                                        const Token &member,
-                                        Value receiver) const;
+        Ref<LumiereInterface> make_runtime_interface(InterfaceDeclStmt &decl) const;
 
         /**
          * @brief Resolves a dotted module name to the configured source file that should be imported.
@@ -554,13 +482,6 @@ namespace lumiere
         bool matches_type_name(const Value &value, const Token &type_token) const;
         bool matches_type_name(const Value &value, const TypeExpr &type) const;
 
-        /**
-         * @brief Splits a generic type string into its top-level type arguments.
-         *
-         * For example, this separates the inner parts of `Dictionnaire[Texte, Liste[Entier]]`
-         * without breaking nested generic types apart incorrectly.
-         */
-        std::vector<std::string> split_generic_arguments(const std::string &generic_spec) const;
 
         /**
          * @brief Extracts and stores runtime constraints from a declared type annotation.
@@ -571,6 +492,7 @@ namespace lumiere
          */
         void register_value_annotation(const Value &value, const Token &annotation) const;
         void register_value_annotation(const Value &value, const TypeExpr &annotation) const;
+        std::string resolved_annotation_name(const TypeExpr &annotation) const;
 
         /**
          * @brief Enforces the declared element type before mutating a `Liste`.
@@ -578,21 +500,10 @@ namespace lumiere
          * Callers supply a context string so any resulting error can name the
          * operation that attempted the invalid write.
          */
-        void enforce_list_element_constraint(const std::shared_ptr<ListeData> &list,
+        void enforce_list_element_constraint(const Ref<ListeData> &list,
                                              const Value &element,
                                              const Token &site,
                                              const std::string &context) const;
-
-        /**
-         * @brief Checks that a fixed-list write respects its declared element type.
-         *
-         * Size is fixed by the container definition itself; this helper enforces the
-         * element-type part of that contract during updates.
-         */
-        void enforce_fixed_list_element_constraint(const std::shared_ptr<ListeFixeData> &list,
-                                                   const Value &element,
-                                                   const Token &site,
-                                                   const std::string &context) const;
 
         /**
          * @brief Enforces declared key and value constraints before mutating a dictionary.
@@ -600,23 +511,11 @@ namespace lumiere
          * This keeps `Dictionnaire[K, V]` runtime writes aligned with the type
          * annotation recorded when the value was first created or assigned.
          */
-        void enforce_dict_entry_constraint(const std::shared_ptr<DictData> &dict,
+        void enforce_dict_entry_constraint(const Ref<DictData> &dict,
                                            const Value &key,
                                            const Value &entry_value,
                                            const Token &site,
                                            const std::string &context) const;
-
-        /**
-         * @brief Returns true if the class reaches the named ancestor through its parent chain.
-         */
-        bool class_derives_from(const std::shared_ptr<LumiereClass> &klass,
-                                const std::string &ancestor_name) const;
-
-        /**
-         * @brief Returns true if the class or one of its ancestors advertises the named interface.
-         */
-        bool class_implements_interface(const std::shared_ptr<LumiereClass> &klass,
-                                        const std::string &interface_name) const;
 
         /**
          * @brief Checks that a value matches a declared type annotation.
@@ -654,17 +553,22 @@ namespace lumiere
         /**
          * @brief Returns the shared owner that keeps a captured closure environment alive.
          */
-        std::shared_ptr<Environment> function_closure_owner(const LumiereFunction &function) const;
+        Ref<Environment> function_closure_owner(const LumiereFunction &function) const;
+        const std::string &function_source_identity(const LumiereFunction &function) const;
 
         /**
          * @brief Returns the class declaration behind a class value, if present.
          */
-        ClassDeclStmt *class_decl(const std::shared_ptr<LumiereClass> &klass) const;
+        ClassDeclStmt *class_decl(const Ref<LumiereClass> &klass) const;
+        Ref<Environment> class_closure_owner(const Ref<LumiereClass> &klass) const;
+        const std::string &class_source_identity(const Ref<LumiereClass> &klass) const;
+        Token class_annotation(const Ref<LumiereClass> &klass, const TypeExpr &type) const;
+        Ref<LumiereInterface> resolve_interface_value(const TypeExpr &type) const;
 
         /**
          * @brief Returns the interface declaration behind an interface value, if present.
          */
-        InterfaceDeclStmt *interface_decl(const std::shared_ptr<LumiereInterface> &iface) const;
+        InterfaceDeclStmt *interface_decl(const Ref<LumiereInterface> &iface) const;
 
         /**
          * @brief Returns the environment that held the module's top-level execution state.
@@ -679,7 +583,7 @@ namespace lumiere
         /**
          * @brief Returns the direct parent class value for a runtime class, if any.
          */
-        std::shared_ptr<LumiereClass> parent_class(const std::shared_ptr<LumiereClass> &klass) const;
+        Ref<LumiereClass> parent_class(const Ref<LumiereClass> &klass) const;
 
         /**
          * @brief Returns true when two method declarations expose the same callable contract.
@@ -690,12 +594,14 @@ namespace lumiere
         /**
          * @brief Finds a field declaration with the given name on this class.
          */
-        VarDeclStmt *find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
+        VarDeclStmt *find_field_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                    Ref<LumiereClass> *owner = nullptr) const;
 
         /**
          * @brief Finds a method declaration with the given name on this class.
          */
-        FunctionDeclStmt *find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const;
+        FunctionDeclStmt *find_method_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                          Ref<LumiereClass> *owner = nullptr) const;
 
         /**
          * @brief Finds a method declaration with the given name on this interface.
@@ -709,7 +615,7 @@ namespace lumiere
          * methods exist before class creation proceeds.
          */
         void validate_class_interfaces(ClassDeclStmt &klass,
-                                       const std::shared_ptr<LumiereClass> &class_value) const;
+                                       const Ref<LumiereClass> &class_value) const;
 
         /**
          * @brief Returns true if a member access chain is rooted at `ici`.
@@ -789,6 +695,7 @@ namespace lumiere
          * @brief Builds a dictionary value from its key and value expressions.
          */
         void visit(DictionaryExpr &) override;
+        void visit(SetExpr &) override;
 
         /**
          * @brief Evaluates a unary operator expression and stores the result.

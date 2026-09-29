@@ -1,0 +1,13 @@
+// sanitize_path ne devait rejeter que les chemins dont un *segment* est
+// exactement "..", pas tout chemin dont le texte contient deux points de
+// suite : une recherche de sous-chaîne rejetait aussi des noms de fichiers
+// ordinaires comme "notes..bak", sans jamais protéger davantage en retour
+// (voir InterpreterBuiltinModules dans tests/test_interpreter_fixtures.cpp
+// pour la confirmation qu'un vrai segment ".." est toujours rejeté).
+importer Fichier
+
+fonction principal() {
+    afficher(Fichier.existe("notes..bak"))
+    afficher(Fichier.existe("v1..2.txt"))
+    afficher(Fichier.existe("..cache"))
+}

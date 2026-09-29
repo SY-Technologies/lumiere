@@ -15,6 +15,10 @@ struct AleatoireModuleState : RuntimeModuleState
     // The generator lives in module state so repeated imports share the same
     // pseudorandom stream, and graine() can deterministically reset it.
     std::mt19937_64 generator{std::random_device{}()};
+
+    // A generator holds no Lumière values.
+    void trace_references(RefVisitor &) const override {}
+    void clear_references() override {}
 };
 
 }
@@ -22,8 +26,14 @@ struct AleatoireModuleState : RuntimeModuleState
 void register_aleatoire_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    auto state = std::make_shared<AleatoireModuleState>();
-    module.state = state;
+    auto state_ref = make_ref<AleatoireModuleState>();
+    module.state = state_ref;
+    // The handlers below reach the generator through a raw pointer. A Ref
+    // captured inside a std::function is a reference nothing can enumerate, so
+    // the owning one is declared on each finished function instead. This state
+    // holds no Lumiere values today, so no cycle runs through it -- the rule is
+    // uniform so that adding one later cannot quietly create a leak.
+    auto *const state = state_ref.get();
     stdlib_bind_public_function(
         module,
         make_native_function,
@@ -34,7 +44,7 @@ void register_aleatoire_module(Module &module)
             const int64_t seed_raw = stdlib_expect_integer(runtime, args[0].value, "Aléatoire.graine", native_args.site);
             if (seed_raw < 0)
             {
-                runtime.raise_runtime_error(native_args.site, "Aléatoire.graine attend une valeur non negative");
+                runtime.raise_runtime_error(native_args.site, "Aléatoire.graine attend une valeur non négative");
             }
             state->generator.seed(static_cast<uint64_t>(seed_raw));
             return Value::rien();
@@ -161,12 +171,20 @@ void register_aleatoire_module(Module &module)
             std::vector<Value> shuffled = list->elements;
             std::shuffle(shuffled.begin(), shuffled.end(), state->generator);
 
-            auto sample = std::make_shared<ListeData>();
+            auto sample = make_ref<ListeData>();
             sample->elements.insert(sample->elements.end(), shuffled.begin(), shuffled.begin() + count);
             Value result = Value::liste(std::move(sample));
             runtime.annotate_value(result, "Liste[Universel]", native_args.site);
             return result;
         });
+
+    for (auto &[name, member] : module.members)
+    {
+        if (member.is_fonction())
+        {
+            member.as_fonction()->native_captures.push_back(state_ref);
+        }
+    }
 }
 
 } // namespace lumiere

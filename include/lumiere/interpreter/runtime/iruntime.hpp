@@ -55,6 +55,16 @@ public:
     virtual std::string to_text(const Value &value) const = 0;
 
     /**
+     * Returns whether `value` satisfies the language type written `type_name`,
+     * such as `Texte`, `Liste[Entier]` or `Entier | Rien`.
+     *
+     * A collection's declared element type is checked with this before a value
+     * is allowed into it. Backends own the matcher because it has to reach
+     * their class and interface tables.
+     */
+    virtual bool matches_declared_type(const Value &value, std::string_view type_name) const = 0;
+
+    /**
      * Attaches runtime metadata to `value`.
      *
      * `type_name` is the language-facing annotation being attached, such as `Liste[Texte]`.

@@ -1,0 +1,39 @@
+// L'ordre dans lequel les effets de bord se produisent fait partie du langage :
+// les deux moteurs doivent l'exécuter dans le même ordre, y compris pour les
+// arguments nommés, qui se lient par nom mais s'évaluent dans l'ordre écrit.
+fonction trace(nom: Texte, valeur: Entier) -> Entier {
+    afficher(nom)
+    retourne valeur
+}
+
+fonction vrai_trace(nom: Texte) -> Logique {
+    afficher(nom)
+    retourne vrai
+}
+
+fonction faux_trace(nom: Texte) -> Logique {
+    afficher(nom)
+    retourne faux
+}
+
+fonction addition(a: Entier, b: Entier) -> Entier {
+    retourne a + b
+}
+
+fonction trois(a: Entier, b: Entier, c: Entier) -> Entier {
+    retourne a * 100 + b * 10 + c
+}
+
+fonction principal() {
+    afficher(addition(trace("arg-gauche", 1), trace("arg-droit", 2)))
+    afficher(trace("op-gauche", 10) + trace("op-droit", 20))
+    soit liste = [trace("element-0", 7), trace("element-1", 8)]
+    afficher(liste[trace("indice", 1)])
+
+    // Les arguments nommés s'évaluent dans l'ordre d'écriture, puis se lient par nom.
+    afficher(trois(c: trace("nomme-c", 3), a: trace("nomme-a", 1), b: trace("nomme-b", 2)))
+
+    // 'et' et 'ou' court-circuitent : l'opérande droite n'est pas évaluée.
+    si faux_trace("et-gauche") et vrai_trace("et-droite-jamais") { afficher("non atteint") }
+    si vrai_trace("ou-gauche") ou vrai_trace("ou-droite-jamais") { afficher("atteint") }
+}

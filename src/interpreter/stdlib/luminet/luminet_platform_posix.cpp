@@ -1,6 +1,9 @@
 #include "../luminet_platform.hpp"
 
+#include <climits>
 #include <cstring>
+#include <fcntl.h>
+#include <poll.h>
 
 namespace lumiere
 {
@@ -120,6 +123,69 @@ bool platform_socket_set_timeout(SocketHandle handle, int64_t timeout_ms)
     tv.tv_usec = static_cast<suseconds_t>((timeout_ms % 1000) * 1000);
     return ::setsockopt(handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0 &&
            ::setsockopt(handle, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == 0;
+}
+
+bool platform_socket_connect_with_timeout(SocketHandle handle,
+                                          const sockaddr *addr,
+                                          socklen_t addrlen,
+                                          int64_t timeout_ms)
+{
+    const int flags = ::fcntl(handle, F_GETFL, 0);
+    if (flags == -1 || ::fcntl(handle, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+        return false;
+    }
+    const auto restore_blocking = [&]() { ::fcntl(handle, F_SETFL, flags); };
+
+    if (::connect(handle, addr, addrlen) == 0)
+    {
+        restore_blocking();
+        return true;
+    }
+    if (errno != EINPROGRESS)
+    {
+        const int connect_errno = errno;
+        restore_blocking();
+        errno = connect_errno;
+        return false;
+    }
+
+    pollfd pfd{};
+    pfd.fd = handle;
+    pfd.events = POLLOUT;
+    const int poll_timeout_ms =
+        timeout_ms > static_cast<int64_t>(INT_MAX) ? INT_MAX : static_cast<int>(timeout_ms);
+    const int poll_rc = ::poll(&pfd, 1, poll_timeout_ms);
+    if (poll_rc == 0)
+    {
+        restore_blocking();
+        errno = ETIMEDOUT;
+        return false;
+    }
+    if (poll_rc < 0)
+    {
+        const int poll_errno = errno;
+        restore_blocking();
+        errno = poll_errno;
+        return false;
+    }
+
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+    if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) != 0)
+    {
+        const int getsockopt_errno = errno;
+        restore_blocking();
+        errno = getsockopt_errno;
+        return false;
+    }
+    restore_blocking();
+    if (so_error != 0)
+    {
+        errno = so_error;
+        return false;
+    }
+    return true;
 }
 
 void platform_socket_enable_reuse_address(SocketHandle handle)

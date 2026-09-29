@@ -1,0 +1,26 @@
+importer Collections.{étendue, transformer, filtrer, réduire, trouver, position, tout, au_moins_un, trier, trier_par, inverser}
+
+fonction principal() {
+    soit nombres = étendue(0, 10, 1)
+    soit pairs = filtrer(nombres, fonction(n: Universel) -> Universel { retourne n % 2 == 0 })
+    soit carres = transformer(pairs, fonction(n: Universel) -> Universel { retourne n * n })
+    soit somme = réduire(carres, 0, fonction(acc: Universel, n: Universel) -> Universel { retourne acc + n })
+
+    afficher("pairs: " + pairs)
+    afficher("carres: " + carres)
+    afficher("somme: " + somme)
+
+    soit mots = ["pomme", "kiwi", "banane", "figue"]
+    soit tries = trier_par(mots, fonction(m: Universel) -> Universel { retourne m.taille() })
+    afficher("tries par longueur: " + tries)
+    afficher("inverses: " + inverser(tries))
+
+    soit premier_long = trouver(mots, fonction(m: Universel) -> Universel { retourne m.taille() > 5 })
+    afficher("premier long: " + premier_long)
+    afficher("position du long: " + position(mots, fonction(m: Universel) -> Universel { retourne m.taille() > 5 }))
+
+    afficher("tous non vides: " + tout(mots, fonction(m: Universel) -> Universel { retourne m.taille() > 0 }))
+    afficher("au moins un tres long: " + au_moins_un(mots, fonction(m: Universel) -> Universel { retourne m.taille() > 10 }))
+
+    afficher("trie: " + trier([5, 3, 8, 1, 9, 2]))
+}

@@ -1,0 +1,26 @@
+// Chaque membre d'une ListeFixe. Une ListeFixe ne change pas de contenu, donc
+// ses cas limites sont la longueur zéro et le contrat d'élément que en_liste
+// doit reprendre.
+fonction principal() {
+    soit vide: Liste[Entier] = []
+    soit aucun = vide.en_liste_fixe(0)
+    afficher(aucun.taille())
+    afficher(aucun.vide())
+    afficher(aucun.contient(1))
+    afficher("[" + aucun.joindre(", ") + "]")
+    afficher(aucun.en_liste().taille())
+
+    soit source: Liste[Texte] = ["a", "b", "c"]
+    soit trois = source.en_liste_fixe(3)
+    afficher(trois.taille())
+    afficher(trois.vide())
+    afficher(trois.contient("b"))
+    afficher(trois.contient("z"))
+    afficher(trois.joindre("-"))
+
+    // en_liste rend une Liste modifiable qui garde le contrat de la source.
+    soit copie = trois.en_liste()
+    afficher(copie.ajouter("d"))
+    afficher(copie.joindre(""))
+    afficher(trois.joindre(""))
+}

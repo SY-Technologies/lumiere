@@ -1,0 +1,15 @@
+fonction identite(texte: Universel) {
+    retourne texte
+}
+
+fonction principal() {
+    soit source = "abcdefgh".repeter(16384)
+    soit resultat: Universel = ""
+    soit index = 0
+    tant que index < 3000 {
+        resultat = identite(source)
+        index = index + 1
+    }
+    afficher(resultat == source)
+    afficher(resultat.taille())
+}

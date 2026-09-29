@@ -1,0 +1,29 @@
+// La résolution de méthode doit partir du type réel du receveur, y compris
+// quand c'est une méthode héritée qui appelle la méthode redéfinie, et une
+// méthode extraite de son objet doit rester liée à ce receveur.
+interface Presentable {
+    fonction nom() -> Texte
+}
+
+classe Animal réalise Presentable {
+    fonction nom() -> Texte { retourne "Animal" }
+    fonction decrire() -> Texte { retourne "je suis " + ici.nom() }
+}
+
+classe Chien : Animal {
+    remplace fonction nom() -> Texte { retourne "Chien" }
+    fonction avec_parent() -> Texte { retourne parent.nom() + "/" + ici.nom() }
+}
+
+fonction principal() {
+    soit chien = Chien()
+    afficher(chien.nom())
+    afficher(chien.decrire())
+    afficher(chien.avec_parent())
+    afficher(chien est Chien)
+    afficher(chien est Animal)
+    afficher(chien est Presentable)
+
+    soit methode = chien.nom
+    afficher(methode())
+}

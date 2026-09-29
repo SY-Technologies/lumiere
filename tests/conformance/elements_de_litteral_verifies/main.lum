@@ -1,0 +1,8 @@
+// Task 7, second half : un littéral Liste ou Dictionnaire qui initialise une
+// liaison typée prenait ce type sans regarder ses éléments -- accepté à
+// l'analyse, refusé seulement à l'exécution, avec un message qui ne dit pas
+// lequel. Chaque élément est maintenant vérifié à l'endroit où il est écrit.
+fonction principal() {
+    soit l: Liste[Texte] = [1]
+    afficher(l)
+}

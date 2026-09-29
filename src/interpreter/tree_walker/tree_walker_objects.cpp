@@ -51,7 +51,8 @@ namespace lumiere
         return true;
     }
 
-    VarDeclStmt *TreeWalker::find_field_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const
+    VarDeclStmt *TreeWalker::find_field_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                           Ref<LumiereClass> *owner) const
     {
         ClassDeclStmt *klass_decl = class_decl(klass);
         if (klass_decl == nullptr)
@@ -65,20 +66,23 @@ namespace lumiere
             {
                 if (field->name.lexeme == name)
                 {
+                    if (owner)
+                        *owner = klass;
                     return field;
                 }
             }
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(klass))
+        if (Ref<LumiereClass> parent = parent_class(klass))
         {
-            return find_field_decl(parent, name);
+            return find_field_decl(parent, name, owner);
         }
 
         return nullptr;
     }
 
-    FunctionDeclStmt *TreeWalker::find_method_decl(const std::shared_ptr<LumiereClass> &klass, const std::string &name) const
+    FunctionDeclStmt *TreeWalker::find_method_decl(const Ref<LumiereClass> &klass, const std::string &name,
+                                                 Ref<LumiereClass> *owner) const
     {
         ClassDeclStmt *klass_decl = class_decl(klass);
         if (klass_decl == nullptr)
@@ -92,14 +96,16 @@ namespace lumiere
             {
                 if (method->name.lexeme == name)
                 {
+                    if (owner)
+                        *owner = klass;
                     return method;
                 }
             }
         }
 
-        if (std::shared_ptr<LumiereClass> parent = parent_class(klass))
+        if (Ref<LumiereClass> parent = parent_class(klass))
         {
-            return find_method_decl(parent, name);
+            return find_method_decl(parent, name, owner);
         }
 
         return nullptr;
@@ -121,42 +127,48 @@ namespace lumiere
         return nullptr;
     }
 
+    Ref<LumiereInterface> TreeWalker::resolve_interface_value(const TypeExpr &type) const
+    {
+        std::string name;
+        try
+        {
+            name = m_env->resolve_type_aliases(type, {}, false).to_string();
+        }
+        catch (const std::invalid_argument &error)
+        {
+            throw_runtime_error(type.source, error.what());
+        }
+        const auto dot = name.find('.');
+        if (!m_env->contains(name.substr(0, dot)))
+            throw_runtime_error(type.source, "interface introuvable: " + name);
+        Value value = m_env->get(name.substr(0, dot));
+        for (std::size_t begin = dot; begin != std::string::npos;)
+        {
+            const auto end = name.find('.', begin + 1);
+            const std::string member = name.substr(begin + 1, end == std::string::npos ? end : end - begin - 1);
+            if (!value.is_objet() || !value.as_objet()->fields.contains(member))
+                throw_runtime_error(type.source, "interface introuvable: " + name);
+            value = value.as_objet()->fields.at(member);
+            begin = end;
+        }
+        if (!value.is_interface())
+            throw_runtime_error(type.source, "le symbole n'est pas une interface: " + name);
+        return value.as_interface();
+    }
+
     void TreeWalker::validate_class_interfaces(ClassDeclStmt &klass,
-                                               const std::shared_ptr<LumiereClass> &class_value) const
+                                               const Ref<LumiereClass> &class_value) const
     {
         if (m_env == nullptr)
         {
-            throw_runtime_error(klass.name, "environnement d'execution absent");
+            throw_runtime_error(klass.name, "environnement d'exécution absent");
         }
 
         for (const TypeExpr &interface_name : klass.interfaces)
         {
-            std::string name = interface_name.to_string();
-            std::unordered_set<std::string> visited;
-            while (visited.insert(name).second)
-            {
-                const auto alias =
-                    m_type_aliases.find(name);
-                if (alias == m_type_aliases.end() ||
-                    alias->second.kind !=
-                        TypeExprKind::NAMED)
-                {
-                    break;
-                }
-                name = alias->second.name;
-            }
-            if (!m_env->contains(name))
-            {
-                throw_runtime_error(interface_name.source, "interface introuvable: " + name);
-            }
-
-            const Value interface_value = m_env->get(name);
-            if (!interface_value.is_interface())
-            {
-                throw_runtime_error(interface_name.source, "le symbole n'est pas une interface: " + name);
-            }
-
-            InterfaceDeclStmt *iface_decl = interface_decl(interface_value.as_interface());
+            const auto interface_value = resolve_interface_value(interface_name);
+            const std::string &name = interface_value->name;
+            InterfaceDeclStmt *iface_decl = interface_decl(interface_value);
             if (name == "Erreur")
             {
                 continue;
@@ -178,7 +190,7 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         klass.name,
-                        "la classe " + klass.name.lexeme + " ne realise pas la methode requise " +
+                        "la classe " + klass.name.lexeme + " ne réalise pas la méthode requise " +
                             name + "." + required_method->name.lexeme);
                 }
 
@@ -187,7 +199,7 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         implemented_method->name,
-                        "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
+                        "la méthode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
                             " ne respecte pas la signature requise par l'interface " + name);
                 }
 
@@ -195,8 +207,8 @@ namespace lumiere
                 {
                     throw_runtime_error(
                         implemented_method->name,
-                        "la methode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
-                            " ne peut pas etre privee car elle realise l'interface " + name);
+                        "la méthode " + klass.name.lexeme + "." + implemented_method->name.lexeme +
+                            " ne peut pas être privée car elle réalise l'interface " + name);
                 }
             }
         }

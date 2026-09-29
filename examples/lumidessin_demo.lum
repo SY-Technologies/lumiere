@@ -1,0 +1,90 @@
+importer LumiDessin
+
+fonction executer() -> Résultat[Rien, LumiDessin.ErreurCouleur] {
+    soit dessin = LumiDessin.canevas(320, 200)
+    afficher("canevas: " + dessin.largeur() + "x" + dessin.hauteur() + " visible=" + dessin.est_visible())
+
+    dessin.effacer(LumiDessin.Couleurs.blanc)
+    soit blanc = dessin.lire_pixel(0, 0)
+    afficher("blanc: " + blanc.rouge() + "," + blanc.vert() + "," + blanc.bleu() + "," + blanc.alpha())
+
+    soit bleu_ciel = LumiDessin.couleur_hex("#87CEEB") ou propager
+    dessin.effacer(bleu_ciel)
+    soit p = dessin.lire_pixel(159, 99)
+    afficher("bleu ciel: " + p.rouge() + "," + p.vert() + "," + p.bleu())
+
+    soit rose = LumiDessin.couleur(255, 192, 203, 128)
+    afficher("rose: " + rose.rouge() + "," + rose.vert() + "," + rose.bleu() + "," + rose.alpha())
+
+    soit origine = LumiDessin.point(0, 0)
+    soit centre = LumiDessin.point(160.0, 100.0)
+    afficher("origine: " + origine.x + "," + origine.y)
+    afficher("centre: " + centre.x + "," + centre.y)
+
+    soit capture = dessin.capturer()
+    afficher("capture: " + capture.largeur() + "x" + capture.hauteur())
+
+    dessin.fermer()
+    afficher("ouvert apres fermer: " + dessin.est_ouvert())
+
+    soit toile = LumiDessin.canevas(64, 48)
+    toile.effacer(LumiDessin.Couleurs.blanc)
+    toile.tracer_ligne(0.0, 0.0, 63.0, 47.0, LumiDessin.Couleurs.noir, 2.0)
+    toile.tracer_rectangle(4.0, 4.0, 20.0, 12.0, LumiDessin.Couleurs.rouge, 2.0)
+    toile.remplir_rectangle(30.0, 4.0, 20.0, 12.0, LumiDessin.couleur(0, 128, 0, 180))
+    toile.tracer_cercle(16.0, 30.0, 8.0, LumiDessin.Couleurs.bleu, 2.0)
+    toile.remplir_cercle(48.0, 30.0, 8.0, LumiDessin.Couleurs.orange)
+    toile.tracer_ellipse(32.0, 40.0, 12.0, 6.0, LumiDessin.Couleurs.violet, 1.0)
+    toile.tracer_arc(16.0, 16.0, 10.0, 0.0, 180.0, LumiDessin.Couleurs.noir, 2.0)
+    soit triangle = [LumiDessin.point(20.0, 40.0), LumiDessin.point(30.0, 46.0), LumiDessin.point(24.0, 46.0)]
+    toile.remplir_polygone(triangle, LumiDessin.Couleurs.rose)
+    soit chemin = [LumiDessin.point(0.0, 24.0), LumiDessin.point(10.0, 14.0), LumiDessin.point(20.0, 24.0)]
+    toile.tracer_polyligne(chemin, faux, LumiDessin.Couleurs.cyan, 2.0)
+    afficher("toile: " + toile.largeur() + "x" + toile.hauteur())
+
+    soit taille_titre = toile.mesurer_texte("Lumière", 12)
+    afficher("mesure titre: " + taille_titre.largeur + "x" + taille_titre.hauteur)
+    toile.dessiner_texte("Lumière", 2.0, 2.0, 12, LumiDessin.Couleurs.noir)
+
+    soit vignette = toile.capturer()
+    soit rendu = LumiDessin.canevas(96, 48)
+    rendu.effacer(LumiDessin.Couleurs.blanc)
+    rendu.dessiner_image(vignette, 0.0, 0.0)
+    rendu.dessiner_image_redimensionnée(vignette, 64.0, 0.0, 32.0, 24.0, 1.0)
+    rendu.dessiner_image_nette(vignette, 64.0, 24.0, 32.0, 24.0, 0.5)
+    afficher("rendu: " + rendu.largeur() + "x" + rendu.hauteur())
+
+    soit t = toile.crayon()
+    t.régler_couleur(LumiDessin.Couleurs.magenta)
+    t.régler_épaisseur(2.0)
+    t.avancer(10.0)
+    t.tourner_gauche(120.0)
+    t.avancer(10.0)
+    t.tourner_gauche(120.0)
+    t.avancer(10.0)
+    afficher("crayon apres triangle: " + t.position().x + "," + t.position().y + " cap=" + t.cap())
+    t.lever()
+    t.aller_à(0.0, 0.0)
+    t.baisser()
+    afficher("crayon leve puis baisse: baisse=" + t.est_baissé() + " visible=" + t.est_visible())
+
+    soit second = toile.crayon()
+    second.tourner_droite(45.0)
+    second.avancer(8.0)
+    afficher("second crayon: " + second.position().x + "," + second.position().y + " (t inchangé: " +
+        t.position().x + "," + t.position().y + ")")
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> rien
+        Échec(e) -> afficher("échec: " + e.cause)
+    }
+
+    agir selon LumiDessin.couleur_hex("#zzzzzz") {
+        Succès(_) -> afficher("inattendu: succès")
+        Échec(e) -> afficher("échec hex attendu: " + e.opération + " / " + e.cause)
+    }
+}

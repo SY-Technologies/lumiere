@@ -1,3 +1,4 @@
+#include "lumiere/interpreter/runtime/type_aliases.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -14,20 +15,20 @@ namespace lumiere
     {
         auto module = std::make_shared<Module>();
         module->name = module_name;
-        auto state = std::make_shared<TreeWalkerModuleState>();
-        state->environment = std::make_shared<Environment>();
+        auto state = make_ref<TreeWalkerModuleState>();
+        state->environment = make_ref<Environment>();
         auto error_interface =
-            std::make_shared<LumiereInterface>();
+            make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
         state->environment->define_fixe(
             "Erreur",
             Value::interface(std::move(error_interface)));
         module->state = state;
 
-        std::shared_ptr<LumiTestModuleState> lumitest_state;
+        Ref<LumiTestModuleState> lumitest_state;
         if (module_name == "LumiTest")
         {
-            lumitest_state = std::make_shared<LumiTestModuleState>();
+            lumitest_state = make_ref<LumiTestModuleState>();
             lumitest_state->options = m_lumitest_options;
         }
 
@@ -96,10 +97,12 @@ namespace lumiere
     {
         auto module = std::make_shared<Module>();
         module->name = module_name;
-        auto state = std::make_shared<TreeWalkerModuleState>();
-        state->environment = std::make_shared<Environment>();
+        auto state = make_ref<TreeWalkerModuleState>();
+        state->environment = make_ref<Environment>();
+        state->environment->set_source_path(path.string());
+        state->environment->set_source_identity(path.string());
         auto error_interface =
-            std::make_shared<LumiereInterface>();
+            make_ref<LumiereInterface>();
         error_interface->name = "Erreur";
         state->environment->define_fixe(
             "Erreur",
@@ -107,12 +110,10 @@ namespace lumiere
         module->state = state;
 
         Environment *previous_env = m_env;
-        std::shared_ptr<Environment> previous_env_owner = m_env_owner;
+        Ref<Environment> previous_env_owner = m_env_owner;
         const Value previous_self = m_self;
         const std::string previous_source_path = m_current_source_path;
         const std::string previous_source_text = m_current_source_text;
-        const auto previous_type_aliases = m_type_aliases;
-        m_type_aliases.clear();
 
         // Run module top-level code in its own environment so its declarations
         // do not leak directly into the importer's current scope.
@@ -175,6 +176,26 @@ namespace lumiere
                     }
                 }
             }
+            // Export closed type expressions, not references into this module's
+            // private alias table. Resolve after all declarations are available.
+            for (auto &[name, target] : module->type_aliases)
+            {
+                try
+                {
+                    target = m_env->resolve_type_aliases(target);
+                    if (module->public_type_aliases.contains(name) &&
+                        target.kind == TypeExprKind::NAMED)
+                    {
+                        Value value = m_env->find_nominal_value(target.name);
+                        if (value.is_classe() || value.is_interface())
+                            module->public_type_values.insert_or_assign(name, std::move(value));
+                    }
+                }
+                catch (const std::invalid_argument &error)
+                {
+                    throw_runtime_error(target.source, error.what());
+                }
+            }
         }
         catch (...)
         {
@@ -183,7 +204,6 @@ namespace lumiere
             m_self = previous_self;
             m_current_source_path = previous_source_path;
             m_current_source_text = previous_source_text;
-            m_type_aliases = previous_type_aliases;
             throw;
         }
 
@@ -192,7 +212,6 @@ namespace lumiere
         m_self = previous_self;
         m_current_source_path = previous_source_path;
         m_current_source_text = previous_source_text;
-        m_type_aliases = previous_type_aliases;
         return module;
     }
 
