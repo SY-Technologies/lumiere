@@ -40,9 +40,18 @@ classe Liste
     fonction en_liste_fixe(longueur : Entier) -> ListeFixe
     {
     }
+
+    /** Convertit la liste en un Ensemble, en supprimant les doublons. */
+    fonction en_ensemble() -> Ensemble
+    {
+    }
 }
 
-/** Séquence ordonnée de taille fixe, cohérent avec son type statique. */
+/**
+ * Séquence ordonnée immuable : ni sa taille ni ses éléments ne changent après
+ * sa construction. Elle est comparée par son contenu et peut donc servir de clé
+ * de dictionnaire.
+ */
 classe ListeFixe
 {
     /** Retourne le nombre d'éléments de la séquence. */
@@ -106,6 +115,68 @@ classe Dictionnaire
 
     /** Retire et retourne la valeur associée à la clé ; échoue si la clé est absente. */
     fonction retirer(clé : Universel) -> Universel
+    {
+    }
+}
+/**
+ * Collection non ordonnée par contrat où chaque élément n'apparaît qu'une fois.
+ * Les éléments conservent leur ordre d'insertion pour que le parcours soit
+ * reproductible, et suivent la règle des clés de dictionnaire.
+ */
+classe Ensemble
+{
+    /** Retourne le nombre d'éléments de l'ensemble. */
+    fonction taille() -> Entier
+    {
+    }
+
+    /** Retourne vrai si l'ensemble ne contient aucun élément. */
+    fonction vide() -> Logique
+    {
+    }
+
+    /** Retourne vrai si l'ensemble contient la valeur donnée. */
+    fonction contient(élément : Universel) -> Logique
+    {
+    }
+
+    /** Assemble la représentation de tous les éléments en un seul texte, séparés par séparateur. */
+    fonction joindre(séparateur : Texte) -> Texte
+    {
+    }
+
+    /** Ajoute un élément ; retourne vrai s'il n'était pas déjà présent. */
+    fonction ajouter(élément : Universel) -> Logique
+    {
+    }
+
+    /** Retire un élément ; retourne faux s'il était absent. */
+    fonction retirer(élément : Universel) -> Logique
+    {
+    }
+
+    /** Convertit l'ensemble en une Liste, dans l'ordre d'insertion. */
+    fonction en_liste() -> Liste
+    {
+    }
+
+    /** Retourne un ensemble contenant les éléments des deux ensembles. */
+    fonction union(autre : Ensemble) -> Ensemble
+    {
+    }
+
+    /** Retourne un ensemble contenant les éléments présents dans les deux ensembles. */
+    fonction intersection(autre : Ensemble) -> Ensemble
+    {
+    }
+
+    /** Retourne un ensemble contenant les éléments absents de l'autre ensemble. */
+    fonction différence(autre : Ensemble) -> Ensemble
+    {
+    }
+
+    /** Retourne vrai si tous les éléments sont présents dans l'autre ensemble. */
+    fonction sous_ensemble_de(autre : Ensemble) -> Logique
     {
     }
 }

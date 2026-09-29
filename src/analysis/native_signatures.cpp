@@ -58,6 +58,19 @@ SemanticModuleExports::Callable callable(
     return result;
 }
 
+// Like callable(), but additionally accepts any number of trailing positional
+// arguments beyond `parameters`, each checked against `variadic_type`.
+SemanticModuleExports::Callable variadic_callable(
+    std::initializer_list<NativeParameterSpec> parameters,
+    TypeExpr variadic_type,
+    TypeExpr return_type)
+{
+    SemanticModuleExports::Callable result = callable(parameters, std::move(return_type));
+    result.variadic = true;
+    result.variadic_type = std::move(variadic_type);
+    return result;
+}
+
 void export_callable(
     SemanticModuleExports &exports,
     std::string name,
@@ -521,6 +534,15 @@ native_module_exports(const std::string_view module_name)
             "ErreurTemps",
             SemanticSymbolKind::CLASS);
         exports.error_types.insert("ErreurTemps");
+        exports.types.emplace(
+            "Fuseau",
+            SemanticTypeKind::CLASS);
+        exports.types.emplace(
+            "DateHeure",
+            SemanticTypeKind::CLASS);
+        exports.types.emplace(
+            "RepèreMonotone",
+            SemanticTypeKind::CLASS);
         export_callable(
             exports,
             "analyser",
@@ -570,6 +592,60 @@ native_module_exports(const std::string_view module_name)
                 name,
                 callable({parameter("nombre", "Entier")}, named("Durée")));
         }
+        export_callable(
+            exports,
+            "analyser_iso8601",
+            callable(
+                {parameter("texte", "Texte")},
+                generic(
+                    "Résultat",
+                    {
+                        named("Instant"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "formater_iso8601",
+            callable({parameter("instant", "Instant")}, named("Texte")));
+        export_callable(
+            exports,
+            "fuseau",
+            callable(
+                {parameter("nom", "Texte")},
+                generic(
+                    "Résultat",
+                    {
+                        named("Fuseau"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "fuseau_local",
+            callable(
+                {},
+                generic(
+                    "Résultat",
+                    {
+                        named("Fuseau"),
+                        named("ErreurTemps"),
+                    })));
+        export_callable(
+            exports,
+            "dans_fuseau",
+            callable(
+                {
+                    parameter("instant", "Instant"),
+                    parameter("fuseau", "Fuseau"),
+                },
+                named("DateHeure")));
+        export_callable(
+            exports,
+            "repère",
+            callable({}, named("RepèreMonotone")));
+        export_callable(
+            exports,
+            "écoulé",
+            callable({parameter("depuis", "RepèreMonotone")}, named("Durée")));
         return exports;
     }
 
@@ -605,8 +681,9 @@ native_module_exports(const std::string_view module_name)
         export_callable(
             exports,
             "joindre",
-            callable(
-                {parameter("segments", "Texte")},
+            variadic_callable(
+                {parameter("premier_segment", "Texte")},
+                named("Texte"),
                 named("Texte")));
         return exports;
     }
@@ -945,6 +1022,282 @@ native_module_exports(const std::string_view module_name)
                     parameter("port", "Entier"),
                 },
                 result(named("Rien"), "ErreurIO")));
+        return exports;
+    }
+
+    if (module_name == "Collections")
+    {
+        const TypeExpr universel_list = generic("Liste", {named("Universel")});
+        export_callable(
+            exports,
+            "étendue",
+            callable(
+                {
+                    parameter("début", "Entier"),
+                    parameter("fin", "Entier"),
+                    parameter("pas", "Entier"),
+                },
+                generic("Liste", {named("Entier")})));
+        export_callable(
+            exports,
+            "transformer",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("transformation", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "filtrer",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "réduire",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("initial", "Universel"),
+                    parameter("réduction", "Universel"),
+                },
+                named("Universel")));
+        export_callable(
+            exports,
+            "trouver",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                union_type({named("Universel"), named("Rien")})));
+        export_callable(
+            exports,
+            "position",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("prédicat", "Universel"),
+                },
+                union_type({named("Entier"), named("Rien")})));
+        for (const char *name : {"tout", "au_moins_un"})
+        {
+            export_callable(
+                exports,
+                name,
+                callable(
+                    {
+                        parameter("valeurs", "Universel"),
+                        parameter("prédicat", "Universel"),
+                    },
+                    named("Logique")));
+        }
+        export_callable(
+            exports,
+            "trier",
+            callable({parameter("valeurs", "Universel")}, universel_list));
+        export_callable(
+            exports,
+            "trier_par",
+            callable(
+                {
+                    parameter("valeurs", "Universel"),
+                    parameter("clé", "Universel"),
+                },
+                universel_list));
+        export_callable(
+            exports,
+            "inverser",
+            callable({parameter("valeurs", "Universel")}, universel_list));
+        return exports;
+    }
+
+    if (module_name == "JSON")
+    {
+        exports.types.emplace("ErreurJSON", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurJSON", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurJSON");
+
+        const TypeExpr error = named("ErreurJSON");
+        const auto result = [&](TypeExpr success) {
+            return generic("Résultat", {std::move(success), error});
+        };
+        export_callable(
+            exports,
+            "analyser",
+            callable({parameter("texte", "Texte")}, result(named("Universel"))));
+        export_callable(
+            exports,
+            "encoder",
+            callable({parameter("valeur", "Universel")}, result(named("Texte"))));
+        export_callable(
+            exports,
+            "encoder_indenté",
+            callable(
+                {
+                    parameter("valeur", "Universel"),
+                    parameter("espaces", "Entier"),
+                },
+                result(named("Texte"))));
+        return exports;
+    }
+
+    if (module_name == "Regex")
+    {
+        exports.types.emplace("Motif", SemanticTypeKind::CLASS);
+        exports.types.emplace("Correspondance", SemanticTypeKind::CLASS);
+        exports.types.emplace("ErreurRegex", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurRegex", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurRegex");
+
+        const TypeExpr motif = named("Motif");
+        const TypeExpr correspondance = named("Correspondance");
+        const TypeExpr error = named("ErreurRegex");
+        export_callable(
+            exports,
+            "analyser",
+            callable(
+                {parameter("source", "Texte")},
+                generic("Résultat", {motif, error})));
+        export_callable(
+            exports,
+            "correspond",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                named("Logique")));
+        export_callable(
+            exports,
+            "chercher",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                union_type({correspondance, named("Rien")})));
+        export_callable(
+            exports,
+            "trouver_tous",
+            callable(
+                {
+                    parameter("motif", "Motif"),
+                    parameter("texte", "Texte"),
+                },
+                generic("Liste", {correspondance})));
+        for (const char *name : {"remplacer", "remplacer_tout"})
+        {
+            export_callable(
+                exports,
+                name,
+                callable(
+                    {
+                        parameter("motif", "Motif"),
+                        parameter("texte", "Texte"),
+                        parameter("remplacement", "Texte"),
+                    },
+                    named("Texte")));
+        }
+        return exports;
+    }
+
+    if (module_name == "LumiDessin")
+    {
+        exports.types.emplace("Canevas", SemanticTypeKind::CLASS);
+        exports.types.emplace("Crayon", SemanticTypeKind::CLASS);
+        exports.types.emplace("Couleur", SemanticTypeKind::CLASS);
+        exports.types.emplace("Image", SemanticTypeKind::CLASS);
+        exports.types.emplace("Point", SemanticTypeKind::CLASS);
+        exports.types.emplace("Dimensions", SemanticTypeKind::CLASS);
+        exports.types.emplace("ErreurImage", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurImage", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurImage");
+        exports.types.emplace("ErreurCouleur", SemanticTypeKind::CLASS);
+        exports.values.emplace("ErreurCouleur", SemanticSymbolKind::CLASS);
+        exports.error_types.insert("ErreurCouleur");
+
+        // Object and Crayon method calls (canevas.largeur(), point.x, ...)
+        // are resolved dynamically, like every other native object's
+        // methods in this codebase (compare Temps.DateHeure/Fuseau, whose
+        // methods also have no exports here) -- only module-level members
+        // need a static signature.
+
+        export_callable(
+            exports,
+            "canevas",
+            callable(
+                {
+                    parameter("largeur", "Entier"),
+                    parameter("hauteur", "Entier"),
+                },
+                named("Canevas")));
+        export_callable(
+            exports,
+            "fenêtre",
+            callable(
+                {
+                    parameter("largeur", "Entier"),
+                    parameter("hauteur", "Entier"),
+                    parameter("titre", "Texte"),
+                },
+                named("Canevas")));
+        export_callable(
+            exports,
+            "point",
+            callable(
+                {
+                    parameter("x", "Décimal"),
+                    parameter("y", "Décimal"),
+                },
+                named("Point")));
+        export_callable(
+            exports,
+            "couleur",
+            callable(
+                {
+                    parameter("rouge", "Entier"),
+                    parameter("vert", "Entier"),
+                    parameter("bleu", "Entier"),
+                    parameter("alpha", "Entier", true),
+                },
+                named("Couleur")));
+        export_callable(
+            exports,
+            "couleur_hex",
+            callable(
+                {parameter("valeur", "Texte")},
+                generic("Résultat", {named("Couleur"), named("ErreurCouleur")})));
+        export_value(exports, "Couleurs", named("Universel"));
+        export_callable(
+            exports,
+            "charger_image",
+            callable(
+                {parameter("chemin", "Texte")},
+                generic("Résultat", {named("Image"), named("ErreurImage")})));
+
+        // Canevas.enregistrer_png is the one Canevas *method* (as opposed to
+        // module-level function) that needs a static signature: every other
+        // method call resolves dynamically (see the comment above), but a
+        // method's return type must be statically known as Résultat[...]
+        // for 'agir selon' to accept Succès/Échec patterns against it
+        // (semantic_analysis.cpp's resolve_match). The dotted key mirrors
+        // how semantic_analysis.cpp's callable_signature() looks up a
+        // method: object_type->name() + "." + member_name, which for an
+        // imported module becomes "<alias>." + this export's own key --
+        // i.e. "LumiDessin." + "Canevas.enregistrer_png" ==
+        // "LumiDessin.Canevas.enregistrer_png", exactly what a Canevas
+        // receiver's type name resolves to.
+        exports.callables.emplace(
+            "Canevas.enregistrer_png",
+            callable(
+                {parameter("chemin", "Texte")},
+                generic("Résultat", {named("Rien"), named("ErreurImage")})));
+
         return exports;
     }
 

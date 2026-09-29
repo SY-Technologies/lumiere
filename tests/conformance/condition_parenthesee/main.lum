@@ -1,0 +1,30 @@
+// Une condition est une expression, et une expression peut commencer par une
+// parenthèse sans en être entièrement entourée. Le parseur prenait une
+// parenthèse ouvrante pour la borne de la condition, et refusait la suite.
+fonction principal() {
+    soit a = 3
+    soit b = 7
+
+    si (a) < b {
+        afficher("groupe puis comparaison")
+    }
+
+    si (a + 1) * 2 == 8 {
+        afficher("groupe dans une opération")
+    }
+
+    si (a < b) {
+        afficher("condition entière entre parenthèses")
+    }
+
+    soit n = 0
+    tant que (n < 2 et a > 0) ou n == 2 {
+        n = n + 1
+    }
+    afficher(n)
+
+    tant que (n) > 0 {
+        n = n - 1
+    }
+    afficher(n)
+}

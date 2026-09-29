@@ -1,6 +1,7 @@
 #include "native_globals.hpp"
 
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 #include "vm_error.hpp"
 
 #include <cctype>
@@ -104,28 +105,17 @@ Value lire_decimal(const std::vector<Value> &args)
             "lire_décimal",
             "fin de l'entrée");
     }
-    try
+    while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
     {
-        std::size_t parsed = 0;
-        const double value = std::stod(line, &parsed);
-        while (parsed < line.size() && std::isspace(static_cast<unsigned char>(line[parsed])))
-        {
-            ++parsed;
-        }
-        if (parsed != line.size())
-        {
-            throw std::invalid_argument("caractères restants");
-        }
-        return Value::resultat(
-            true,
-            Value::decimal(value));
+        line.pop_back();
     }
-    catch (...)
+    if (const auto value = numeric::parse_decimal(line))
     {
-        return input_failure(
-            "lire_décimal",
-            "décimal invalide: " + line);
+        return Value::resultat(true, Value::decimal(*value));
     }
+    return input_failure(
+        "lire_décimal",
+        "décimal invalide: " + line);
 }
 
 Value lire_logique(const std::vector<Value> &args)

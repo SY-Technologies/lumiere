@@ -56,10 +56,16 @@ std::filesystem::path sanitize_path(IRuntime &runtime,
                                     const std::string &signature,
                                     const RuntimeSite &call_site)
 {
-    const std::string path_str = path.generic_string();
-    if (path_str.find("..") != std::string::npos)
+    // A component-wise check: '..' only means "go up a directory" as a whole
+    // path segment. A substring search over the whole text also rejected
+    // ordinary filenames that merely contain two dots, such as "notes..bak"
+    // or "v1..2.txt", while catching nothing a component check would miss.
+    for (const auto &component : path)
     {
-        runtime.raise_runtime_error(call_site, signature + " rejette les chemins contenant '..'");
+        if (component == "..")
+        {
+            runtime.raise_runtime_error(call_site, signature + " rejette les chemins contenant '..'");
+        }
     }
     return path;
 }
@@ -69,7 +75,7 @@ std::filesystem::path sanitize_path(IRuntime &runtime,
 void register_fichier_module(Module &module)
 {
     const auto &make_native_function = native_function_factory();
-    auto error_class = std::make_shared<LumiereClass>();
+    auto error_class = make_ref<LumiereClass>();
     error_class->name = "Fichier.ErreurFichier";
     stdlib_bind_public_value(
         module,
@@ -245,7 +251,7 @@ void register_fichier_module(Module &module)
                     call_site);
             }
 
-            auto lines = std::make_shared<ListeData>();
+            auto lines = make_ref<ListeData>();
             std::string line;
             while (std::getline(file, line))
             {
@@ -290,7 +296,14 @@ void register_fichier_module(Module &module)
                     call_site);
             }
             file << content;
-            if (!file)
+            // A buffered ofstream can accept `<<` without complaint and only
+            // discover a full disk when its buffer is actually flushed to the
+            // OS; checking `file` right after `<<` can therefore miss a
+            // write failure entirely. close() forces that flush now, so any
+            // error (disk full, quota, I/O failure) is caught here instead
+            // of being silently lost when the stream is later destroyed.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ecrire_texte",
@@ -320,7 +333,10 @@ void register_fichier_module(Module &module)
                     call_site);
             }
             file << content;
-            if (!file)
+            // See ecrire_texte above: close() forces the buffered write out
+            // now so a full disk is caught here, not lost silently later.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ajouter_texte",
@@ -380,7 +396,10 @@ void register_fichier_module(Module &module)
                 }
                 file << list->elements[i].as_texte();
             }
-            if (!file)
+            // See ecrire_texte above: close() forces the buffered write out
+            // now so a full disk is caught here, not lost silently later.
+            file.close();
+            if (file.fail())
             {
                 return file_failure(
                     "ecrire_lignes",
@@ -429,7 +448,7 @@ void register_fichier_module(Module &module)
                 }
                 std::sort(entries.begin(), entries.end());
 
-                auto values = std::make_shared<ListeData>();
+                auto values = make_ref<ListeData>();
                 for (const auto &entry : entries)
                 {
                     values->elements.push_back(Value::texte(entry));
@@ -466,7 +485,7 @@ void register_fichier_module(Module &module)
                 }
                 std::sort(entries.begin(), entries.end());
 
-                auto values = std::make_shared<ListeData>();
+                auto values = make_ref<ListeData>();
                 for (const auto &entry : entries)
                 {
                     values->elements.push_back(Value::texte(entry));

@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  in principal (diagnostic_conversion/main.lum)
+  File "diagnostic_conversion/main.lum", line 3, column 28
+        soit nombre = "abc" en Entier
+                               ^
+erreur d'exécution: conversion vers Entier impossible pour une valeur de type Texte

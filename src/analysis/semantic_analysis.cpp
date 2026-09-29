@@ -1,6 +1,9 @@
+#include "lumiere/interpreter/runtime/conversions.hpp"
 #include "lumiere/analysis/semantic_analysis.hpp"
 #include "lumiere/analysis/native_signatures.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
+#include <map>
 #include <algorithm>
 #include <iterator>
 #include <unordered_set>
@@ -45,6 +48,7 @@ public:
                 nullptr,
                 m_analysis.model.types.interface_type(
                     "Erreur")});
+        m_index_source = m_analysis.model.index.source(m_source_path);
         m_error_types.insert("Erreur");
         const SemanticTypeRef decimal = m_analysis.model.types.builtin("Décimal");
         m_analysis.model.m_type_symbols.emplace("Décimal", decimal);
@@ -93,6 +97,25 @@ public:
             m_analysis.model.m_value_symbols.emplace(
                 name, SemanticSymbol{SemanticSymbolKind::FUNCTION, name, nullptr, nullptr});
         }
+    }
+
+    /**
+     * @brief Starts from what an earlier analysis of the same session settled.
+     *
+     * Only names and signatures are carried, not diagnostics: the previous
+     * submission was accepted, so it has none to repeat. The type interner
+     * comes first, because every symbol below names a type that has to keep
+     * meaning the same thing.
+     */
+    void seed_from(const SemanticModel &previous)
+    {
+        m_analysis.model.types.adopt(previous.types);
+        m_analysis.model.m_type_symbols = previous.m_type_symbols;
+        m_analysis.model.m_value_symbols = previous.m_value_symbols;
+        m_analysis.model.m_signatures = previous.m_signatures;
+        m_analysis.model.m_expression_signatures = previous.m_expression_signatures;
+        m_analysis.model.m_constructors = previous.m_constructors;
+        m_analysis.model.m_named_signatures = previous.m_named_signatures;
     }
 
     SemanticAnalysis analyze(const StmtList &statements)
@@ -160,23 +183,53 @@ private:
                 SemanticSymbol{kind, name.lexeme, &declaration, nullptr}).second)
         {
             diagnose(name, "LUM-S0001", "le nom '" + name.lexeme + "' est déjà déclaré dans ce module");
+            return;
         }
+        // The enclosing span is approximated by the name token's own span
+        // until statement nodes carry their own extent (Stmt has no
+        // start/end accessor today, unlike Expr's start_token()) -- see
+        // docs/stage1-semantic-index-design.md's open questions.
+        const SourceSpan span = span_of(name, m_index_source);
+        static_cast<void>(m_analysis.model.index.declare(
+            SymbolNamespace::Value, kind, name.lexeme, span, span, kModuleScopeId,
+            /*type=*/nullptr, /*documentation=*/{}, &declaration));
     }
 
     void declare_type(const Token &name,
-                      const SemanticTypeKind kind)
+                      const SemanticTypeKind kind,
+                      const Stmt &declaration)
     {
         SemanticTypeRef type = kind == SemanticTypeKind::CLASS
                                    ? m_analysis.model.types.class_type(name.lexeme)
                                    : m_analysis.model.types.interface_type(name.lexeme);
-        if (!m_analysis.model.m_type_symbols.emplace(name.lexeme, std::move(type)).second)
+        if (!m_analysis.model.m_type_symbols.emplace(name.lexeme, type).second)
         {
             diagnose(name, "LUM-S0002", "le type '" + name.lexeme + "' est déjà déclaré");
+            return;
         }
+        const SemanticSymbolKind symbol_kind = kind == SemanticTypeKind::CLASS
+                                                   ? SemanticSymbolKind::CLASS
+                                                   : SemanticSymbolKind::INTERFACE;
+        const SourceSpan span = span_of(name, m_index_source);
+        static_cast<void>(m_analysis.model.index.declare(
+            SymbolNamespace::Type, symbol_kind, name.lexeme, span, span, kModuleScopeId, std::move(type),
+            /*documentation=*/{}, &declaration));
+    }
+
+    /** The index Scope a declaration or occurrence right now belongs to. */
+    ScopeId current_index_scope() const
+    {
+        return m_index_scopes.empty() ? kModuleScopeId : m_index_scopes.back();
     }
 
     void push_scope()
     {
+        // The enclosing span is a placeholder until statement nodes carry
+        // their own extent -- same open item declare_value/declare_type
+        // already note for Symbol::enclosing_span.
+        const ScopeId id = m_analysis.model.index.push_scope(
+            current_index_scope(), SourceSpan{m_index_source, 0, 0});
+        m_index_scopes.push_back(id);
         m_scopes.emplace_back();
         m_type_scopes.emplace_back();
         m_signature_scopes.emplace_back();
@@ -208,6 +261,9 @@ private:
         m_scopes.pop_back();
         m_type_scopes.pop_back();
         m_signature_scopes.pop_back();
+        // The index's own Scope record is permanent -- only this walk's
+        // transient "which scope am I resolving in" bookkeeping unwinds.
+        m_index_scopes.pop_back();
     }
 
     bool obligation_has_other_owner(
@@ -272,6 +328,11 @@ private:
         }
         if (syntax.kind == TypeExprKind::NAMED)
         {
+            if (const auto alias = exports.resolved_aliases.find(syntax.name);
+                alias != exports.resolved_aliases.end())
+            {
+                return qualify_imported_type(alias->second, module_name);
+            }
             if (const auto alias = exports.aliases.find(syntax.name);
                 alias != exports.aliases.end())
             {
@@ -319,6 +380,33 @@ private:
         return resolved;
     }
 
+    SemanticTypeRef qualify_imported_type(const SemanticTypeRef &type, const std::string &module_name)
+    {
+        // Type equality is pointer-based: every imported node must be re-interned.
+        if (type->kind() == SemanticTypeKind::CLASS || type->kind() == SemanticTypeKind::INTERFACE)
+        {
+            if (type->name().find('.') != std::string_view::npos || type->name() == "Erreur")
+                return type->kind() == SemanticTypeKind::CLASS
+                           ? m_analysis.model.types.class_type(std::string(type->name()))
+                           : m_analysis.model.types.interface_type(std::string(type->name()));
+            return imported_type(module_name, std::string(type->name()), type->kind());
+        }
+        if (type->kind() == SemanticTypeKind::BUILTIN)
+            return m_analysis.model.types.builtin(std::string(type->name()));
+        if (type->kind() == SemanticTypeKind::INTEGER_ARGUMENT)
+            return m_analysis.model.types.integer_argument(type->integer());
+        if (type->kind() == SemanticTypeKind::TYPE_PARAMETER)
+            return m_analysis.model.types.type_parameter(std::string(type->name()));
+        if (type->kind() == SemanticTypeKind::BOTTOM)
+            return m_analysis.model.types.bottom();
+        std::vector<SemanticTypeRef> arguments;
+        for (const auto &argument : type->arguments())
+            arguments.push_back(qualify_imported_type(argument, module_name));
+        return type->kind() == SemanticTypeKind::UNION
+                   ? m_analysis.model.types.union_type(std::move(arguments))
+                   : m_analysis.model.types.generic(std::string(type->name()), std::move(arguments));
+    }
+
     void bind_imported_signature(const std::string &binding,
                                  const SemanticModuleExports::Callable &exported,
                                  const std::string &module_name,
@@ -329,6 +417,8 @@ private:
         signature.parameter_names = exported.parameter_names;
         signature.optional_parameters = exported.optional_parameters;
         signature.has_explicit_return_type = exported.has_explicit_return_type;
+        for (const auto &parameter : exported.resolved_parameter_types)
+            signature.parameter_types.push_back(qualify_imported_type(parameter, module_name));
         for (const TypeExpr &parameter : exported.parameter_types)
         {
             signature.parameter_types.push_back(
@@ -336,6 +426,12 @@ private:
         }
         signature.return_type =
             resolve_imported_type(exported.return_type, module_name, exports);
+        signature.variadic = exported.variadic;
+        if (exported.variadic)
+        {
+            signature.variadic_type =
+                resolve_imported_type(exported.variadic_type, module_name, exports);
+        }
         if (module_level)
         {
             m_analysis.model.m_named_signatures.emplace(binding, std::move(signature));
@@ -370,11 +466,25 @@ private:
         if (module_level)
         {
             if (!m_analysis.model.m_value_symbols.emplace(
-                    binding, SemanticSymbol{kind, binding, &import, std::move(type)}).second)
+                    binding, SemanticSymbol{kind, binding, &import, type}).second)
             {
                 diagnose(site, "LUM-S0001",
                          "le nom '" + binding + "' est déjà déclaré dans ce module");
+                return;
             }
+            // Mirrors declare_value: a module-level `importer` binding
+            // never called it (one ImportStmt can bind many names here,
+            // unlike a single-name VarDeclStmt/FunctionDeclStmt), so this
+            // was the one declare_value/declare_local call site that never
+            // reached the index -- the last gap docs/stage1-semantic-index-
+            // design.md named before step 5 is safe. `site`'s lexeme is
+            // always `binding` itself (resolve_import only ever calls this
+            // with the alias/member token whose own lexeme it just read),
+            // so span_of(site, ...) is exactly this declaration's span.
+            const SourceSpan span = span_of(site, m_index_source);
+            static_cast<void>(m_analysis.model.index.declare(
+                SymbolNamespace::Value, kind, binding, span, span, kModuleScopeId,
+                std::move(type), /*documentation=*/{}, &import));
             return;
         }
         Token binding_token = site;
@@ -399,7 +509,7 @@ private:
         if (module == m_imports.end())
         {
             diagnose(import.module_name, "LUM-S0012",
-                     "module sémantique introuvable: '" + import.module_name.lexeme + "'");
+                     "module introuvable: '" + import.module_name.lexeme + "'");
             return;
         }
         for (const std::string &name : module->second.error_types)
@@ -424,10 +534,15 @@ private:
             }
             for (const auto &[name, target] : module->second.aliases)
             {
+                const auto resolved = module->second.resolved_aliases.find(name);
                 bind_imported_type(
                     site,
                     alias + '.' + name,
-                    resolve_imported_type(target, import.module_name.lexeme, module->second),
+                    resolved == module->second.resolved_aliases.end()
+                        ? resolve_imported_type(target, import.module_name.lexeme,
+                                                module->second)
+                        : qualify_imported_type(resolved->second,
+                                                import.module_name.lexeme),
                     module_level);
             }
             for (const auto &[name, callable] : module->second.callables)
@@ -469,12 +584,17 @@ private:
             }
             if (alias != module->second.aliases.end())
             {
+                const auto resolved =
+                    module->second.resolved_aliases.find(member.name.lexeme);
                 bind_imported_type(
                     site,
                     binding,
-                    resolve_imported_type(alias->second,
-                                          import.module_name.lexeme,
-                                          module->second),
+                    resolved == module->second.resolved_aliases.end()
+                        ? resolve_imported_type(alias->second,
+                                                import.module_name.lexeme,
+                                                module->second)
+                        : qualify_imported_type(resolved->second,
+                                                import.module_name.lexeme),
                     module_level);
             }
             if (value != module->second.values.end())
@@ -538,6 +658,15 @@ private:
         {
             diagnose(name, "LUM-S0007",
                      "le nom '" + name.lexeme + "' est déjà déclaré dans cette portée");
+            return;
+        }
+        const SourceSpan span = span_of(name, m_index_source);
+        const SymbolId id = m_analysis.model.index.declare(
+            SymbolNamespace::Value, kind, name.lexeme, span, span, current_index_scope(),
+            /*type=*/nullptr, /*documentation=*/{}, declaration);
+        if (declaration != nullptr)
+        {
+            m_symbol_by_declaration.emplace(declaration, id);
         }
     }
 
@@ -548,8 +677,17 @@ private:
             if (const auto found = m_scopes.back().find(name);
                 found != m_scopes.back().end())
             {
-                found->second.type = std::move(type);
+                found->second.type = type;
             }
+        }
+        // declare_local runs before a local's type is known (an
+        // initializer or parameter signature hasn't resolved yet); this is
+        // the index's half of the same after-the-fact update the
+        // LocalBinding above just got.
+        if (const Symbol *symbol = m_analysis.model.index.lookup(
+                current_index_scope(), name, SymbolNamespace::Value))
+        {
+            m_analysis.model.index.set_type(symbol->id, std::move(type));
         }
     }
 
@@ -744,6 +882,11 @@ private:
                         *element,
                         expected->arguments()[0],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(element.get()),
+                        expected->arguments()[0],
+                        element->start_token(),
+                        "un élément de " + std::string(expected->display()));
                 }
                 m_analysis.model.m_expression_types[
                     &expression] = expected;
@@ -765,10 +908,20 @@ private:
                         *entry.key,
                         expected->arguments()[0],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(entry.key.get()),
+                        expected->arguments()[0],
+                        entry.key->start_token(),
+                        "une clé de " + std::string(expected->display()));
                     contextualize_result_construction(
                         *entry.value,
                         expected->arguments()[1],
                         site);
+                    require_assignable(
+                        m_analysis.model.m_expression_types.at(entry.value.get()),
+                        expected->arguments()[1],
+                        entry.value->start_token(),
+                        "une valeur de " + std::string(expected->display()));
                 }
                 m_analysis.model.m_expression_types[
                     &expression] = expected;
@@ -992,7 +1145,7 @@ private:
             }
             else if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
             {
-                declare_type(klass->name, SemanticTypeKind::CLASS);
+                declare_type(klass->name, SemanticTypeKind::CLASS, *klass);
                 declare_value(klass->name, SemanticSymbolKind::CLASS, *klass);
                 if (std::any_of(
                         klass->interfaces.begin(), klass->interfaces.end(),
@@ -1010,7 +1163,7 @@ private:
             }
             else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
             {
-                declare_type(interface->name, SemanticTypeKind::INTERFACE);
+                declare_type(interface->name, SemanticTypeKind::INTERFACE, *interface);
                 declare_value(interface->name, SemanticSymbolKind::INTERFACE, *interface);
                 if (!interface->is_public)
                 {
@@ -1028,6 +1181,14 @@ private:
                 else
                 {
                     m_alias_order.push_back(alias->name.lexeme);
+                    // Type is unknown until resolve_alias resolves the target
+                    // (possibly through other aliases); set_type fills it in
+                    // then, mirroring set_local_type's later-known-type sync.
+                    const SourceSpan span = span_of(alias->name, m_index_source);
+                    const SymbolId id = m_analysis.model.index.declare(
+                        SymbolNamespace::Type, SemanticSymbolKind::TYPE_ALIAS, alias->name.lexeme,
+                        span, span, kModuleScopeId, /*type=*/nullptr, alias->documentation, alias);
+                    m_alias_symbols.emplace(alias->name.lexeme, id);
                 }
             }
         }
@@ -1067,6 +1228,10 @@ private:
         m_alias_stack.pop_back();
         m_resolved_aliases.emplace(name, resolved);
         m_analysis.model.m_type_symbols.emplace(name, resolved);
+        if (const auto symbol = m_alias_symbols.find(name); symbol != m_alias_symbols.end())
+        {
+            m_analysis.model.index.set_type(symbol->second, resolved);
+        }
         return resolved;
     }
 
@@ -1169,13 +1334,32 @@ private:
         }
         if (syntax.kind == TypeExprKind::NAMED)
         {
-            if (SemanticTypeRef alias = resolve_alias(syntax.name, syntax.source))
+            SemanticTypeRef resolved_type = resolve_alias(syntax.name, syntax.source);
+            if (resolved_type == nullptr)
             {
-                return alias;
+                if (const SemanticTypeRef *type = find_type(syntax.name))
+                {
+                    resolved_type = *type;
+                }
             }
-            if (const SemanticTypeRef *type = find_type(syntax.name))
+            if (resolved_type != nullptr)
             {
-                return *type;
+                // A type annotation (`soit p: Point`) never goes through
+                // resolve_expression/diagnose_value_read, so it's the one
+                // reference kind record_value_occurrence never sees. Hook
+                // it here instead, at the one place that already resolves
+                // a NAMED type's name to a declaration -- an alias or a
+                // class/interface alike, both indexed in SymbolNamespace::
+                // Type -- or, for a builtin like Entier, to nothing indexed
+                // (record_occurrence is simply skipped then, same as any
+                // other unindexed name).
+                if (const Symbol *resolved = m_analysis.model.index.lookup(
+                        kModuleScopeId, syntax.name, SymbolNamespace::Type))
+                {
+                    m_analysis.model.index.record_occurrence(
+                        span_of(syntax.source, m_index_source), resolved->id, /*is_write=*/false);
+                }
+                return resolved_type;
             }
             diagnose(syntax.source, "LUM-S0003", "type inconnu: '" + syntax.name + "'");
             return m_analysis.model.types.bottom();
@@ -1314,6 +1498,18 @@ private:
                 "LUM-S0036",
                 "Résultat ne peut pas être une alternative du type de retour; placez l'union dans son type de succès ou d'erreur");
         }
+        // A method is a function declared directly in the class being resolved.
+        // Nothing else counts: a closure written inside a method is not one, and
+        // 'parent' does not work there at run time either.
+        const bool is_method =
+            !m_class_stack.empty() &&
+            std::any_of(m_class_stack.back()->members.begin(),
+                        m_class_stack.back()->members.end(),
+                        [&function](const StmtPtr &member) { return member.get() == &function; });
+        const std::size_t enclosing_loops = m_loop_depth;
+        const std::size_t enclosing_methods = m_method_depth;
+        m_loop_depth = 0;
+        m_method_depth = is_method ? 1 : 0;
         m_callable_stack.push_back(CallableOwner{&function, nullptr});
         push_scope();
         for (std::size_t i = 0; i < function.params.size(); ++i)
@@ -1358,6 +1554,8 @@ private:
         }
         pop_scope();
         m_callable_stack.pop_back();
+        m_loop_depth = enclosing_loops;
+        m_method_depth = enclosing_methods;
     }
 
     void resolve_function(const FunctionExpr &function)
@@ -1373,6 +1571,10 @@ private:
                 "Résultat ne peut pas être une alternative du type de retour; placez l'union dans son type de succès ou d'erreur");
         }
 
+        const std::size_t enclosing_loops = m_loop_depth;
+        const std::size_t enclosing_methods = m_method_depth;
+        m_loop_depth = 0;
+        m_method_depth = 0;
         m_callable_stack.push_back(CallableOwner{nullptr, &function});
         push_scope();
         for (std::size_t i = 0; i < function.params.size(); ++i)
@@ -1421,6 +1623,8 @@ private:
         }
         pop_scope();
         m_callable_stack.pop_back();
+        m_loop_depth = enclosing_loops;
+        m_method_depth = enclosing_methods;
     }
 
     void collect_module_callable_aliases(const StmtList &statements)
@@ -1524,6 +1728,191 @@ private:
         return m_analysis.model.signature(name);
     }
 
+    const CallableSignature *text_member_signature(const std::string &name)
+    {
+        const std::string key = "Texte." + name;
+        if (const auto cached = m_builtin_member_signatures.find(key);
+            cached != m_builtin_member_signatures.end())
+            return &cached->second;
+
+        // Reuse the module contract, omitting its explicit text receiver.
+        // This works without an import and keeps methods out of module scope.
+        static const auto exports = native_module_exports("Texte");
+        if (!exports)
+            return nullptr;
+        const auto found = exports->callables.find(name);
+        if (found == exports->callables.end() || found->second.parameter_types.empty() ||
+            found->second.parameter_types.front().name != "Texte")
+            return nullptr;
+
+        for (const auto &error : exports->error_types)
+            m_error_types.insert("Texte." + error);
+        const auto &method = found->second;
+        CallableSignature signature;
+        signature.has_explicit_return_type = method.has_explicit_return_type;
+        signature.accepts_named_arguments = false;
+        for (std::size_t i = 1; i < method.parameter_types.size(); ++i)
+        {
+            signature.parameter_names.push_back(method.parameter_names[i]);
+            signature.parameter_types.push_back(resolve_imported_type(method.parameter_types[i], "Texte", *exports));
+            signature.optional_parameters.push_back(method.optional_parameters[i]);
+        }
+        signature.return_type = resolve_imported_type(method.return_type, "Texte", *exports);
+        return &m_builtin_member_signatures.emplace(key, std::move(signature)).first->second;
+    }
+
+    /**
+     * @brief Signature of a member call on a builtin collection.
+     *
+     * The runtime already carries these result types — `Dictionnaire.clés()` hands
+     * back a `Liste[K]` and `Liste.en_ensemble()` an `Ensemble[T]` — but the
+     * analyzer knew only `taille`, so every other member call was `Universel` and
+     * could not initialize a declared collection type. Even the idiom the overview
+     * documents, `soit t: ListeFixe[Entier, 3] = notes.en_liste_fixe(3)`, was
+     * rejected.
+     *
+     * Parameters stay `Universel` on purpose. Element and key types are enforced at
+     * run time, against the constraint carried by the allocation, which sees through
+     * aliases that the analyzer cannot follow. Declaring them here would reject
+     * programs the runtime accepts.
+     */
+    const CallableSignature *collection_member_signature(const SemanticTypeRef &receiver,
+                                                         const std::string &member)
+    {
+        if (receiver == nullptr || receiver->kind() != SemanticTypeKind::GENERIC)
+        {
+            return nullptr;
+        }
+        const std::string family(receiver->name());
+        if (family != "Liste" && family != "ListeFixe" &&
+            family != "Dictionnaire" && family != "Ensemble")
+        {
+            return nullptr;
+        }
+
+        const std::pair<const SemanticType *, std::string> key{receiver.get(), member};
+        if (const auto cached = m_collection_member_signatures.find(key);
+            cached != m_collection_member_signatures.end())
+        {
+            return &cached->second;
+        }
+
+        const SemanticTypeRef universel = *m_analysis.model.find_type("Universel");
+        const SemanticTypeRef entier = *m_analysis.model.find_type("Entier");
+        const SemanticTypeRef logique = *m_analysis.model.find_type("Logique");
+        const SemanticTypeRef texte = *m_analysis.model.find_type("Texte");
+        const auto &arguments = receiver->arguments();
+        // Liste[T] and Ensemble[T] carry one argument; Dictionnaire[K, V] and
+        // ListeFixe[T, N] carry two, the second of which is a size for ListeFixe.
+        const SemanticTypeRef first = arguments.empty() ? universel : arguments[0];
+        const SemanticTypeRef second = arguments.size() < 2 ? universel : arguments[1];
+        const auto liste_of = [&](const SemanticTypeRef &element) {
+            return m_analysis.model.types.generic("Liste", {element});
+        };
+
+        CallableSignature signature;
+        signature.accepts_named_arguments = false;
+        signature.has_explicit_return_type = true;
+        const auto takes = [&](const std::size_t count) {
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                signature.parameter_names.push_back("argument" + std::to_string(i + 1));
+                signature.parameter_types.push_back(universel);
+                signature.optional_parameters.push_back(false);
+            }
+        };
+
+        if (member == "taille")
+        {
+            signature.return_type = entier;
+        }
+        else if (member == "vide")
+        {
+            signature.return_type = logique;
+        }
+        else if (member == "contient")
+        {
+            takes(1);
+            signature.return_type = logique;
+        }
+        else if (member == "joindre" && family != "Dictionnaire")
+        {
+            takes(1);
+            signature.return_type = texte;
+        }
+        else if (family == "Liste" && member == "ajouter")
+        {
+            takes(1);
+            signature.return_type = entier;
+        }
+        else if (family == "Liste" && member == "inserer")
+        {
+            takes(2);
+            signature.return_type = entier;
+        }
+        else if (family == "Liste" && member == "retirer_a")
+        {
+            takes(1);
+            signature.return_type = first;
+        }
+        else if (family == "Liste" && member == "en_liste_fixe")
+        {
+            // The size comes from the argument, so the call site refines this.
+            takes(1);
+            signature.return_type = m_analysis.model.types.bottom();
+        }
+        else if (family == "Liste" && member == "en_ensemble")
+        {
+            signature.return_type = m_analysis.model.types.generic("Ensemble", {first});
+        }
+        else if (family == "ListeFixe" && member == "en_liste")
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Dictionnaire" && (member == "clés" || member == "cles"))
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Dictionnaire" && member == "valeurs")
+        {
+            signature.return_type = liste_of(second);
+        }
+        else if (family == "Dictionnaire" && member == "paires")
+        {
+            // A pair keeps a shared key/value type and falls back to Universel.
+            const SemanticTypeRef element = same_type(first, second) ? first : universel;
+            signature.return_type = liste_of(m_analysis.model.types.generic(
+                "ListeFixe", {element, m_analysis.model.types.integer_argument(2)}));
+        }
+        else if (family == "Dictionnaire" && member == "retirer")
+        {
+            takes(1);
+            signature.return_type = second;
+        }
+        else if (family == "Ensemble" && (member == "ajouter" || member == "retirer" ||
+                                          member == "sous_ensemble_de"))
+        {
+            takes(1);
+            signature.return_type = logique;
+        }
+        else if (family == "Ensemble" && member == "en_liste")
+        {
+            signature.return_type = liste_of(first);
+        }
+        else if (family == "Ensemble" && (member == "union" || member == "intersection" ||
+                                          member == "difference" || member == "différence"))
+        {
+            takes(1);
+            signature.return_type = m_analysis.model.types.generic("Ensemble", {first});
+        }
+        else
+        {
+            return nullptr;
+        }
+
+        return &m_collection_member_signatures.emplace(key, std::move(signature)).first->second;
+    }
+
     const CallableSignature *callable_signature(const Expr &callee)
     {
         if (const auto *function = dynamic_cast<const FunctionExpr *>(&callee))
@@ -1592,6 +1981,14 @@ private:
             }
             if (const auto *object = dynamic_cast<const IdentifierExpr *>(member->object.get()))
             {
+                if (object->name.lexeme == "ici" && !m_class_stack.empty())
+                {
+                    if (const FunctionDeclStmt *method =
+                            find_method(*m_class_stack.back(), member->member.lexeme))
+                    {
+                        return &ensure_signature(*method);
+                    }
+                }
                 if (object->name.lexeme == "parent" &&
                     !m_class_stack.empty() &&
                     !m_class_stack.back()->parent.empty())
@@ -1622,7 +2019,10 @@ private:
             {
                 const std::string &member_name =
                     member->member.lexeme;
-                if (object_type->second != nullptr)
+                // A builtin type and a module can share a name (e.g. Texte).
+                // Module functions take an explicit receiver; methods do not.
+                if (object_type->second != nullptr &&
+                    object_type->second->kind() != SemanticTypeKind::BUILTIN)
                 {
                     if (const CallableSignature *signature =
                             find_named_signature(
@@ -1636,58 +2036,29 @@ private:
                 if (object_type->second != nullptr &&
                     object_type->second->kind() ==
                         SemanticTypeKind::BUILTIN &&
-                    object_type->second->name() == "Texte" &&
-                    (member_name == "en_entier" ||
-                     member_name == "en_decimal" ||
-                     member_name == "en_logique"))
+                    object_type->second->name() == "Texte")
                 {
-                    const char *success_name =
-                        member_name == "en_entier"
-                            ? "Entier"
-                            : member_name == "en_decimal"
-                                  ? "Décimal"
-                                  : "Logique";
-                    CallableSignature signature;
-                    signature.return_type =
-                        m_analysis.model.types.generic(
-                            "Résultat",
-                            {
-                                *m_analysis.model.find_type(
-                                    success_name),
-                                m_analysis.model.types.class_type(
-                                    "Texte.ErreurConversion"),
-                            });
-                    return &m_builtin_member_signatures
-                                .insert_or_assign(
-                                    member_name,
-                                    std::move(signature))
-                                .first->second;
+                    return text_member_signature(member_name);
                 }
-                const bool has_builtin_size =
-                    object_type->second != nullptr &&
-                    ((object_type->second->kind() ==
-                          SemanticTypeKind::BUILTIN &&
-                      object_type->second->name() == "Texte") ||
-                     (object_type->second->kind() ==
-                          SemanticTypeKind::GENERIC &&
-                      (object_type->second->name() == "Liste" ||
-                       object_type->second->name() == "ListeFixe" ||
-                       object_type->second->name() == "Dictionnaire")));
-                if (member->member.lexeme == "taille" &&
-                    has_builtin_size)
+                if (const CallableSignature *builtin =
+                        collection_member_signature(object_type->second, member_name))
                 {
-                    CallableSignature signature;
-                    signature.return_type =
-                        *m_analysis.model.find_type("Entier");
-                    return &m_builtin_member_signatures
-                                .insert_or_assign("taille", std::move(signature))
-                                .first->second;
+                    return builtin;
                 }
                 if (const ClassDeclStmt *klass =
                         class_declaration(object_type->second))
                 {
                     if (const FunctionDeclStmt *method =
                             find_method(*klass, member->member.lexeme))
+                    {
+                        return &ensure_signature(*method);
+                    }
+                }
+                if (const InterfaceDeclStmt *interface =
+                        interface_declaration(object_type->second))
+                {
+                    if (const FunctionDeclStmt *method =
+                            find_interface_method(*interface, member->member.lexeme))
                     {
                         return &ensure_signature(*method);
                     }
@@ -1752,6 +2123,38 @@ private:
                    : dynamic_cast<const ClassDeclStmt *>(symbol->declaration);
     }
 
+    const InterfaceDeclStmt *interface_declaration(const SemanticTypeRef &type) const
+    {
+        if (type == nullptr || type->kind() != SemanticTypeKind::INTERFACE)
+        {
+            return nullptr;
+        }
+        std::string name(type->name());
+        if (const std::size_t dot = name.rfind('.'); dot != std::string::npos)
+        {
+            name = name.substr(dot + 1);
+        }
+        const SemanticSymbol *symbol = m_analysis.model.find_value(name);
+        return symbol == nullptr
+                   ? nullptr
+                   : dynamic_cast<const InterfaceDeclStmt *>(symbol->declaration);
+    }
+
+    const FunctionDeclStmt *find_interface_method(const InterfaceDeclStmt &interface,
+                                                   const std::string &name)
+    {
+        for (const StmtPtr &member : interface.methods)
+        {
+            if (const auto *method =
+                    dynamic_cast<const FunctionDeclStmt *>(member.get());
+                method != nullptr && method->name.lexeme == name)
+            {
+                return method;
+            }
+        }
+        return nullptr;
+    }
+
     const FunctionDeclStmt *find_method(const ClassDeclStmt &klass,
                                         const std::string &name)
     {
@@ -1775,8 +2178,18 @@ private:
         return nullptr;
     }
 
-    SemanticTypeRef member_type(const ClassDeclStmt &klass,
-                                const std::string &name)
+    /**
+     * @brief The field or method declaration named `name` on `klass`,
+     * walking up the inheritance chain if `klass` itself doesn't have it.
+     *
+     * The one member-lookup `member_type` (type-checking) and the semantic
+     * index's occurrence recording for MemberAccessExpr both call, per
+     * docs/stage1-semantic-index-design.md's "Populating it" section --
+     * previously each re-walked klass.members on its own, which is exactly
+     * the kind of duplicated lookup that section calls out.
+     */
+    const Stmt *find_member_declaration(const ClassDeclStmt &klass,
+                                        const std::string &name) const
     {
         for (const StmtPtr &member : klass.members)
         {
@@ -1784,13 +2197,13 @@ private:
                     dynamic_cast<const VarDeclStmt *>(member.get());
                 field != nullptr && field->name.lexeme == name)
             {
-                return resolve_type(field->type);
+                return field;
             }
             if (const auto *method =
                     dynamic_cast<const FunctionDeclStmt *>(member.get());
                 method != nullptr && method->name.lexeme == name)
             {
-                return ensure_signature(*method).return_type;
+                return method;
             }
         }
         if (!klass.parent.empty())
@@ -1798,10 +2211,146 @@ private:
             if (const ClassDeclStmt *parent_class =
                     class_declaration(klass.parent.name))
             {
-                return member_type(*parent_class, name);
+                return find_member_declaration(*parent_class, name);
             }
         }
+        return nullptr;
+    }
+
+    SemanticTypeRef member_type(const ClassDeclStmt &klass,
+                                const std::string &name)
+    {
+        const Stmt *declaration = find_member_declaration(klass, name);
+        if (const auto *field = dynamic_cast<const VarDeclStmt *>(declaration))
+        {
+            return resolve_type(field->type);
+        }
+        if (const auto *method = dynamic_cast<const FunctionDeclStmt *>(declaration))
+        {
+            return ensure_signature(*method).return_type;
+        }
         return *m_analysis.model.find_type("Universel");
+    }
+
+    /**
+     * @brief Records a read occurrence for a MemberAccessExpr, when the
+     * index already has a Symbol for the member it resolved to.
+     *
+     * Mirrors record_value_occurrence's contract: a member the analyzer
+     * can't place (an unknown field, a stdlib/collection member with no
+     * user declaration, a module-qualified reference) simply records
+     * nothing, per the design's recovery rules -- occurrence recording
+     * never invents a symbol just to have one.
+     */
+    void record_member_occurrence(const ClassDeclStmt &klass, const MemberAccessExpr &member)
+    {
+        const Stmt *declaration = find_member_declaration(klass, member.member.lexeme);
+        if (declaration == nullptr)
+        {
+            return;
+        }
+        const auto found = m_symbol_by_declaration.find(declaration);
+        if (found == m_symbol_by_declaration.end())
+        {
+            return;
+        }
+        m_analysis.model.index.record_occurrence(
+            span_of(member.member, m_index_source), found->second, /*is_write=*/false);
+    }
+
+    /**
+     * @brief record_member_occurrence's counterpart for an interface-typed
+     * receiver.
+     *
+     * inferred_type's MemberAccessExpr branch used to resolve a receiver's
+     * declaration only through class_declaration (a plain ClassDeclStmt*),
+     * so a member accessed through a variable/parameter/field typed as an
+     * *interface* never went through record_member_occurrence at all --
+     * find_interface_method (already used by callable_signature, for call
+     * resolution) is the interface-side equivalent of find_member_
+     * declaration; interfaces have no field members and no inheritance
+     * chain to walk, so unlike find_member_declaration this never
+     * recurses.
+     */
+    void record_interface_member_occurrence(const InterfaceDeclStmt &interface,
+                                            const MemberAccessExpr &member)
+    {
+        const FunctionDeclStmt *method = find_interface_method(interface, member.member.lexeme);
+        if (method == nullptr)
+        {
+            return;
+        }
+        const auto found = m_symbol_by_declaration.find(method);
+        if (found == m_symbol_by_declaration.end())
+        {
+            return;
+        }
+        m_analysis.model.index.record_occurrence(
+            span_of(member.member, m_index_source), found->second, /*is_write=*/false);
+    }
+
+    /**
+     * @brief What `objet[indice]` reads out of @p receiver, or null if the
+     * receiver's static type does not say -- an unresolved expression, a bare
+     * `Liste` written with no element type, anything not indexable.
+     *
+     * A miss is not a rejection: `inferred_type` falls back to `Universel`,
+     * exactly as it did before this exists. This only ever narrows what
+     * `Universel` would have said, and the runtime's `ASSERT_TYPE` checks the
+     * value regardless of which one was inferred, so a wrong guess here is
+     * caught there, never trusted silently.
+     */
+    SemanticTypeRef index_result_type(const SemanticTypeRef &receiver) const
+    {
+        if (receiver == nullptr)
+        {
+            return nullptr;
+        }
+        if (receiver->kind() == SemanticTypeKind::BUILTIN && receiver->name() == "Texte")
+        {
+            return *m_analysis.model.find_type("Symbole");
+        }
+        if (receiver->kind() == SemanticTypeKind::GENERIC && receiver->arguments().size() >= 1 &&
+            (receiver->name() == "Liste" || receiver->name() == "ListeFixe"))
+        {
+            return receiver->arguments()[0];
+        }
+        if (receiver->kind() == SemanticTypeKind::GENERIC && receiver->name() == "Dictionnaire" &&
+            receiver->arguments().size() == 2)
+        {
+            return receiver->arguments()[1];
+        }
+        return nullptr;
+    }
+
+    /**
+     * @brief What `pour chaque x dans objet` binds `x` to, or null if the
+     * iterated type does not say. A `Dictionnaire[K, V]` walks its keys, as
+     * `enumerate_iterable` does at run time -- `d[cle]` is how the value is
+     * reached, so the loop variable is `K`, not `V`.
+     */
+    SemanticTypeRef iteration_element_type(const SemanticTypeRef &iterable) const
+    {
+        if (iterable == nullptr)
+        {
+            return nullptr;
+        }
+        if (iterable->kind() == SemanticTypeKind::BUILTIN && iterable->name() == "Texte")
+        {
+            return *m_analysis.model.find_type("Symbole");
+        }
+        if (iterable->kind() == SemanticTypeKind::GENERIC && receiver_iterates_by_first_argument(iterable))
+        {
+            return iterable->arguments()[0];
+        }
+        return nullptr;
+    }
+
+    static bool receiver_iterates_by_first_argument(const SemanticTypeRef &type)
+    {
+        return !type->arguments().empty() &&
+               (type->name() == "Liste" || type->name() == "ListeFixe" ||
+                type->name() == "Ensemble" || type->name() == "Dictionnaire");
     }
 
     void validate_call(const CallExpr &call, const CallableSignature &signature)
@@ -1943,6 +2492,29 @@ private:
             return is_assignable(source->arguments()[0], target->arguments()[0]) &&
                    is_assignable(source->arguments()[1], target->arguments()[1]);
         }
+        // A `Liste[⊥]` (an empty list literal's type) is assignable to any
+        // `Liste[T]`, and likewise for `Dictionnaire`, `Ensemble` and
+        // `ListeFixe` -- not because these are covariant in general (a
+        // `Liste[Entier]` reaching a binding declared `Liste[Décimal]` would
+        // let a `Décimal` be `ajouter`-ed through that alias, and the same
+        // list would then hold one where its own declared type promises
+        // none), but because `⊥` has no values: there is nothing in an empty
+        // list for a wider element type to be wrong about. This is narrower
+        // than general generic covariance on purpose, and is the only
+        // generic assignability rule besides `Résultat`'s.
+        if (source->kind() == SemanticTypeKind::GENERIC &&
+            target->kind() == SemanticTypeKind::GENERIC &&
+            source->name() == target->name() &&
+            source->arguments().size() == target->arguments().size() &&
+            !source->arguments().empty() &&
+            std::all_of(source->arguments().begin(), source->arguments().end(),
+                       [](const SemanticTypeRef &argument) {
+                           return argument != nullptr &&
+                                  argument->kind() == SemanticTypeKind::BOTTOM;
+                       }))
+        {
+            return true;
+        }
         if (source->kind() == SemanticTypeKind::CLASS &&
             (target->kind() == SemanticTypeKind::CLASS ||
              target->kind() == SemanticTypeKind::INTERFACE))
@@ -2061,6 +2633,38 @@ private:
                         ? std::vector<SemanticTypeRef>{payload, bottom}
                         : std::vector<SemanticTypeRef>{bottom, payload});
             }
+            // ListeFixe carries its length in its type, and the length is the
+            // argument, so this one result can only be read at the call.
+            if (const auto *member =
+                    dynamic_cast<const MemberAccessExpr *>(call->callee.get());
+                member != nullptr && member->member.lexeme == "en_liste_fixe" &&
+                call->args.size() == 1)
+            {
+                const auto receiver =
+                    m_analysis.model.m_expression_types.find(member->object.get());
+                const auto *length_literal =
+                    dynamic_cast<const LiteralExpr *>(call->args.front().value.get());
+                if (receiver != m_analysis.model.m_expression_types.end() &&
+                    receiver->second != nullptr &&
+                    receiver->second->kind() == SemanticTypeKind::GENERIC &&
+                    receiver->second->name() == "Liste" &&
+                    length_literal != nullptr &&
+                    length_literal->token.type == TokenType::ENTIER_LIT)
+                {
+                    if (const auto length =
+                            numeric::parse_integer_literal(length_literal->token.lexeme);
+                        length.has_value() && *length >= 0)
+                    {
+                        const auto &arguments = receiver->second->arguments();
+                        return m_analysis.model.types.generic(
+                            "ListeFixe",
+                            {arguments.empty() ? *m_analysis.model.find_type("Universel")
+                                               : arguments[0],
+                             m_analysis.model.types.integer_argument(
+                                 static_cast<std::uint64_t>(*length))});
+                    }
+                }
+            }
             if (const CallableSignature *signature = callable_signature(*call->callee);
                 signature != nullptr)
             {
@@ -2075,6 +2679,7 @@ private:
                 object != nullptr && object->name.lexeme == "ici" &&
                 !m_class_stack.empty())
             {
+                record_member_occurrence(*m_class_stack.back(), *member);
                 return member_type(*m_class_stack.back(),
                                    member->member.lexeme);
             }
@@ -2088,6 +2693,7 @@ private:
                         class_declaration(
                             m_class_stack.back()->parent.name))
                 {
+                    record_member_occurrence(*parent_class, *member);
                     return member_type(*parent_class,
                                        member->member.lexeme);
                 }
@@ -2103,7 +2709,19 @@ private:
                 if (const ClassDeclStmt *klass =
                         class_declaration(object_type->second))
                 {
+                    record_member_occurrence(*klass, *member);
                     return member_type(*klass, member->member.lexeme);
+                }
+                if (const InterfaceDeclStmt *interface =
+                        interface_declaration(object_type->second))
+                {
+                    record_interface_member_occurrence(*interface, *member);
+                    if (const FunctionDeclStmt *method =
+                            find_interface_method(*interface, member->member.lexeme))
+                    {
+                        return ensure_signature(*method).return_type;
+                    }
+                    return *m_analysis.model.find_type("Universel");
                 }
             }
             if (const auto *object =
@@ -2147,6 +2765,19 @@ private:
                 }
             }
         }
+        if (const auto *index = dynamic_cast<const IndexAccessExpr *>(&expression))
+        {
+            const auto object_type =
+                m_analysis.model.m_expression_types.find(index->object.get());
+            if (object_type != m_analysis.model.m_expression_types.end())
+            {
+                if (const SemanticTypeRef read = index_result_type(object_type->second);
+                    read != nullptr)
+                {
+                    return read;
+                }
+            }
+        }
         if (const auto *cast = dynamic_cast<const CastExpr *>(&expression))
         {
             return resolve_type(cast->target_type);
@@ -2170,7 +2801,7 @@ private:
                     element_types.push_back(found->second);
                 }
             }
-            SemanticTypeRef element_type = *m_analysis.model.find_type("Universel");
+            SemanticTypeRef element_type = m_analysis.model.types.bottom();
             if (element_types.size() == 1)
             {
                 element_type = element_types.front();
@@ -2180,6 +2811,32 @@ private:
                 element_type = m_analysis.model.types.union_type(std::move(element_types));
             }
             return m_analysis.model.types.generic("Liste", {element_type});
+        }
+        if (const auto *set = dynamic_cast<const SetExpr *>(&expression))
+        {
+            std::vector<SemanticTypeRef> element_types;
+            for (const ExprPtr &element : set->elements)
+            {
+                const auto found = m_analysis.model.m_expression_types.find(element.get());
+                if (found != m_analysis.model.m_expression_types.end() &&
+                    std::none_of(element_types.begin(), element_types.end(),
+                                 [&](const SemanticTypeRef &existing) {
+                                     return same_type(existing, found->second);
+                                 }))
+                {
+                    element_types.push_back(found->second);
+                }
+            }
+            SemanticTypeRef element_type = m_analysis.model.types.bottom();
+            if (element_types.size() == 1)
+            {
+                element_type = element_types.front();
+            }
+            else if (element_types.size() > 1)
+            {
+                element_type = m_analysis.model.types.union_type(std::move(element_types));
+            }
+            return m_analysis.model.types.generic("Ensemble", {element_type});
         }
         if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expression))
         {
@@ -2203,7 +2860,7 @@ private:
             auto aggregate = [&](std::vector<SemanticTypeRef> types) {
                 if (types.empty())
                 {
-                    return *m_analysis.model.find_type("Universel");
+                    return m_analysis.model.types.bottom();
                 }
                 return types.size() == 1
                            ? types.front()
@@ -2543,6 +3200,104 @@ private:
         m_analysis.model.m_expression_types[&match] = result_type;
     }
 
+    /**
+     * @brief Checks that a name being assigned to is one that can be assigned.
+     *
+     * Narrower than resolving every name that is read: an assignment target is
+     * always a plain identifier, and it must name a declared, non-fixed
+     * variable. Reads are checked too now, in diagnose_value_read.
+     */
+    /**
+     * @brief Records a read/write occurrence for `name` in the semantic
+     * index, when -- and only when -- the index already has a Symbol for
+     * it.
+     *
+     * Not every name `find_local_value`/`find_value`/`find_type` resolves
+     * has a matching index entry yet: builtins, imports, and type aliases
+     * aren't indexed until a later rollout step (see
+     * docs/stage1-semantic-index-design.md). That's fine and expected --
+     * an occurrence with no resolvable symbol is simply not recorded, per
+     * the design's own recovery rules, rather than needing a sentinel.
+     */
+    void record_value_occurrence(const Token &name, const bool is_write)
+    {
+        const Symbol *resolved = m_analysis.model.index.lookup(
+            current_index_scope(), name.lexeme, SymbolNamespace::Value);
+        if (resolved == nullptr)
+        {
+            resolved = m_analysis.model.index.lookup(
+                current_index_scope(), name.lexeme, SymbolNamespace::Type);
+        }
+        if (resolved != nullptr)
+        {
+            m_analysis.model.index.record_occurrence(
+                span_of(name, m_index_source), resolved->id, is_write);
+        }
+    }
+
+    void diagnose_assignment_target(const IdentifierExpr &target)
+    {
+        if (const LocalBinding *binding = find_local_value(target.name.lexeme))
+        {
+            record_value_occurrence(target.name, /*is_write=*/true);
+            if (const auto *declaration =
+                    dynamic_cast<const VarDeclStmt *>(binding->declaration);
+                declaration != nullptr && declaration->is_fixe)
+            {
+                diagnose(target.name, "LUM-S0056",
+                         "'" + target.name.lexeme + "' est fixe et ne peut pas être réaffecté");
+            }
+            return;
+        }
+
+        if (const SemanticSymbol *symbol = m_analysis.model.find_value(target.name.lexeme))
+        {
+            record_value_occurrence(target.name, /*is_write=*/true);
+            if (const auto *declaration =
+                    dynamic_cast<const VarDeclStmt *>(symbol->declaration);
+                declaration != nullptr && declaration->is_fixe)
+            {
+                diagnose(target.name, "LUM-S0056",
+                         "'" + target.name.lexeme + "' est fixe et ne peut pas être réaffecté");
+            }
+            return;
+        }
+
+        diagnose(target.name, "LUM-S0055",
+                 "affectation à '" + target.name.lexeme + "', qui n'est déclaré nulle part");
+    }
+
+    /**
+     * @brief Checks that a name being read is one this buffer declares.
+     *
+     * A read resolves against locals and parameters first, then everything the
+     * module level knows: its own declarations, what it imported, the class,
+     * interface and type names, and the builtins. A name none of those hold is
+     * a name nothing can supply, and saying so here means both engines are
+     * told the same thing before either one starts -- the two used to fail at
+     * run time, with their carets one character apart.
+     *
+     * Only plain identifiers are checked. `ici` and `parent` are keywords with
+     * their own rules, and they arrive here wearing their own token types.
+     */
+    void diagnose_value_read(const IdentifierExpr &read)
+    {
+        const Token &name = read.name;
+        if (name.type != TokenType::IDENT)
+        {
+            return;
+        }
+        if (find_local_value(name.lexeme) != nullptr ||
+            m_analysis.model.find_value(name.lexeme) != nullptr ||
+            m_analysis.model.find_type(name.lexeme) != nullptr)
+        {
+            record_value_occurrence(name, /*is_write=*/false);
+            return;
+        }
+        diagnose(name, "LUM-S0057",
+                 "le symbole '" + name.lexeme + "' n'est déclaré nulle part");
+    }
+
     void resolve_expression(
         const Expr &expression,
         const bool consumes_result_binding = true)
@@ -2551,6 +3306,17 @@ private:
         {
             resolve_match(*match);
             return;
+        }
+        if (const auto *parent_use = dynamic_cast<const IdentifierExpr *>(&expression);
+            parent_use != nullptr && parent_use->name.type == TokenType::PARENT &&
+            m_method_depth == 0)
+        {
+            diagnose(parent_use->name, "LUM-S0054",
+                     "'parent' doit être placé dans une méthode");
+        }
+        if (const auto *read = dynamic_cast<const IdentifierExpr *>(&expression))
+        {
+            diagnose_value_read(*read);
         }
         if (const auto *identifier =
                 dynamic_cast<const IdentifierExpr *>(&expression);
@@ -2565,6 +3331,7 @@ private:
             if (const auto *identifier =
                     dynamic_cast<const IdentifierExpr *>(binary->left.get()))
             {
+                diagnose_assignment_target(*identifier);
                 if (LocalBinding *binding =
                         find_local_value_mutable(identifier->name.lexeme))
                 {
@@ -2643,6 +3410,13 @@ private:
                     binary->op,
                     "LUM-S0041",
                     "Résultat ne participe pas implicitement aux opérations logiques, numériques ou textuelles");
+            }
+        }
+        else if (const auto *set = dynamic_cast<const SetExpr *>(&expression))
+        {
+            for (const ExprPtr &element : set->elements)
+            {
+                resolve_expression(*element);
             }
         }
         else if (const auto *dictionary = dynamic_cast<const DictionaryExpr *>(&expression))
@@ -2764,7 +3538,29 @@ private:
                                      propagation->keyword);
             }
         }
-        m_analysis.model.m_expression_types[&expression] = inferred_type(expression);
+        const SemanticTypeRef type = inferred_type(expression);
+        m_analysis.model.m_expression_types[&expression] = type;
+        if (const auto *cast = dynamic_cast<const CastExpr *>(&expression))
+        {
+            reject_impossible_conversion(*cast, type);
+        }
+    }
+
+    // A cast's type is its target, resolved once above: resolving it again
+    // here would report an unknown type twice.
+    void reject_impossible_conversion(const CastExpr &cast, const SemanticTypeRef &target)
+    {
+        // Neither engine converts to anything else, so a cast to a class, an
+        // interface or a collection used to pass here and then fail every time
+        // it ran. An unknown type resolves to BOTTOM and has been reported.
+        if (target->kind() == SemanticTypeKind::BOTTOM ||
+            (target->kind() == SemanticTypeKind::BUILTIN && is_conversion_target(target->name())))
+        {
+            return;
+        }
+        diagnose(cast.target_type.source, "LUM-S0058",
+                 "aucune conversion explicite vers " + cast.target_type.to_string() +
+                     " : 'en' convertit vers Entier, Décimal, Logique, Symbole, Texte ou Universel");
     }
 
     void resolve_block(const BlockStmt &block, const bool creates_scope)
@@ -3052,8 +3848,19 @@ private:
             resolve_expression(*loop->iterable);
             const ObligationState baseline = obligation_state();
             m_loop_obligation_baselines.push_back(baseline);
+            ++m_loop_depth;
             push_scope();
-            declare_local(loop->variable, SemanticSymbolKind::VARIABLE);
+            declare_local(loop->variable, SemanticSymbolKind::LOOP_VARIABLE);
+            if (const auto iterable_type =
+                    m_analysis.model.m_expression_types.find(loop->iterable.get());
+                iterable_type != m_analysis.model.m_expression_types.end())
+            {
+                if (const SemanticTypeRef element = iteration_element_type(iterable_type->second);
+                    element != nullptr)
+                {
+                    set_local_type(loop->variable.lexeme, element);
+                }
+            }
             if (const auto *body = dynamic_cast<const BlockStmt *>(loop->body.get()))
             {
                 resolve_block(*body, false);
@@ -3063,6 +3870,7 @@ private:
                 resolve_statement(*loop->body);
             }
             pop_scope();
+            --m_loop_depth;
             m_loop_obligation_baselines.pop_back();
             const ObligationState body_state = obligation_state();
             merge_obligation_states(baseline, {baseline, body_state});
@@ -3075,7 +3883,9 @@ private:
                 condition_site(*loop->condition));
             const ObligationState baseline = obligation_state();
             m_loop_obligation_baselines.push_back(baseline);
+            ++m_loop_depth;
             resolve_statement(*loop->body);
+            --m_loop_depth;
             m_loop_obligation_baselines.pop_back();
             const ObligationState body_state = obligation_state();
             merge_obligation_states(baseline, {baseline, body_state});
@@ -3083,8 +3893,27 @@ private:
         else if (const auto *continuation =
                      dynamic_cast<const ContinueStmt *>(&statement))
         {
+            // Outside a loop these used to reach the runtime, where the tree
+            // walker threw a signal nothing caught: the process aborted with
+            // "terminate called after throwing an instance of
+            // 'lumiere::ContinueSignal'". A C++ exception name is not a
+            // diagnostic, and an abort is not a way to reject a program.
+            if (m_loop_depth == 0)
+            {
+                diagnose(continuation->keyword, "LUM-S0053",
+                         "'continuer' doit être placé dans une boucle");
+            }
             diagnose_new_loop_obligations(
                 continuation->keyword);
+        }
+        else if (const auto *interruption =
+                     dynamic_cast<const BreakStmt *>(&statement))
+        {
+            if (m_loop_depth == 0)
+            {
+                diagnose(interruption->keyword, "LUM-S0052",
+                         "'arrêter' doit être placé dans une boucle");
+            }
         }
         else if (const auto *return_statement = dynamic_cast<const ReturnStmt *>(&statement))
         {
@@ -3386,6 +4215,7 @@ private:
 
     void validate_entry_point(const StmtList &statements)
     {
+        bool found = false;
         for (const StmtPtr &statement : statements)
         {
             const auto *function =
@@ -3396,6 +4226,7 @@ private:
                 continue;
             }
 
+            found = true;
             const CallableSignature &signature =
                 ensure_signature(*function);
             if (!signature.parameter_types.empty())
@@ -3427,6 +4258,23 @@ private:
             }
             return;
         }
+
+        // Only when the file is about to be run. Both engines execute a file's
+        // top-level code, but only the VM used to insist on an entry point
+        // afterwards, so the same file ran under one engine and was refused by
+        // the other. Deciding it here means they are told the same thing at the
+        // same moment, before either of them starts.
+        if (found || !m_options.require_entry_point)
+        {
+            return;
+        }
+        m_analysis.diagnostics.push_back({
+            "LUM-S0051",
+            DiagnosticSeverity::ERROR_LEVEL,
+            "ce programme n'a pas de point d'entrée : ajoutez une fonction 'principal'",
+            m_source_path,
+            SourceRange{},
+        });
     }
 
     const CallableSignature &resolve_constructor(const ClassDeclStmt &klass)
@@ -3452,6 +4300,11 @@ private:
                     class_declaration(klass.parent.name))
             {
                 signature = resolve_constructor(*parent_decl);
+            }
+            else if (const CallableSignature *parent = find_named_signature(klass.parent.name))
+            {
+                // Imported classes expose their constructor contract, not their AST.
+                signature = *parent;
             }
         }
 
@@ -3506,15 +4359,34 @@ private:
     }
 
     std::string m_source_path;
+    SourceId m_index_source{0};
     SemanticAnalysis m_analysis;
     std::vector<std::unordered_map<std::string, LocalBinding>> m_scopes;
+    // Mirrors m_scopes one-for-one: m_index_scopes[i] is the permanent
+    // SemanticIndex::Scope record for the same lexical scope m_scopes[i] is
+    // the transient resolution bookkeeping for. See push_scope/pop_scope
+    // and current_index_scope() below.
+    std::vector<ScopeId> m_index_scopes;
+    // What SymbolId declare_local indexed a given declaration AST node
+    // under, so a later lookup that already has the AST node (a class
+    // member found by walking klass.members, e.g.) can find its Symbol in
+    // O(1) instead of re-deriving a scope id for it. Only ever grows;
+    // never keyed by nullptr since declare_local skips absent declarations.
+    std::unordered_map<const Stmt *, SymbolId> m_symbol_by_declaration;
     std::vector<std::unordered_map<std::string, SemanticTypeRef>> m_type_scopes;
     std::vector<std::unordered_map<std::string, CallableSignature>> m_signature_scopes;
     std::vector<CallableOwner> m_callable_stack;
+    // How many loops and how many methods enclose the statement being resolved.
+    // Both reset across a function boundary; see enter_callable_body.
+    std::size_t m_loop_depth = 0;
+    std::size_t m_method_depth = 0;
     std::vector<const ClassDeclStmt *> m_class_stack;
     std::unordered_set<const ClassDeclStmt *> m_constructor_stack;
     std::unordered_map<std::string, CallableSignature>
         m_builtin_member_signatures;
+    /** Keyed by receiver type and member, since the result type follows the receiver. */
+    std::map<std::pair<const SemanticType *, std::string>, CallableSignature>
+        m_collection_member_signatures;
     SemanticAnalysisOptions m_options;
     const Stmt *m_consumed_expression_statement = nullptr;
     std::unordered_map<std::size_t, ResultObligation> m_obligations;
@@ -3524,6 +4396,10 @@ private:
     std::unordered_map<std::string, const TypeAliasDeclStmt *> m_aliases;
     std::vector<std::string> m_alias_order;
     std::unordered_map<std::string, SemanticTypeRef> m_resolved_aliases;
+    /** The Type-namespace Symbol declared for each alias at collection
+     *  time, so resolve_alias can fill in its type once resolved (see
+     *  SemanticSymbolKind::TYPE_ALIAS). */
+    std::unordered_map<std::string, SymbolId> m_alias_symbols;
     std::vector<std::string> m_alias_stack;
     std::unordered_set<std::string> m_private_type_names;
     std::unordered_set<std::string> m_error_types;
@@ -3589,16 +4465,18 @@ bool SemanticAnalysis::has_errors() const noexcept
 SemanticAnalysis analyze_semantics(const StmtList &statements,
                                    std::string source_path,
                                    const SemanticImportEnvironment &imports,
-                                   const SemanticAnalysisOptions options)
+                                   const SemanticAnalysisOptions options,
+                                   const SemanticModel *previous)
 {
-    return SemanticAnalyzer(
-               std::move(source_path),
-               imports,
-               options)
-        .analyze(statements);
+    SemanticAnalyzer analyzer(std::move(source_path), imports, options);
+    if (previous != nullptr)
+    {
+        analyzer.seed_from(*previous);
+    }
+    return analyzer.analyze(statements);
 }
 
-SemanticModuleExports collect_semantic_exports(const StmtList &statements)
+SemanticModuleExports collect_semantic_exports(const StmtList &statements, const SemanticModel &model)
 {
     SemanticModuleExports exports;
     for (const StmtPtr &statement : statements)
@@ -3661,6 +4539,16 @@ SemanticModuleExports collect_semantic_exports(const StmtList &statements)
             {
                 exports.types.emplace(klass->name.lexeme, SemanticTypeKind::CLASS);
                 exports.values.emplace(klass->name.lexeme, SemanticSymbolKind::CLASS);
+                if (const CallableSignature *signature = model.constructor(*klass))
+                {
+                    SemanticModuleExports::Callable callable;
+                    callable.parameter_names = signature->parameter_names;
+                    callable.resolved_parameter_types = signature->parameter_types;
+                    callable.optional_parameters = signature->optional_parameters;
+                    callable.return_type = TypeExpr::named(klass->name);
+                    callable.has_explicit_return_type = true;
+                    exports.callables.emplace(klass->name.lexeme, std::move(callable));
+                }
                 if (std::any_of(
                         klass->interfaces.begin(), klass->interfaces.end(),
                         [](const TypeExpr &interface) {
@@ -3685,6 +4573,13 @@ SemanticModuleExports collect_semantic_exports(const StmtList &statements)
             if (alias->is_public)
             {
                 exports.aliases.emplace(alias->name.lexeme, alias->target);
+                if (const SemanticTypeRef *resolved =
+                        model.find_type(alias->name.lexeme))
+                {
+                    exports.resolved_aliases.emplace(
+                        alias->name.lexeme,
+                        *resolved);
+                }
             }
         }
     }

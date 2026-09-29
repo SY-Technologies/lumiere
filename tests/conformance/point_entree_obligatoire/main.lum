@@ -1,0 +1,6 @@
+// Un programme doit avoir un point d'entrée. Les deux moteurs exécutent le code
+// de plus haut niveau, mais seule la VM exigeait 'principal' ensuite : le même
+// fichier s'exécutait sous l'un et était refusé par l'autre. La règle est
+// tranchée avant qu'aucun moteur ne démarre, donc tous deux la rapportent au
+// même moment et avec les mêmes mots.
+afficher("code de plus haut niveau")

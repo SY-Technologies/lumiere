@@ -2,6 +2,26 @@
 
 A programming language interpreter (WIP).
 
+## Goals
+
+Lumière is written in French: its syntax, its standard library and every
+diagnostic it produces, down to the accents.
+
+It aims to be correct before it is fast. Semantics are specified rather than
+left to whichever engine ran the program, the tree-walker and the bytecode VM
+must agree on values, evaluation order and the exact wording of every error, and
+a change is not finished until both engines and the sanitizers pass.
+
+**Performance target: within the interpreter tier, and ahead of CPython on the
+benchmark suite.** An earlier version of this file aimed at Go. That target was
+withdrawn once it was measured: Go compiles ahead of time to native code, and no
+interpreter that dispatches one instruction at a time comes within two orders of
+magnitude of it. Reaching it would mean a native backend and a precise garbage
+collector, which is a different project. `scripts/compare-languages.py` measures
+the real gap against whatever compilers are installed, and
+[`RUNTIME_HARDENING.md`](./RUNTIME_HARDENING.md) records the measurements and the
+reasoning behind the revised target.
+
 ## Docs
 
 Project notes live in [`docs/`](./docs/README.md). They are short design documents about both Lumiere internals and the C++ techniques used to build them.
@@ -182,6 +202,13 @@ direnv allow .
 ```
 
 After that, `build`, `run`, and `tests` are available in your shell when inside the project directory.
+
+## Runtime development
+
+Runtime contracts, optimization mechanics, and the remaining engineering
+priorities are documented in [Runtime hardening](./RUNTIME_HARDENING.md).
+Reproducible performance checks live in `benchmarks/` and can be run with
+`python3 scripts/benchmark.py build_release/lumiere`.
 
 ## Releases
 

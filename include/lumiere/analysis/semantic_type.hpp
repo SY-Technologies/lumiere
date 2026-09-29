@@ -67,6 +67,18 @@ public:
     [[nodiscard]] SemanticTypeRef union_type(std::vector<SemanticTypeRef> alternatives);
     [[nodiscard]] SemanticTypeRef bottom();
 
+    /**
+     * @brief Takes on another interner's types, so refs from both compare equal.
+     *
+     * `same_type` compares by pointer, which is only meaningful among types one
+     * interner produced. Two interners that each interned "Entier" disagree
+     * about it. The shell analyzes one submission at a time and the next one
+     * has to mean the same thing by a type as the last, so its analysis starts
+     * from the previous interner's table -- the same shared objects, not copies
+     * of them.
+     */
+    void adopt(const TypeInterner &other);
+
 private:
     [[nodiscard]] SemanticTypeRef intern(SemanticTypeKind kind,
                                          std::string name,

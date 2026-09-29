@@ -1,0 +1,36 @@
+// A minimal windowed, interactive program -- stage 7/8's own example.
+// Run it on a real desktop (it needs a visible window): the orange disc
+// moves with the left/right arrow keys, and the window closes normally
+// when the operating system's close button is used. Every other
+// LumiDessin example in this file works headlessly; this is the one that
+// does not, on purpose, since it is what exercises the window backend.
+
+importer LumiDessin
+
+fonction principal()
+{
+    soit dessin = LumiDessin.fenêtre(800, 600, "LumiDessin -- démo fenêtrée")
+    dessin.régler_cadence(60)
+    soit x = 400.0
+    soit vitesse = 220.0
+
+    tant que (dessin.prochaine_image())
+    {
+        si dessin.touche_enfoncée("droite")
+        {
+            x = x + vitesse * dessin.écart_image()
+        }
+        si dessin.touche_enfoncée("gauche")
+        {
+            x = x - vitesse * dessin.écart_image()
+        }
+
+        dessin.effacer(LumiDessin.Couleurs.blanc)
+        dessin.remplir_cercle(x, 300.0, 30.0, LumiDessin.Couleurs.orange)
+        dessin.tracer_cercle(x, 300.0, 30.0, LumiDessin.Couleurs.noir, 2.0)
+        dessin.dessiner_texte(
+            "flèches gauche/droite pour bouger, fermez la fenêtre pour quitter",
+            20.0, 20.0, 16, LumiDessin.Couleurs.noir)
+        dessin.présenter()
+    }
+}

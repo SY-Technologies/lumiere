@@ -10,6 +10,7 @@ RUN apt-get update \
         g++ \
         git \
         ninja-build \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

@@ -1,5 +1,6 @@
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/interpreter/stdlib/helpers.hpp"
+#include "lumiere/interpreter/runtime/numeric.hpp"
 
 #include <cmath>
 #include <limits>
@@ -7,6 +8,50 @@
 
 namespace lumiere
 {
+
+namespace
+{
+Value rounded_integer(IRuntime &runtime, const RuntimeSite &site, double value)
+{
+    const auto integer = numeric::to_integer(value);
+    if (!integer)
+        runtime.raise_runtime_error(site, "Maths: valeur hors limites pour Entier");
+    return Value::entier(*integer);
+}
+
+// Exact int64 exponentiation by repeated squaring, or nullopt on overflow.
+// puissance's general path converts both operands to double and calls
+// std::pow, which loses precision for any Entier argument or result past
+// 2^53 -- both in the Entier->double coercion of the inputs and, separately,
+// in whatever rounding std::pow's own implementation does, which is not
+// required to be correctly rounded. When both operands started out as
+// Entier with a non-negative exponent, the true result is representable
+// exactly in int64 arithmetic up to int64's own range, so compute it that
+// way instead of going through double at all.
+std::optional<std::int64_t> integer_power(std::int64_t base, std::int64_t exponent)
+{
+    std::int64_t result = 1;
+    std::int64_t squared_base = base;
+    for (std::int64_t remaining_exponent = exponent; remaining_exponent > 0; remaining_exponent >>= 1)
+    {
+        if (remaining_exponent & 1)
+        {
+            const auto next_result = numeric::multiply(result, squared_base);
+            if (!next_result)
+                return std::nullopt;
+            result = *next_result;
+        }
+        if (remaining_exponent > 1)
+        {
+            const auto next_squared_base = numeric::multiply(squared_base, squared_base);
+            if (!next_squared_base)
+                return std::nullopt;
+            squared_base = *next_squared_base;
+        }
+    }
+    return result;
+}
+}
 
 void register_maths_module(Module &module)
 {
@@ -31,7 +76,7 @@ void register_maths_module(Module &module)
                 const int64_t val = args[0].value.as_entier();
                 if (val == std::numeric_limits<int64_t>::min())
                 {
-                    runtime.raise_runtime_error(call_site, "Maths.absolu: la valeur absolue de -2^63 depasse la limite d'un Entier");
+                    runtime.raise_runtime_error(call_site, "Maths.absolu: la valeur absolue de -2^63 dépasse la limite d'un Entier");
                 }
                 return Value::entier(std::llabs(val));
             }
@@ -81,9 +126,9 @@ void register_maths_module(Module &module)
             if (arrondir_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 arrondir_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.arrondir: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.arrondir: le résultat dépasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::llround(arrondir_val)));
+            return rounded_integer(runtime, call_site, std::round(arrondir_val));
         });
     stdlib_bind_public_value(module, "arrondir", Value::fonction(arrondir_function));
     stdlib_bind_public_value(module, "arrondi", Value::fonction(arrondir_function));
@@ -100,9 +145,9 @@ void register_maths_module(Module &module)
             if (plancher_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 plancher_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.plancher: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.plancher: le résultat dépasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::floor(plancher_val)));
+            return rounded_integer(runtime, call_site, std::floor(plancher_val));
         });
 
     stdlib_bind_public_function(
@@ -117,9 +162,9 @@ void register_maths_module(Module &module)
             if (plafond_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 plafond_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.plafond: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.plafond: le résultat dépasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::ceil(plafond_val)));
+            return rounded_integer(runtime, call_site, std::ceil(plafond_val));
         });
 
     stdlib_bind_public_function(
@@ -134,9 +179,9 @@ void register_maths_module(Module &module)
             if (tronquer_val < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
                 tronquer_val > static_cast<double>(std::numeric_limits<int64_t>::max()))
             {
-                runtime.raise_runtime_error(call_site, "Maths.tronquer: le resultat depasse la limite d'un Entier");
+                runtime.raise_runtime_error(call_site, "Maths.tronquer: le résultat dépasse la limite d'un Entier");
             }
-            return Value::entier(static_cast<int64_t>(std::trunc(tronquer_val)));
+            return rounded_integer(runtime, call_site, std::trunc(tronquer_val));
         });
 
     stdlib_bind_public_function(
@@ -150,7 +195,7 @@ void register_maths_module(Module &module)
             const double value = stdlib_expect_decimal(runtime, args[0].value, "Maths.racine", call_site);
             if (std::isnan(value) || value < 0.0)
             {
-                runtime.raise_runtime_error(call_site, "Maths.racine attend une valeur non negative");
+                runtime.raise_runtime_error(call_site, "Maths.racine attend une valeur non négative");
             }
             return Value::decimal(std::sqrt(value));
         });
@@ -173,11 +218,13 @@ void register_maths_module(Module &module)
             {
                 runtime.raise_runtime_error(call_site, "Maths.racine_n attend un degre non nul");
             }
-            if (value < 0.0 && std::fmod(std::fabs(degree), 2.0) == 0.0)
+            if (value < 0.0 && std::fmod(std::fabs(degree), 2.0) != 1.0)
             {
-                runtime.raise_runtime_error(call_site, "Maths.racine_n ne peut pas calculer une racine paire d'une valeur negative");
+                runtime.raise_runtime_error(call_site, "Maths.racine_n ne peut pas calculer une racine paire d'une valeur négative");
             }
-            return Value::decimal(std::pow(value, 1.0 / degree));
+            return Value::decimal(value < 0.0
+                                      ? -std::pow(-value, 1.0 / degree)
+                                      : std::pow(value, 1.0 / degree));
         });
 
     stdlib_bind_public_function(
@@ -190,6 +237,28 @@ void register_maths_module(Module &module)
             stdlib_expect_positional(runtime, args, 2, "Maths.puissance", call_site);
             const double base = stdlib_expect_decimal(runtime, args[0].value, "Maths.puissance", call_site);
             const double exponent = stdlib_expect_decimal(runtime, args[1].value, "Maths.puissance", call_site);
+            // A negative base raised to a non-integer real exponent has no
+            // real result (it is complex), unlike every other case here,
+            // which either has one or names infini/non_nombre honestly the
+            // way IEEE already does. Every domain-sensitive function in this
+            // file (racine, racine_n, log*, asin, acos) raises rather than
+            // hands back a silent non_nombre for the one input shape that
+            // is genuinely undefined; puissance did not.
+            if (base < 0.0 && std::isfinite(exponent) && std::trunc(exponent) != exponent)
+            {
+                runtime.raise_runtime_error(call_site,
+                    "Maths.puissance ne peut pas élever une valeur négative à une puissance non entière");
+            }
+            if (args[0].value.is_entier() && args[1].value.is_entier() && args[1].value.as_entier() >= 0)
+            {
+                if (const auto exact = integer_power(args[0].value.as_entier(), args[1].value.as_entier()))
+                {
+                    return Value::decimal(static_cast<double>(*exact));
+                }
+                // int64 overflow: fall through to the general path below,
+                // which reports it honestly as infini rather than erroring,
+                // matching this function's IEEE-honesty policy above.
+            }
             return Value::decimal(std::pow(base, exponent));
         });
 

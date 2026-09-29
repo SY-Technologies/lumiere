@@ -1,0 +1,16 @@
+// Maths.racine, racine_n, log*, asin et acos signalent tous une erreur
+// plutôt que de renvoyer silencieusement non_nombre pour la seule entrée
+// que leur domaine ne couvre pas ; puissance ne le faisait pas (voir
+// InterpreterBuiltinModules.RejectsANegativeBaseToANonIntegerPower dans
+// tests/test_interpreter_fixtures.cpp pour la confirmation qu'elle le fait
+// maintenant).
+importer Maths
+
+fonction principal() {
+    // Exposant entier : le résultat existe, signe compris.
+    afficher(Maths.puissance(-2.0, 3.0))
+
+    // 0 élevé à une puissance négative reste infini, comme une division par
+    // zéro sur un Décimal : ce n'est pas le cas que ce correctif couvre.
+    afficher(Maths.puissance(0.0, -1.0))
+}

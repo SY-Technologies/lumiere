@@ -1,0 +1,8 @@
+// Une instruction de contrôle désigne son mot-clé, y compris quand elle sert
+// d'expression : c'est 'agir selon' qui a produit la valeur non itérable.
+fonction principal() {
+    soit n = 1
+    pour chaque x dans agir selon n { 1 -> 1  sinon -> 2 } {
+        afficher(x)
+    }
+}

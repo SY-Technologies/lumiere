@@ -72,7 +72,7 @@ void write_index_ref(Chunk &chunk,
     {
         if (value > 0xFFFFFF)
         {
-            throw std::out_of_range("bytecode : index depasse les 24 bits");
+            throw std::out_of_range("bytecode : index dépasse les 24 bits");
         }
         write_byte(static_cast<std::uint8_t>((value >> 16) & 0xFF), location);
         write_byte(static_cast<std::uint8_t>((value >> 8) & 0xFF), location);

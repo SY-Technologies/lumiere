@@ -55,6 +55,7 @@ namespace lumiere
     Value stdlib_success(Value payload);
     Value stdlib_failure(Value error, const RuntimeSite &origin);
 
+    void stdlib_bind_public_type(Module &module, const std::string &name);
     void stdlib_bind_public_value(Module &module, const std::string &name, const Value &value);
     void stdlib_bind_public_function(Module &module,
                                      const NativeFunctionFactory &make_native_function,

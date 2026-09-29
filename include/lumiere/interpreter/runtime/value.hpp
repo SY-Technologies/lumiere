@@ -1,7 +1,11 @@
 #pragma once
 
 #include "lumiere/interpreter/runtime/native_args.hpp"
+#include "lumiere/interpreter/runtime/ref.hpp"
 #include "lumiere/parser/type_expr.hpp"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -22,6 +26,8 @@ struct LumiereInterface;
 struct RuntimeFunctionBody;
 struct RuntimeClassBody;
 struct RuntimeInterfaceBody;
+
+
 struct RuntimeModuleState;
 class Environment;
 struct TraceFrame;
@@ -31,13 +37,153 @@ struct FunctionDeclStmt;
 struct ClassDeclStmt;
 struct InterfaceDeclStmt;
 
-// type aliases for collection types
-struct ListeData      { std::vector<Value> elements; };
-struct ListeFixeData  { std::vector<Value> elements; };
-struct EnsembleData   { std::vector<Value> elements; };
+// Constraints belong to the allocation, never to a runtime's address registry.
+struct ListConstraint { std::string element_type; };
+struct FixedListConstraint { std::string element_type; std::size_t length = 0; };
+struct DictConstraint { std::string key_type; std::string value_type; };
+struct SetConstraint { std::string element_type; };
+
+struct ListeData : RefCounted
+{
+    std::vector<Value> elements;
+    std::optional<ListConstraint> constraint;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+};
+struct ListeFixeData : RefCounted
+{
+    std::vector<Value> elements;
+    std::optional<FixedListConstraint> constraint;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+};
+/**
+ * @brief Unordered-by-contract collection holding each element once.
+ *
+ * Elements keep insertion order so iteration is reproducible, and membership
+ * uses the same index and the same key rule as a dictionary: an element must
+ * stay equal to itself while it is stored.
+ */
+struct EnsembleData : RefCounted
+{
+    std::optional<SetConstraint> constraint;
+
+    /** @brief The elements, in insertion order. */
+    [[nodiscard]] const std::vector<Value> &items() const;
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] bool empty() const;
+    void reserve(std::size_t count);
+
+    [[nodiscard]] bool contains(const Value &element) const;
+    /** @brief Adds @p element. Returns true when it was not already present. */
+    bool insert(Value element);
+    /** @brief Removes @p element. Returns false when it was absent. */
+    bool erase(const Value &element);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
+
+private:
+    std::vector<Value> m_elements;
+    /** Positions into m_elements, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
+};
 using DictEntry = std::pair<Value, Value>;
-struct DictData       { std::vector<DictEntry> entries; };
+
+/**
+ * @brief Association table holding at most one entry per key.
+ *
+ * Entries keep insertion order, and reassigning an existing key keeps that
+ * key's original position. Lookup consults an open-addressed index over
+ * value_hash once the table grows past a handful of entries; below that it
+ * scans, which spares small dictionaries an allocation they would not profit
+ * from. The entry vector is private because the index stores positions into
+ * it, and any removal shifts them.
+ */
+struct DictData : RefCounted
+{
+    std::optional<DictConstraint> constraint;
+
+    /** @brief The entries, in insertion order. */
+    [[nodiscard]] const std::vector<DictEntry> &items() const;
+    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] bool empty() const;
+    void reserve(std::size_t count);
+
+    /** @brief Entry whose key equals @p key, or nullptr. */
+    [[nodiscard]] const DictEntry *find(const Value &key) const;
+
+    /** @brief Inserts or overwrites @p key. Returns true when a new key was added. */
+    bool set(Value key, Value value);
+
+    /** @brief Removes @p key, writing its value to @p removed. Returns false if absent. */
+    bool erase(const Value &key, Value &removed);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
+
+private:
+    std::vector<DictEntry> m_entries;
+    /** Positions into m_entries, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
+
+    DictEntry *find_mutable(const Value &key);
+    void rebuild_index();
+    /** @brief Slot holding @p key, or the empty slot where it belongs. */
+    [[nodiscard]] std::size_t probe(const Value &key, std::size_t hash) const;
+};
+
+/**
+ * @brief Explains, in French, why @p key cannot be a dictionary key.
+ *
+ * A key must stay equal to itself for as long as it is stored. Every value
+ * qualifies except a non-number, which is not equal to itself, so storing one
+ * would create an entry that can never be found again. Text parsing reaches
+ * that value: "nan".en_decimal() succeeds. Returns std::nullopt when the key
+ * is admissible.
+ */
+std::optional<std::string> dictionary_key_rejection(const Value &key);
+
+/**
+ * @brief Hash consistent with Value::operator==.
+ *
+ * Equal values must hash equally. Change this function and that operator
+ * together, or dictionary lookup starts missing entries that are present.
+ */
+std::size_t value_hash(const Value &value);
 struct ResultData;
+
+/**
+ * @brief Shared text storage.
+ *
+ * Text used to sit inside the value as a std::string, which made a Value 48
+ * bytes and copying one an allocation and a memcpy of the whole buffer. Sharing
+ * the buffer makes a copy a reference count. Lumière text is immutable, which
+ * is enforced by `as_texte` handing out a const reference rather than by the
+ * pointee's type: the buffer is stored without const so it can share the one
+ * type-erased handle every heap value uses.
+ */
+
+
+struct CellData;
+using CellRef = Ref<CellData>;
+
+struct TexteData : RefCounted
+{
+    std::string text;
+
+    explicit TexteData(std::string value) : text(std::move(value)) { mark_acyclic(); }
+
+    // Text holds no references, so it can never take part in a cycle.
+    void trace_references(RefVisitor &) const override {}
+    void clear_references() override {}
+};
+
+using TexteRef = Ref<TexteData>;
 
 struct Value
 {
@@ -61,26 +207,7 @@ struct Value
         RIEN          = 14,
     };
 
-    using Data = std::variant<
-        int64_t,                            // ENTIER
-        double,                             // DECIMAL
-        bool,                               // LOGIQUE
-        char32_t,                           // SYMBOLE
-        std::string,                        // TEXTE
-        std::shared_ptr<ListeData>,          // LISTE
-        std::shared_ptr<ListeFixeData>,      // LISTE_FIXE
-        std::shared_ptr<DictData>,           // DICTIONNAIRE
-        std::shared_ptr<EnsembleData>,       // ENSEMBLE
-        std::shared_ptr<LumiereObject>,     // OBJET
-        std::shared_ptr<LumiereFunction>,   // FONCTION
-        std::shared_ptr<LumiereClass>,      // CLASSE
-        std::shared_ptr<LumiereInterface>,  // INTERFACE
-        std::shared_ptr<const ResultData>   // RESULTAT
-    >;
-    static_assert(std::variant_size_v<Data> == 14,"Data variant and Type enum are out of sync — check indices");
-
     Type type = Type::RIEN;
-    Data data;
 
     //factories
 
@@ -95,7 +222,7 @@ struct Value
     {
         Value v;
         v.type = Type::ENTIER;
-        v.data = n;
+        v.m_payload.entier = n;
         return v;
     }
 
@@ -103,7 +230,7 @@ struct Value
     {
         Value v;
         v.type = Type::DECIMAL;
-        v.data = d;
+        v.m_payload.decimal = d;
         return v;
     }
 
@@ -111,7 +238,7 @@ struct Value
     {
         Value v;
         v.type = Type::LOGIQUE;
-        v.data = b;
+        v.m_payload.logique = b;
         return v;
     }
 
@@ -119,7 +246,7 @@ struct Value
     {
         Value v;
         v.type = Type::SYMBOLE;
-        v.data = chtr;
+        v.m_payload.symbole = chtr;
         return v;
     }
 
@@ -127,73 +254,58 @@ struct Value
     {
         Value v;
         v.type = Type::TEXTE;
-        v.data = std::move(str);
+        v.m_ref = make_ref<TexteData>(std::move(str));
         return v;
     }
 
-    static Value liste(std::shared_ptr<ListeData> lst)
+    /** @brief Shares an existing text buffer instead of copying it. */
+    static Value texte(TexteRef str)
+    {
+        Value v;
+        v.type = Type::TEXTE;
+        v.m_ref = std::move(str);
+        return v;
+    }
+
+    static Value liste(Ref<ListeData> lst)
     {
         Value v;
         v.type = Type::LISTE;
-        v.data = std::move(lst);
+        v.m_ref = std::move(lst);
         return v;
     }
 
-    static Value dictionnaire(std::shared_ptr<DictData> data)
+    static Value dictionnaire(Ref<DictData> data)
     {
         Value v;
         v.type = Type::DICTIONNAIRE;
-        v.data = std::move(data);
+        v.m_ref = std::move(data);
         return v;
     }
 
-    static Value liste_fixe(std::shared_ptr<ListeFixeData> lst)
+    static Value liste_fixe(Ref<ListeFixeData> lst)
     {
         Value v;
         v.type = Type::LISTE_FIXE;
-        v.data = std::move(lst);
+        v.m_ref = std::move(lst);
         return v;
     }
 
-    static Value ensemble(std::shared_ptr<EnsembleData> ens)
+    static Value ensemble(Ref<EnsembleData> ens)
     {
         Value v;
         v.type = Type::ENSEMBLE;
-        v.data = std::move(ens);
+        v.m_ref = std::move(ens);
         return v;
     }
 
-    static Value objet(std::shared_ptr<LumiereObject> obj)
-    {
-        Value v;
-        v.type = Type::OBJET;
-        v.data = std::move(obj);
-        return v;
-    }
+    static Value objet(Ref<LumiereObject> obj);
 
-    static Value fonction(std::shared_ptr<LumiereFunction> fn)
-    {
-        Value v;
-        v.type = Type::FONCTION;
-        v.data = std::move(fn);
-        return v;
-    }
+    static Value fonction(Ref<LumiereFunction> fn);
 
-    static Value classe(std::shared_ptr<LumiereClass> cls)
-    {
-        Value v;
-        v.type = Type::CLASSE;
-        v.data = std::move(cls);
-        return v;
-    }
+    static Value classe(Ref<LumiereClass> cls);
 
-    static Value interface(std::shared_ptr<LumiereInterface> iface)
-    {
-        Value v;
-        v.type = Type::INTERFACE;
-        v.data = std::move(iface);
-        return v;
-    }
+    static Value interface(Ref<LumiereInterface> iface);
 
     static Value resultat(
         bool success,
@@ -207,60 +319,85 @@ struct Value
 
     //accessors
 
-    int64_t     as_entier()  const { return std::get<int64_t>(data); }
-    double      as_decimal() const { return std::get<double>(data); }
-    bool        as_logique() const { return std::get<bool>(data); }
-    char32_t    as_symbole() const { return std::get<char32_t>(data); }
+    int64_t     as_entier()  const { assert(is_entier());   return m_payload.entier; }
+    double      as_decimal() const { assert(is_decimal());  return m_payload.decimal; }
+    bool        as_logique() const { assert(is_logique());  return m_payload.logique; }
+    char32_t    as_symbole() const { assert(is_symbole());  return m_payload.symbole; }
 
     const std::string &as_texte() const
     {
-        return std::get<std::string>(data);
+        assert(is_texte());
+        return static_cast<const TexteData *>(m_ref.get())->text;
     }
 
-    std::shared_ptr<ListeData> as_liste() const
+    /** @brief The shared buffer, for handing text on without copying it. */
+    TexteRef as_texte_ref() const
     {
-        return std::get<std::shared_ptr<ListeData>>(data);
+        assert(is_texte());
+        return TexteRef(static_cast<TexteData *>(m_ref.get()));
     }
 
-    std::shared_ptr<DictData> as_dictionnaire() const
+    Ref<ListeData> as_liste() const
     {
-        return std::get<std::shared_ptr<DictData>>(data);
+        assert(is_liste());
+        return Ref<ListeData>(static_cast<ListeData *>(m_ref.get()));
     }
 
-    std::shared_ptr<ListeFixeData> as_liste_fixe() const
+    Ref<DictData> as_dictionnaire() const
     {
-        return std::get<std::shared_ptr<ListeFixeData>>(data);
+        assert(is_dictionnaire());
+        return Ref<DictData>(static_cast<DictData *>(m_ref.get()));
     }
 
-    std::shared_ptr<EnsembleData> as_ensemble() const
+    Ref<ListeFixeData> as_liste_fixe() const
     {
-        return std::get<std::shared_ptr<EnsembleData>>(data);
+        assert(is_liste_fixe());
+        return Ref<ListeFixeData>(static_cast<ListeFixeData *>(m_ref.get()));
     }
 
-    std::shared_ptr<LumiereObject> as_objet() const
+    Ref<EnsembleData> as_ensemble() const
     {
-        return std::get<std::shared_ptr<LumiereObject>>(data);
+        assert(is_ensemble());
+        return Ref<EnsembleData>(static_cast<EnsembleData *>(m_ref.get()));
     }
 
-    std::shared_ptr<LumiereFunction> as_fonction() const
-    {
-        return std::get<std::shared_ptr<LumiereFunction>>(data);
-    }
+    Ref<LumiereObject> as_objet() const;
 
-    std::shared_ptr<LumiereClass> as_classe() const
-    {
-        return std::get<std::shared_ptr<LumiereClass>>(data);
-    }
+    Ref<LumiereFunction> as_fonction() const;
 
-    std::shared_ptr<LumiereInterface> as_interface() const
-    {
-        return std::get<std::shared_ptr<LumiereInterface>>(data);
-    }
+    Ref<LumiereClass> as_classe() const;
 
-    std::shared_ptr<const ResultData> as_resultat() const
-    {
-        return std::get<std::shared_ptr<const ResultData>>(data);
-    }
+    Ref<LumiereInterface> as_interface() const;
+
+    Ref<const ResultData> as_resultat() const;
+
+    /**
+     * @brief The same objects, without taking a reference on them.
+     *
+     * `as_objet()` builds a Ref: an increment now, and later a decrement plus a
+     * cycle-candidate check the collector has to do because a surviving
+     * decrement is how an object becomes a cycle root. Reading a field or
+     * asking a class a question needs none of that -- this Value owns the
+     * object for the whole expression.
+     *
+     * The interpreter does this often enough to matter: dispatching one method
+     * call asked its receiver for the object five times and the class chain
+     * several more, and the reference traffic that produced was a quarter of
+     * the time on a method-call loop.
+     *
+     * The pointer is valid only while this Value holds the object. Anything
+     * that has to outlive the Value takes a Ref.
+     */
+    LumiereObject *as_objet_ptr() const;
+    LumiereFunction *as_fonction_ptr() const;
+    LumiereClass *as_classe_ptr() const;
+    const ResultData *as_resultat_ptr() const;
+
+    /** @brief Address of the shared object, for identity comparison and hashing. */
+    const void *ref_identity() const { return m_ref.get(); }
+
+    /** @brief The counted object this value holds, or nullptr for a scalar. */
+    RefCounted *ref() const noexcept { return m_ref.get(); }
 
     //type checks
 
@@ -290,6 +427,133 @@ struct Value
 
     std::string to_string() const;
     std::string type_name() const;
+
+private:
+    /**
+     * Scalars live in the payload, and every heap type shares one type-erased
+     * handle. Copying a Value is therefore a tag, eight bytes and at most one
+     * reference count, never a switch over fourteen alternatives — which is
+     * what a std::variant generates, and what an integer pushed on the stack
+     * used to pay for even though it owns nothing.
+     *
+     * `type` says which member is live. Reading any other one is undefined, so
+     * every accessor asserts its tag; the assertions are active in the Debug
+     * and sanitizer builds that run the suite, and compile away in Release.
+     */
+    union Payload
+    {
+        std::int64_t entier;
+        double decimal;
+        bool logique;
+        char32_t symbole;
+    };
+
+    Payload m_payload {};
+    Ref<RefCounted> m_ref;
+};
+
+// These definitions require Value to be complete. Keeping them below Value is
+// required by libc++, which instantiates vector's pointer arithmetic here.
+inline const std::vector<Value> &EnsembleData::items() const { return m_elements; }
+inline std::size_t EnsembleData::size() const { return m_elements.size(); }
+inline bool EnsembleData::empty() const { return m_elements.empty(); }
+inline void EnsembleData::reserve(const std::size_t count) { m_elements.reserve(count); }
+
+inline const std::vector<DictEntry> &DictData::items() const { return m_entries; }
+inline std::size_t DictData::size() const { return m_entries.size(); }
+inline bool DictData::empty() const { return m_entries.empty(); }
+inline void DictData::reserve(const std::size_t count) { m_entries.reserve(count); }
+
+/**
+ * @brief Small insertion-ordered table used for object fields.
+ *
+ * Language objects normally have only a few fields. A contiguous scan avoids
+ * a hash allocation and keeps iteration deterministic. An open-addressed
+ * position index appears only when the table reaches eight fields, so wide
+ * objects do not turn the common representation back into a hash table.
+ *
+ * **One guarantee is weaker than the std::unordered_map this replaced.** That
+ * map kept references and pointers to its elements valid across an insertion;
+ * entries live in a vector here, so adding a field can move every one of them.
+ * A `Value &` or an iterator taken from this table is good only until the next
+ * insertion. No caller holds one across a mutation today -- all eight read the
+ * entry they found and are done with it -- and a caller that needs to must copy
+ * the name and look it up again.
+ */
+class FieldTable
+{
+public:
+    using value_type = std::pair<std::string, Value>;
+    using container_type = std::vector<value_type>;
+    using iterator = container_type::iterator;
+    using const_iterator = container_type::const_iterator;
+
+    Value &operator[](const std::string &name);
+
+    iterator find(const std::string &name)
+    {
+        if (m_index.empty())
+        {
+            for (auto entry = begin(); entry != end(); ++entry)
+            {
+                if (entry->first == name)
+                {
+                    return entry;
+                }
+            }
+            return end();
+        }
+
+        return find_indexed(name);
+    }
+
+    const_iterator find(const std::string &name) const
+    {
+        if (m_index.empty())
+        {
+            for (auto entry = begin(); entry != end(); ++entry)
+            {
+                if (entry->first == name)
+                {
+                    return entry;
+                }
+            }
+            return end();
+        }
+
+        return find_indexed(name);
+    }
+
+    iterator begin() noexcept { return m_entries.begin(); }
+    const_iterator begin() const noexcept { return m_entries.begin(); }
+    iterator end() noexcept { return m_entries.end(); }
+    const_iterator end() const noexcept { return m_entries.end(); }
+
+    Value &at(const std::string &name);
+    const Value &at(const std::string &name) const;
+
+    [[nodiscard]] std::size_t size() const noexcept { return m_entries.size(); }
+    [[nodiscard]] bool empty() const noexcept { return m_entries.empty(); }
+    void clear() noexcept;
+
+    [[nodiscard]] std::size_t count(const std::string &name) const;
+    [[nodiscard]] bool contains(const std::string &name) const;
+
+    std::pair<iterator, bool> emplace(std::string name, Value value);
+    std::pair<iterator, bool> insert(value_type entry);
+    std::pair<iterator, bool> insert_or_assign(std::string name, Value value);
+    std::size_t erase(const std::string &name);
+
+private:
+    container_type m_entries;
+    /** Positions into m_entries, offset by one so that zero reads as empty. */
+    std::vector<std::size_t> m_index;
+
+    [[nodiscard]] static std::size_t hash_name(const std::string &name);
+    [[nodiscard]] std::size_t probe(const std::string &name, std::size_t hash) const;
+    iterator find_indexed(const std::string &name);
+    const_iterator find_indexed(const std::string &name) const;
+    void rebuild_index();
 };
 
 struct TraceFrame
@@ -300,23 +564,55 @@ struct TraceFrame
     uint32_t column = 0;
 };
 
-struct ResultData
+struct ResultData : RefCounted
 {
     bool success;
     Value payload;
     std::optional<RuntimeSite> origin;
     std::vector<TraceFrame> trace;
+
+    // Carrying a reference count makes this no longer an aggregate.
+    ResultData(const bool success,
+               Value payload,
+               std::optional<RuntimeSite> origin,
+               std::vector<TraceFrame> trace)
+        : success(success), payload(std::move(payload)), origin(std::move(origin)), trace(std::move(trace))
+    {
+    }
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
 //  LumiereFunction
 //  A callable, either a user-defined function (eg obj.do_something())
 //  or a bound method carrying its receiver (eg ici.do_something())
-struct RuntimeFunctionBody
+/**
+ * @brief Which engine made a runtime body.
+ *
+ * A body is reached through a base pointer and the engine that made it has to
+ * get back to its own type. dynamic_cast does that by walking the type
+ * hierarchy, which on the VM's dispatch path happened four times per method
+ * call and was measurable. Each engine defines exactly one body of each kind,
+ * so this tag identifies the concrete type, and the cast becomes a comparison.
+ *
+ * The accessors that use it assert the dynamic_cast agrees, in the Debug and
+ * sanitizer builds that run the whole suite.
+ */
+enum class BodyOrigin : std::uint8_t
 {
-    virtual ~RuntimeFunctionBody() = default;
+    TreeWalker,
+    Vm,
 };
 
-struct LumiereFunction
+struct RuntimeFunctionBody : RefCounted
+{
+    BodyOrigin origin = BodyOrigin::TreeWalker;
+    ~RuntimeFunctionBody() override = default;
+};
+
+struct LumiereFunction : RefCounted
 {
     // Generic runtime callback signature for native callables.
     // This is the backend-facing signature used by `LumiereFunction` itself:
@@ -325,9 +621,16 @@ struct LumiereFunction
     using NativeHandler = std::function<Value(IRuntime &, const NativeArgs &)>;
 
     std::string                     name;
-    std::shared_ptr<RuntimeFunctionBody> body;
+    Ref<RuntimeFunctionBody> body;
     Value                           receiver;
     NativeHandler                   native_handler;
+    // A native handler is an opaque std::function: nothing can enumerate what
+    // it captured, so a counted object captured inside it is a reference the
+    // collector can neither see nor break, and any cycle through it survives
+    // forever. The contract is therefore that a handler captures such an object
+    // as a raw pointer and the owning reference is declared here, where tracing
+    // reaches it.
+    std::vector<Ref<RefCounted>>    native_captures;
     std::size_t                     min_arity = 0;
     std::size_t                     max_arity = 0;
 
@@ -344,53 +647,199 @@ struct LumiereFunction
     // - `fonction principal() { ... }`
     // - `soit doubler = fonction(x: Entier) -> Entier { retourne x * 2 }`
     bool is_native() const { return static_cast<bool>(native_handler); }
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
-struct RuntimeClassBody
+struct RuntimeClassBody : RefCounted
 {
-    virtual ~RuntimeClassBody() = default;
+    BodyOrigin origin = BodyOrigin::TreeWalker;
+    ~RuntimeClassBody() override = default;
 };
 
-struct RuntimeInterfaceBody
+struct RuntimeInterfaceBody : RefCounted
 {
-    virtual ~RuntimeInterfaceBody() = default;
+    BodyOrigin origin = BodyOrigin::TreeWalker;
+    ~RuntimeInterfaceBody() override = default;
 };
 
-struct LumiereClass
-{
-    std::string name;
-    std::shared_ptr<RuntimeClassBody> body;
-    std::shared_ptr<LumiereClass> parent;
-    std::unordered_map<std::string, std::shared_ptr<LumiereInterface>> interfaces;
-};
-
-struct LumiereInterface
+struct LumiereClass : RefCounted
 {
     std::string name;
-    std::shared_ptr<RuntimeInterfaceBody> body;
+    std::string type_identity;
+    Ref<RuntimeClassBody> body;
+    Ref<LumiereClass> parent;
+    std::unordered_map<std::string, Ref<LumiereInterface>> interfaces;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
+};
+
+struct LumiereInterface : RefCounted
+{
+    std::string name;
+    std::string type_identity;
+    Ref<RuntimeInterfaceBody> body;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
+};
+
+//  NativeState
+//  Base for the C++ state a standard-library object hangs off an instance: a
+//  socket, a parser, a server's route table. It derives from RefCounted and
+//  leaves trace_references/clear_references pure on purpose. A state that keeps
+//  Lumiere Values -- a server holding the handlers it will call -- closes a
+//  reference cycle through them, and the collector can only break that cycle if
+//  the state reports those Values. Making every state author answer, even when
+//  the answer is "I hold none", is what stops a new state leaking in silence.
+struct NativeState : RefCounted
+{
 };
 
 //  LumiereObject
 //  A class instance at runtime.
-struct LumiereObject
+struct LumiereObject : RefCounted
 {
-    std::shared_ptr<LumiereClass>           klass;
-    std::shared_ptr<void>                   native_state;
-    std::unordered_map<std::string, Value> fields;
+    Ref<LumiereClass>           klass;
+    Ref<NativeState>            native_state;
+    FieldTable                  fields;
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+
 };
 
-struct RuntimeModuleState
+struct RuntimeModuleState : RefCounted
 {
-    virtual ~RuntimeModuleState() = default;
+    ~RuntimeModuleState() override = default;
 };
 
 struct Module {
     std::string name;
-    std::shared_ptr<RuntimeModuleState> state;
+    Ref<RuntimeModuleState> state;
     std::unordered_map<std::string, Value> members;
     std::unordered_set<std::string> public_members;
     std::unordered_map<std::string, TypeExpr> type_aliases;
     std::unordered_set<std::string> public_type_aliases;
+    std::unordered_map<std::string, Value> public_type_values;
 };
+
+// Defined here rather than in the class body: downcasting the shared handle
+// needs these types complete, and they are declared below Value.
+inline Value Value::objet(Ref<LumiereObject> obj)
+{
+    Value v;
+    v.type = Type::OBJET;
+    v.m_ref = std::move(obj);
+    return v;
+}
+
+inline Value Value::fonction(Ref<LumiereFunction> fn)
+{
+    Value v;
+    v.type = Type::FONCTION;
+    v.m_ref = std::move(fn);
+    return v;
+}
+
+inline Value Value::classe(Ref<LumiereClass> cls)
+{
+    Value v;
+    v.type = Type::CLASSE;
+    v.m_ref = std::move(cls);
+    return v;
+}
+
+inline Value Value::interface(Ref<LumiereInterface> iface)
+{
+    Value v;
+    v.type = Type::INTERFACE;
+    v.m_ref = std::move(iface);
+    return v;
+}
+
+inline Ref<LumiereObject> Value::as_objet() const
+{
+    assert(is_objet());
+    return Ref<LumiereObject>(static_cast<LumiereObject *>(m_ref.get()));
+}
+
+inline Ref<LumiereFunction> Value::as_fonction() const
+{
+    assert(is_fonction());
+    return Ref<LumiereFunction>(static_cast<LumiereFunction *>(m_ref.get()));
+}
+
+inline Ref<LumiereClass> Value::as_classe() const
+{
+    assert(is_classe());
+    return Ref<LumiereClass>(static_cast<LumiereClass *>(m_ref.get()));
+}
+
+inline Ref<LumiereInterface> Value::as_interface() const
+{
+    assert(is_interface());
+    return Ref<LumiereInterface>(static_cast<LumiereInterface *>(m_ref.get()));
+}
+
+inline Ref<const ResultData> Value::as_resultat() const
+{
+    assert(is_resultat());
+    return Ref<const ResultData>(static_cast<const ResultData *>(m_ref.get()));
+}
+
+inline LumiereObject *Value::as_objet_ptr() const
+{
+    assert(is_objet());
+    return static_cast<LumiereObject *>(m_ref.get());
+}
+
+inline LumiereFunction *Value::as_fonction_ptr() const
+{
+    assert(is_fonction());
+    return static_cast<LumiereFunction *>(m_ref.get());
+}
+
+inline LumiereClass *Value::as_classe_ptr() const
+{
+    assert(is_classe());
+    return static_cast<LumiereClass *>(m_ref.get());
+}
+
+inline const ResultData *Value::as_resultat_ptr() const
+{
+    assert(is_resultat());
+    return static_cast<const ResultData *>(m_ref.get());
+}
+
+/**
+ * @brief A captured local, shared between a closure and the frame that made it.
+ *
+ * Counted like any other heap value so that a closure capturing itself is a
+ * cycle the collector can see rather than one it must step around.
+ */
+struct CellData : RefCounted
+{
+    Value value;
+
+    CellData() = default;
+    explicit CellData(Value initial);
+
+    void trace_references(RefVisitor &visitor) const override;
+    void clear_references() override;
+};
+
+/**
+ * @brief Reports the heap object a Value holds, if it holds one.
+ *
+ * Every trace_references that stores Values goes through here, so a Value's
+ * representation stays the one thing that knows which tags carry a reference.
+ */
+void trace_value(const Value &value, RefVisitor &visitor);
 
 } // namespace lumiere

@@ -1,0 +1,701 @@
+# Next tasks — implementation briefs
+
+Pieces of work specified so they can be implemented one at a time and reviewed
+one at a time. Tasks 1 to 5 are done and stay here as the record of what each
+brief asked for. Tasks 6 to 8 come from the first programs written to be
+ordinary rather than to probe one operation (`benchmarks/journal.lum`,
+`expressions.lum`, `commandes.lum`): 6 is the performance lever they measured,
+7 is the type gap a user meets first and needs a decision before it needs code,
+and 8 is four small things a program should not be able to reach. They are
+independent; 6 touches the runtime, 7 the analyzer.
+
+`IMPROVEMENT_TASKS.md` says what the project is trying to do and why.
+`RUNTIME_HARDENING.md` is the log of what was measured and what it cost. This
+file is the brief for the work that is next; each task here should end with an
+entry there.
+
+---
+
+## How to work in this repository
+
+### Builds
+
+Two are needed for every task:
+
+- **Release** (`RelWithDebInfo`) — the only build any timing comes from.
+- **Sanitizer** (`Debug` with AddressSanitizer and UndefinedBehaviorSanitizer) —
+  where `assert` is live and where the suite has teeth. Every task must pass the
+  whole suite in both.
+
+### Tests
+
+```sh
+ctest -E "ExecutesRepository" -j8          # 449 tests; ExecutesRepository needs the repo layout
+scripts/conformance build/lumiere          # 21 cases, each run under --tw and --vm
+scripts/check-leaks                        # both engines, cycles included
+scripts/fuzz build/lumiere --iterations 60 # mutated corpus through both engines
+```
+
+`VmVerifier.AcceptedBytecodeSurvivesExecution` takes about 20 s; exclude it while
+iterating and run it once before committing. `LUMIERE_FUZZ_SEED` and
+`LUMIERE_FUZZ_ATTEMPTS` open it up for a longer campaign.
+
+### Measuring
+
+**No timing claim from a single run, and none from a single binary.** Build the
+"before" binary from the parent commit into its own directory, keep it, and run
+both back to back:
+
+```sh
+python3 scripts/benchmark.py /path/to/before/lumiere build/lumiere --runs 9
+python3 scripts/compare-languages.py build/lumiere --runs 7   # the CPython ratio
+```
+
+Read medians. If the min–max bands of the two binaries overlap, the difference
+is not established — re-run with more samples before believing it. The machine
+gets noisy; a result that will not reproduce is not a result.
+
+**Count before you time.** `lumiere --vm --stats programme.lum` reports
+allocations, bytes and peak memory on stderr. Allocation counts are exact and
+reproducible in one run, and they have named every problem in this runtime so
+far: the integer loop allocates 602 times in a million iterations, which is why
+it keeps pace with CPython, while a call allocates three times. Under the
+sanitizers the counts read zero and say so — AddressSanitizer replaces the same
+operators to pair every `new` with its `delete`, and that check is worth more
+than a counter.
+
+**If a change does not measure, revert it.** A plausible optimization that shows
+nothing is a plausible optimization that cost readability for nothing.
+
+### Commits
+
+- One logical change per commit, small enough to read.
+- Short messages. Say what was wrong, what it is now, and what it measured.
+- **Do not mention the assistant, the model, or the tool** anywhere in a commit
+  message or in the code.
+- Update `RUNTIME_HARDENING.md` in the same commit as the change it describes,
+  with the numbers, not adjectives.
+- Never `git add -A` without reading `git status` first. `docs/` was untracked
+  for a long time and got swept into an unrelated commit that way.
+
+### Traps this repository has already sprung
+
+- **`merge_module` in `src/interpreter/vm/compiler.cpp` copies a `LirFunction`
+  field by field**, because blocks own their terminators through a `unique_ptr`.
+  A new field added to `LirFunction` arrives empty in the linked module until it
+  is listed there too. There is a comment saying so; keep it accurate.
+- **`VmClassBody`'s member caches assume a class is immutable once made.** Its
+  parent and descriptors are fixed at `Opcode::CLASS`. Anything that would change
+  a class afterwards invalidates them, silently.
+- **Both engines can be wrong in the same way.** Conformance compares them to
+  each other; it cannot see a rule they both break. That is how the caret sat one
+  token past its subject in both engines for months, and how
+  `Texte.convertir_decimal` wrote decimals a second, wrong way. When touching a
+  routine, ask what the language's rule is, not what the other engine does.
+- **A fast path that assumes something should `assert` it.** Assertions are live
+  in the Debug and sanitizer builds, where the whole suite runs. `vm_class_body`
+  is the pattern: a tag identifies the type, and an `assert` checks that
+  `dynamic_cast` agrees.
+
+---
+
+## Task 1 — One field table: no hashing, and a defined order — DONE
+
+Landed in `40fd1c9`: a field lives in an insertion-ordered `FieldTable`.
+
+### Why
+
+`LumiereObject::fields` is a `std::unordered_map<std::string, Value>`, so
+reading `ici.total` hashes a string and probes a bucket. It is the largest
+remaining cost in method calls, which are the worst workload against CPython
+(1.87x). Objects have a handful of fields; a hash table is the wrong shape for
+three entries.
+
+It is also **unspecified iteration order** in a language that promises two
+engines agree. Three places walk an object's fields —
+`src/interpreter/runtime/value.cpp`, `src/interpreter/stdlib/lumitest.cpp`, and
+`include/lumiere/interpreter/tree_walker/environment.hpp` — and nothing pins the
+order they see.
+
+### What
+
+Replace the container with an insertion-ordered table that scans, behind a
+façade that keeps the call sites unchanged.
+
+`DictData` in `src/interpreter/runtime/value.cpp` already does exactly this and
+is the pattern to follow: entries in a vector in insertion order, an
+open-addressed index built only once the table grows past `kIndexThreshold`,
+"which spares small dictionaries an allocation they would not profit from".
+
+### How
+
+1. Add `FieldTable` to `include/lumiere/interpreter/runtime/value.hpp`, holding
+   `std::vector<std::pair<std::string, Value>>`. Give it exactly the surface the
+   149 existing call sites use, and no more:
+   `operator[]`, `find`, `end`, `begin`, `at`, `size`, `empty`, `clear`,
+   `count`, `contains`, `emplace`, `insert`, `insert_or_assign`, `erase`, and
+   range-for. **127 of the 149 are `operator[]`**, so that one carries the
+   change: it inserts a default-constructed `Value` when the name is absent,
+   exactly as the map's does, and it is the one to get right first. `emplace`
+   and `insert` return `std::pair<iterator, bool>` as the map's do — check
+   whether any caller reads the `bool` before simplifying it away.
+2. Change `LumiereObject::fields` to `FieldTable`. The 149 sites span both
+   engines, the standard library and all eight LumiNet files; nothing there
+   should need to change. Anything that does not compile is a call site using a
+   corner of `unordered_map` that the façade should either support or that
+   should be rewritten — decide which, deliberately, rather than widening the
+   façade reflexively.
+3. **Scan only, to begin with.** Do not build an index until a measurement asks
+   for one.
+4. Add `benchmarks/wide_object.lum`: a class with 32 fields, in a loop reading
+   the first and the last, 500,000 iterations — plus its CPython counterpart in
+   `benchmarks/python/` and its entry in `scripts/workloads.py`. This is the
+   workload where a scan could lose. If it regresses against the current build,
+   add the index, following `DictData`.
+
+### Acceptance
+
+- All 449 tests pass in both builds; `scripts/conformance`, `scripts/check-leaks`
+  and `scripts/fuzz` clean.
+- `method_calls` improves measurably against the parent commit's binary, and no
+  workload in `scripts/benchmark.py` regresses — including the new one.
+- A conformance case pins field iteration order (build an object, print
+  something that walks its fields, assert both engines produce the same text in
+  declaration order).
+- `RUNTIME_HARDENING.md` gains an entry with the numbers.
+
+### Do not
+
+Do not replace the map with fixed per-class slot indices in this task. That is
+the right end state, but it changes the object's representation for the tree
+walker, the standard library and all eight LumiNet files at once. This task is
+the step that makes that one smaller and is worth having on its own.
+
+---
+
+## Task 2 — A call should allocate once, not three times — DONE
+
+Landed in `a9fc6e1` and `8ca8134`: `method_calls` makes 2,001,064 allocations
+for 2,000,000 calls.
+
+### Why
+
+`lumiere --vm --stats benchmarks/function_calls.lum` reports three allocations
+per call:
+
+1. the `std::vector<RuntimeArgument>` built from the stack,
+2. the `std::vector<Value>` that `normalize_closure_arguments` returns,
+3. the `std::vector<LocalSlot>` inside the frame that is then filled from it.
+
+The values are already sitting contiguously on the VM stack. They are copied
+twice and a vector is allocated and freed for each copy, on every call.
+
+### What
+
+Two changes, each measurable on its own — do them as two commits.
+
+**2a. Recycle frames.** `frames` is a `std::vector<CallFrame>` with 15 uses, all
+in `src/interpreter/vm/vm.cpp`: 7 `push_back`, 2 `pop_back`, 2 `back`, 3
+`empty`, 1 `size`, plus the traceback walk. Popping destroys the frame's
+`locals` vector and its capacity; the next call at that depth allocates again.
+
+Keep the frames and a depth instead: `pop` clears a frame's `locals` and
+`captures` (keeping capacity) and decrements; `push` reuses `frames[depth]` when
+it exists. A small `FrameStack` with `push`, `pop`, `back`, `empty`, `size` and
+indexed access for the traceback is the clearest shape.
+
+**Preserve the existing invariant, and write it down:** `CallFrame &frame =
+frames.back()` at the top of the dispatch loop is invalidated by any push, and
+every push site is immediately followed by `break`. That is load-bearing today
+and nothing says so.
+
+**2b. Build the frame's locals from the stack.** Have
+`normalize_closure_arguments` write into the frame's `locals` rather than
+returning a `std::vector<Value>` that `make_call_frame` then copies. The
+positional fast path (no argument is named, which the compiler guarantees
+whenever it knows the callee) should move values straight from the stack into
+the frame.
+
+Named binding, optional-parameter presence flags and every error message must
+stay exactly as they are — see the comment on `normalize_closure_arguments` for
+why the flags follow the binding rather than the argument count.
+
+### Acceptance
+
+- Allocations per call, from `--stats`, drop from 3 to at most 1. State the
+  number in the commit message.
+- `function_calls` and `method_calls` improve against the parent commit; nothing
+  regresses.
+- All tests in both builds, conformance, leaks, fuzz.
+- The named-argument conformance case (`tests/conformance/arguments_nommes`)
+  still passes unchanged — it covers out-of-order names, skipped optional
+  parameters and methods reached through a value.
+
+---
+
+## Task 3 — One implementation of the collection and text members — DONE
+
+Landed in four commits, one family each. The text members turned out to be
+unified already — both engines reached `execute_texte_operation` — so the work
+was the four collection families, and `Résultat` has no members: it is read
+through `agir selon` and `?`, not through a call.
+
+Six of the seven reachable Liste failures were worded differently by the two
+engines, and the VM was handing out `Dictionnaire.paires()` with no element
+contract at all, so it accepted an `Entier` in a list of pairs that the tree
+walker refused. Both are recorded in `RUNTIME_HARDENING.md` with the rule
+chosen.
+
+What could not be done here: the failing cases are pinned by
+`CliIntegration.BothBackendsReportTheSameRuntimeDiagnostic` rather than by the
+conformance corpus, because the engines still point the caret at different
+tokens and conformance compares stderr whole. That is task 5.
+
+### Why
+
+`Liste.ajouter` exists twice: in `src/interpreter/tree_walker/tree_walker_sequences.cpp`
+(475 lines) and in `execute_member_call` / `execute_sequence_member` /
+`execute_texte_member` in `src/interpreter/vm/vm.cpp`. So do the dictionary, set
+and text members. Two implementations of one language feature is a bug
+generator; this is the largest remaining instance of the thing that produced
+most of the divergences already fixed.
+
+It is also the prerequisite for anything that changes how values are
+represented, because today every such change has to be made twice.
+
+### What
+
+One implementation, in `src/interpreter/runtime/members.cpp`, called by both
+engines through `IRuntime` — which already carries everything a member needs:
+`call`, `raise_runtime_error`, `values_equal`, and the collection-constraint
+enforcement.
+
+Signature along the lines of:
+
+```cpp
+std::optional<Value> call_builtin_member(IRuntime &runtime,
+                                         const Value &receiver,
+                                         std::string_view member,
+                                         const std::vector<RuntimeArgument> &args,
+                                         const RuntimeSite &site);
+```
+
+`std::nullopt` means "not a builtin member of this receiver", which is what lets
+each engine fall through to its own object-and-method dispatch.
+
+### How
+
+Do it **one receiver family at a time**, one commit each: Texte, Liste,
+ListeFixe, Ensemble, Dictionnaire, Résultat. After each, the duplicate is
+deleted, not left behind.
+
+**The engines will disagree somewhere.** They have two independent
+implementations and no test forces them to match on every member. When a
+difference is found:
+
+1. Decide which behaviour is the language's rule — the question is what the rule
+   should be, not which engine to copy.
+2. Add a conformance case pinning it.
+3. Say so in the commit message.
+
+Do not quietly adopt one engine's behaviour because it was easier to keep.
+
+### Acceptance
+
+- `tree_walker_sequences.cpp` and the VM's member implementations are gone,
+  replaced by one caller each.
+- A conformance case per family, exercising every member with its edge cases
+  (empty receiver, index at the boundary, wrong argument type, wrong arity).
+- Every difference found is recorded in `RUNTIME_HARDENING.md` with the rule
+  chosen and why.
+- No performance regression: these are hot paths, `typed_list` and
+  `dictionary_lookup` are the workloads that watch them.
+
+---
+
+## Task 4 — Analysis that carries the shell's earlier submissions — DONE
+
+Landed. The seeding goes through the type interner first, which the brief did
+not anticipate: `same_type` compares by pointer, so a fresh interner disagrees
+with the previous one about a type they both call `Entier`. See
+`RUNTIME_HARDENING.md`.
+
+### Why
+
+Every rule that resolves a name stands down in the shell, because each
+submission is analyzed on its own while the interpreter carries every earlier
+one. `AnalysisOptions::incremental_submission` turns off LUM-S0055 and
+LUM-S0057, so a typo in the shell is found only when the line runs.
+
+That flag exists because of a bug it was hiding: `soit base = 40` on one line
+and `base = 60` on the next had been rejected since LUM-S0055 shipped — the line
+silently never ran and the shell then printed the old value. **No test types two
+dependent lines**, which is why it shipped at all.
+
+### What
+
+Let `analyze_source` start from what a previous analysis established.
+
+`SemanticImportEnvironment` is the precedent: the analyzer already accepts
+externally-supplied symbols for imported modules. The same shape works here —
+an optional seed of value symbols, type symbols and callable signatures from the
+previous submission's `SemanticModel`.
+
+The REPL already keeps every accepted `Program` alive in `submissions`, so the
+AST that those symbols point at outlives them. That is a precondition: write it
+down where the seed is defined.
+
+### How
+
+1. Add the seed parameter to `analyze_source` and `analyze_semantics`, and carry
+   the resulting model in `run_repl`.
+2. Delete `AnalysisOptions::incremental_submission` and the two `if` statements
+   that consult it. If the shell needs an exemption after this, it is a bug in
+   the seeding, not a rule to switch off.
+3. A submission that fails at run time must not contribute its declarations to
+   the next one's environment — the binding may never have been made.
+
+**Rejected approach, do not revisit:** re-analyzing the concatenated text of all
+submissions. It re-reports earlier lines' diagnostics and numbers the new line
+wrong.
+
+### Acceptance
+
+- A CLI test that types dependent lines: `soit base = 40`, then `base = 60`,
+  then `base`, and expects `60`. Also a redefinition, a function defined on one
+  line and called on the next, and a typo that must now be diagnosed with
+  LUM-S0057 rather than at run time.
+- `grep -r incremental_submission` finds nothing.
+- The existing `ReplPreservesDefinitionsAndPrintsExpressionResults` test passes
+  unchanged.
+
+---
+
+## Task 5 — State which token an error points at — DONE
+
+Landed. The rule is in `docs/runtime-diagnostic-locations.md`. Runtime arguments
+now retain their own source position through evaluation and, in the VM, through
+LIR linking and bytecode metadata. Calls, arguments, indices, iterables and
+conversion targets consequently identify the same source token in both engines.
+Five exact-stderr conformance cases pin the gaps this task closed; the existing
+corpus continues to cover the other diagnostic families. See
+`RUNTIME_HARDENING.md`.
+
+### Why
+
+The last recorded cross-engine difference. The two engines pick different tokens
+for the same runtime failure, so the caret can sit a character apart. A spot fix
+was tried once — pointing the VM at the callee's name — and it fixed one case
+and broke another; it was reverted. The lesson recorded at the time: this needs
+a stated rule, not a patch.
+
+The analyzer's side is already settled: a token carries one position and it is
+where the token starts.
+
+### What
+
+1. **Write the rule down first**, in `docs/` — one page: for each kind of runtime
+   failure, which token the caret belongs on, and why. The general principle to
+   start from: *the caret goes on the token that names the thing the message is
+   about.* An unknown member points at the member's name, not at the parenthesis
+   or the receiver; an arithmetic failure points at the operator; a failed
+   argument points at that argument.
+2. Enumerate the runtime error sites in both engines — the tree walker raises
+   through `raise_runtime_error` in `tree_walker_runtime.cpp`, the VM builds a
+   `RuntimeSite` from `chunk.locations[opcode_offset]` — and make each follow the
+   rule.
+3. A conformance case per family of runtime error, pinning the exact caret
+   column with `expected.stderr`, not a substring match.
+
+### Acceptance
+
+- The rule exists as prose before any code moves.
+- Conformance cases pin the column, so the next spot fix fails the build.
+- No `divergence.connue` file remains anywhere under `tests/conformance`.
+
+---
+
+## Task 6 — Resolve a runtime type once — DONE
+
+**Done on the VM.** Step one removed the element scan; step two gave the VM a
+`VmType` read once per text -- from the module's type table, a field's
+declared type, or a run-time contract -- instead of re-parsed at every check.
+`commandes` on the VM is 6.2x to 13.0x faster than the parent commit and now
+within 3% across a 63- to 201-character path, where it used to move by 117%;
+against CPython it is 2.60x (was 8.3x to 17.5x). See `RUNTIME_HARDENING.md`,
+"Resolving a runtime type once".
+
+**Done on the tree walker too.** The parts of `VmType` that do not depend on
+the VM's module-indexed type table or `VmClassBody`'s per-class field cache
+moved into `include/lumiere/interpreter/runtime/runtime_type.hpp` as
+`RuntimeType`/`parse_runtime_type`/`matches`/`annotate`/`class_satisfies`,
+shared by both engines; the VM's own names are now aliases onto them. The
+tree walker's hand-written string engine is gone, replaced by a
+`RuntimeTypeCache` keyed by text -- the same fix as the VM's step two, plus a
+fast path the VM already had for a generic written directly in source
+(`catalogue: Dictionnaire[Texte, Produit]`) that the tree walker's `TypeExpr`
+matcher never had at all. `commandes` on the tree walker is 2.85x to 3.11x
+faster than the parent commit and now within 1.4% across a 62- to
+203-character path, where it used to move by 10.6%. See
+`RUNTIME_HARDENING.md`, "Resolving a runtime type once", "Third".
+
+### Why
+
+Against CPython, net of startup, the VM runs `commandes` 8.3x slower from a
+10-character path and 17.5x slower from this repository's 75-character one, and
+`expressions` 3.4x and 4.6x. The eight probes are all between 1.5x and 3x and
+none of them depends on the path. A profile of `commandes` puts 42% of its time
+in `matches_type_name` and 17% in `VmRuntimeServices::annotate_value`, with
+`trim_type_name` called 19 million times for 30,000 orders.
+
+The VM checks a value against a collection's contract, a function's result type
+and a typed `agir selon` branch by parsing the type's *name*: trimming it,
+scanning it for a union bar, splitting it at its brackets, comparing the
+pieces. A class's name is its runtime identity, `Produit@<source path in
+hex>:<line>`, so every one of those strings is as long as the path it came from.
+A benchmark whose result depends on where the repository is checked out is not
+a result, and a program that gets slower when it is moved is not specified.
+
+Round one of 2026-09-20 found this cost and removed it for parameter types,
+which are classified once per module. Collection contracts, `annotate_value`,
+result types and patterns were left on strings. No probe could see it: the one
+typed collection among the eight is a `Liste[Entier]`, whose check ends at the
+first comparison.
+
+### What
+
+A runtime type descriptor, built once and checked by structure:
+
+- a tag for each builtin, a pointer (or an index into the module's class
+  table) for a class or an interface, element descriptors for a generic, a list
+  of alternatives for a union;
+- built where a type enters the runtime -- when bytecode is loaded, when a
+  collection's contract is set -- and never from a string afterwards;
+- `ListConstraint::element_type` and its siblings hold one instead of a
+  `std::string`; `matches_type_name(value, text)` becomes a match against a
+  descriptor; `annotate_value` takes one;
+- the name survives only where a person reads it: diagnostics and `type_de`.
+
+Both engines. The tree walker's `matches_type_name(Value, Token)` and
+`register_value_annotation` do the same string work, so the descriptor and its
+matcher belong in `src/interpreter/runtime/`, called by both -- the same move
+Task 3 made for the members.
+
+### How
+
+One family at a time, measured on `commandes` from a fixed path and from a long
+one: collection contracts first (the largest share), then result types and
+patterns, then annotation. Keep the merge rule exact -- re-annotation may refine
+`Universel` and must never erase a concrete contract -- and keep every
+diagnostic's wording, including the type names in it; a conformance case with a
+class-typed contract violation pins that.
+
+A scalar element needs no annotation at all. `annotate_value` returns early for
+non-collections today, but only after trimming and scanning its string; check
+what is left once that is gone before deciding what else to change.
+
+### Acceptance
+
+- `commandes` from a 10-character path and from a 150-character path within
+  noise of each other, on both engines. **Met on the VM** (63 vs 201
+  characters, 2.7% apart) and **on the tree walker** (62 vs 203 characters,
+  1.4% apart).
+- `commandes` and `expressions` measured against the parent commit and against
+  CPython, recorded in `RUNTIME_HARDENING.md`; the eight probes not regressed.
+  **Met** (the tree walker's own probes moved too, several of them faster,
+  none slower -- the missing fast path cost more than `commandes` alone).
+- `matches_type_name`, `split_generic_arguments` and `trim_type_name` gone from
+  the profile of `commandes`. **Met on both engines** (gone from the source;
+  the tree walker's own copies of the same names -- and
+  `class_derives_from`/`class_implements_interface` besides -- are deleted,
+  not kept alongside the shared descriptor).
+
+---
+
+## Task 7 — Types that flow out of collections, `ici` and interfaces — DONE
+
+All eight rows below compile and run identically on both engines; see
+`tests/conformance/types_inferes_des_lectures` and `RUNTIME_HARDENING.md`,
+"Reading the type a value already has". Collection literals and the empty
+set are also done; see "Collection literals" below and
+`RUNTIME_HARDENING.md`, "An empty literal has no elements to be wrong
+about".
+
+### Why
+
+Each row is refused by the analyzer with `attend T; reçu Universel`, for a type
+the analyzer knows:
+
+| written | analyzer says | should be |
+| --- | --- | --- |
+| `soit v: Entier = liste[0]` with `liste: Liste[Entier]` | `Universel` | `Entier` |
+| `soit v: Entier = dico["a"]` with `dico: Dictionnaire[Texte, Entier]` | `Universel` | `Entier` |
+| `pour chaque x dans liste { soit y: Entier = x }` | `Universel` | `Entier` |
+| `pour chaque k dans dico { soit t: Texte = k }` | `Universel` | `Texte` |
+| `pour chaque c dans texte { soit s: Symbole = c }` | `Universel` | `Symbole` |
+| `soit x: Entier = ici.calculer()` with `calculer() -> Entier` | `Universel` | `Entier` |
+| `soit n = ici.analyser() ou propager` | refused: not a `Résultat` | the declared `Résultat` |
+| `soit v: Entier = noeud.evaluer()` with `interface Noeud { fonction evaluer() -> Entier }` | `Universel` | `Entier` |
+
+`c.calculer()` on a parameter or local `c: C` *is* typed; only `ici` is not.
+
+The consequences are what a user meets first. A value read out of a typed
+collection cannot be bound to an annotated name, passed to a typed parameter or
+returned from a typed function without an `en` cast. A class whose methods call
+one another cannot use typed errors, because `ici.m() ou propager` is refused --
+the parser in `benchmarks/expressions.lum` is three free functions for that
+reason alone. An interface cannot declare a return type its callers can rely
+on, so the examples leave interface methods unannotated. For a language whose
+differentiator is its type discipline, these are the holes a first program
+falls into.
+
+### What
+
+`inferred_type` in `src/analysis/semantic_analysis.cpp` has no case for
+`IndexAccessExpr` and falls through to `Universel`; the `ForStmt` resolver
+declares its variable with no type; a member call's return type is looked up
+for a receiver of class type but not for `ici` or for an interface.
+
+### The decision, taken
+
+Checked: `is_assignable` has no rule at all for `Liste`, `Dictionnaire`,
+`ListeFixe` or `Ensemble` today -- only `Résultat` gets a generic case, and
+every other generic falls through to pointer equality on the interned type.
+So there is no path by which a `Liste[Entier]` reaches a binding declared
+`Liste[Universel]` for this task to reason about; that question does not
+arise until a covariance rule is added, which this task does not add one.
+
+What *is* true regardless: `soit x: T = expr` and every typed parameter
+compile to an unconditional `ASSERT_TYPE`, checked at run time, whatever the
+analyzer inferred for `expr` (`ast_to_lir.cpp`, `assert_type`, called for
+every `VarDeclStmt` with a type and every typed parameter, not gated on
+whether the static and declared types already match). A wrong guess here --
+an over-optimistic element type read out of a collection whose contract was
+never checked, say -- is caught there, as a runtime error naming what was
+expected, not trusted into silent corruption. Reading a type once a value
+already has is therefore sound by construction: the analyzer's inference is
+a diagnostic convenience, `ASSERT_TYPE` is the enforcement, and this task
+changes only the former.
+
+Ran `tests/`, `examples/` and `benchmarks/` under `check` against this
+task's binary and against its parent, `.lum` file by `.lum` file: no
+program's `check` output changed. Nothing relied on being told `Universel`.
+
+### Collection literals
+
+`soit l: Liste[Texte] = []` is accepted because a list or dictionary literal
+initialising a typed binding is *given* the declared type, in
+`contextualize_result_construction` -- written so that `Succès(...)` inside a
+literal takes its type from context. Nothing checks the elements against it, so
+
+    soit l: Liste[Texte] = [1]
+    soit d: Dictionnaire[Texte, Entier] = {"a": "b"}
+
+pass analysis and fail at run time, with a message that does not say which
+element (`attend une valeur de type Liste[Texte]; type reçu : Liste`), while
+`f([1])` for `f(l: Liste[Texte])` is refused statically. The same literal is
+checked in one position and not in the other.
+
+Checking the elements is the obvious fix, and it interacted with the reads
+above: before this task's first half, an element read from a collection was
+`Universel`, so `soit l: Liste[Texte] = [m[0]]` -- which runs -- would have
+started being refused once literal elements were checked. Reading a type a
+value already has is what removes that interaction: `m[0]` is now `Texte`
+when `m: Liste[Texte]`, so checking `[m[0]]` against `Liste[Texte]` accepts
+it on its own merits rather than needing an exemption.
+
+The empty set belonged here too. `[]` adapted to its context only because it
+was a literal in that position; `[].en_ensemble()` is a call, so it kept
+`Ensemble[Universel]`. Took the first way out: an empty literal now gets the
+element type that has no values, so `Liste[⊥]` and `Ensemble[⊥]` are
+assignable to any `Liste[T]` and `Ensemble[T]`, `en_ensemble()` included,
+since it reads its return type off the receiver's own. `⊥` is already
+universally assignable both ways (`is_assignable`'s first check), so this
+needed one narrow addition: two generics of the same name and arity, where
+every one of the source's arguments is `⊥`, are assignable regardless of the
+target's. A variable holding the same empty allocation and lent to two
+incompatible concrete types is the case the second way out (a literal
+empty-set syntax) would have avoided entirely -- it still compiles, since
+each loan is sound on its own, but the second, incompatible re-annotation
+throws at run time (`merge_collection_constraint`'s existing rule, unchanged
+by this). See `RUNTIME_HARDENING.md`, "An empty literal has no elements to
+be wrong about".
+
+### Acceptance
+
+- Every row above compiles as written and runs identically on both engines,
+  with a conformance case. **Met** --
+  `tests/conformance/types_inferes_des_lectures`.
+- A collection literal is checked against its declared type in every position
+  it can be written, and an empty set can be typed. **Met** --
+  `tests/conformance/elements_de_litteral_verifies` and
+  `tests/conformance/collection_vide_typee`. "Every position it can be
+  written" is narrower than it sounds: only `contextualize_result_construction`
+  ever forces a literal's type from context (a typed `soit`, a typed argument,
+  a typed return, recursively through `agir selon` branches and nested
+  literals), and that is the only place a literal's own inference could be
+  overridden without being checked -- a `Set` literal (`{1, 2}`) was never
+  routed through it and was already checked, which is how the bug was
+  isolated to `Liste` and `Dictionnaire` alone.
+- The three programs in `benchmarks/` lose their `en` casts and their
+  unannotated bindings, and `expressions` gets its parser back as methods;
+  re-measure them, since a cast and a check cost time. **Partly met.**
+  `expressions.lum`'s three free functions are now `Analyseur` methods
+  calling `ici.terme()` / `ici.facteur()` / `ici.expression()`, which is what
+  needed the `ici` fix; `commandes.lum` lost the two casts this task made
+  redundant (`reference en Texte` on a `Dictionnaire[Texte, Entier]`'s key,
+  `categories[i] en Texte` on a `Liste[Texte]`). `expressions.lum` and
+  `journal.lum` keep the casts that parse a `Texte` into an `Entier` or a
+  `Symbole` into one -- real conversions, not this task's `Universel`.
+  Re-measured against CPython: `expressions` 2.73x (was 2.88x), `commandes`
+  2.61x (was 2.60x, two casts move it less). "Unannotated bindings" -- no
+  example was found that needed one just to route around `Universel`; if the
+  next pass on this task finds one, note it here.
+- Every newly rejected program is recorded with the decision taken. **Met,
+  vacuously** -- the audit above found none.
+
+---
+
+## Task 8 — Four things a program should not reach
+
+Small and independent; each gets a conformance case.
+
+1. **Done.** **`valeur en MaClasse` passes analysis and always fails at run time**, in
+   both engines: `conversion explicite non prise en charge vers le type`.
+   Either analysis refuses a cast to a class or interface, or the language
+   defines one as a checked downcast. Decide, then make the two agree.
+2. **Done.** **The VM names a class by its internal identity in that message**:
+   `'L@2f746d702f776c2f712e6c756d:7'` where the tree walker says `'L'`. It is a
+   divergence the conformance corpus would have caught had it held a case, and
+   an internal name shown to a user. Every message naming a type goes through
+   `display_runtime_type`; this one does not.
+3. **Moved to Task 7.** The specified empty set cannot be typed:
+   `[].en_ensemble()` is an `Ensemble[Universel]` and cannot initialise an
+   `Ensemble[Texte]`, while `[]` initialises a `Liste[Texte]`. Looking at why
+   showed it is not small -- see "Collection literals" under Task 7.
+4. **Done.** **A condition that begins with `(` must be wholly parenthesised.**
+   `si (a) >= b {` and `tant que (a et b) ou c {` fail with `attendu '{' pour
+   ouvrir le bloc`: the parser takes the leading parenthesis as the
+   condition's delimiter rather than as the start of an expression.
+
+---
+
+## What review will check
+
+In roughly this order:
+
+1. **Does it do what the brief said, and nothing else?** A commit that also
+   reformats, renames, or sweeps in untracked files is harder to review than the
+   change deserved.
+2. **Is the claim measured?** Two binaries, medians, non-overlapping bands, and
+   the numbers in the commit message and in `RUNTIME_HARDENING.md`. A stated
+   percentage that cannot be reproduced is worse than no percentage.
+3. **Does the comment say why, not what?** The comments this codebase keeps are
+   the ones that record what was wrong before and what it cost — not the ones
+   restating the line beneath them.
+4. **What is the failure mode of the fast path, and is it asserted?** Every
+   shortcut assumes something. The assumption belongs in an `assert` that runs in
+   the sanitizer build, and in a sentence saying what breaks if it stops holding.
+5. **Both engines, and the corpus.** Any change to semantics needs a conformance
+   case. Any change that could not be seen by comparing the engines — because
+   both would be wrong the same way — needs a case that pins the rule itself.

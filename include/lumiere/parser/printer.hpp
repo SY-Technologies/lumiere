@@ -75,6 +75,17 @@ class AstPrinter : public ExprVisitor, public StmtVisitor
             m_out << ")";
         }
 
+        void visit(SetExpr &set_expr) override
+        {
+            m_out << "(ensemble";
+            for (auto &element : set_expr.elements)
+            {
+                m_out << " ";
+                print_expr(element.get());
+            }
+            m_out << ")";
+        }
+
         void visit(DictionaryExpr &dict_expr) override
         {
             m_out << "(dict";

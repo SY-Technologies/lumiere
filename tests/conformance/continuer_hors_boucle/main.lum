@@ -1,0 +1,4 @@
+// Même défaut que arreter_hors_boucle, avec l'autre signal.
+fonction principal() {
+    continuer
+}

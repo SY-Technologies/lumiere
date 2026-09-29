@@ -1,0 +1,35 @@
+// Une boucle dont la condition combine deux tests par 'et' ou par 'ou'. La VM
+// refusait tout programme qui en contenait une : son vérificateur ne savait
+// pas qu'une fonction peut finir sur un branchement, et c'est ainsi que le
+// compilateur dispose une telle boucle.
+fonction compter_jusqua(limite: Entier) -> Entier {
+    soit i = 0
+    tant que i < limite ou i == limite {
+        i = i + 1
+    }
+    retourne i
+}
+
+fonction premier_multiple(de: Entier, depuis: Entier) -> Entier {
+    soit n = depuis
+    tant que n % de != 0 et n < 1000 {
+        n = n + 1
+    }
+    retourne n
+}
+
+fonction principal() {
+    afficher(compter_jusqua(3))
+    afficher(premier_multiple(7, 50))
+
+    // Les deux opérateurs imbriqués, et la seconde opérande jamais évaluée
+    // quand la première suffit.
+    soit a = 0
+    soit b = 10
+    tant que a == 0 ou (a < 5 et b > 5) {
+        a = a + 1
+        b = b - 1
+    }
+    afficher(a)
+    afficher(b)
+}

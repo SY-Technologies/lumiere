@@ -1,0 +1,41 @@
+// Cinq règles que seul le compilateur de la VM appliquait, et que l'analyseur
+// applique désormais — donc avant qu'aucun moteur ne démarre, avec les mêmes
+// mots pour les deux. Deux d'entre elles ne produisaient aucun diagnostic du
+// tout : 'arrêter' et 'continuer' hors d'une boucle faisaient terminer le
+// tree-walker sur un signal que personne n'attrapait.
+//
+// Un seul diagnostic est attendu par programme, donc chaque règle a son propre
+// cas ; celui-ci montre que le programme correct correspondant passe.
+classe Compteur {
+    valeur: Entier
+
+    fonction incrementer() {
+        ici.valeur = ici.valeur + 1
+    }
+}
+
+classe CompteurBavard : Compteur {
+    remplace fonction incrementer() {
+        parent.incrementer()
+    }
+}
+
+fonction principal() {
+    soit fixe limite = 3
+    soit total = 0
+    soit index = 0
+    tant que index < 10 {
+        si index >= limite { arrêter }
+        si index == 0 {
+            index = index + 1
+            continuer
+        }
+        total = total + index
+        index = index + 1
+    }
+    afficher(total)
+
+    soit compteur = CompteurBavard(valeur: 0)
+    compteur.incrementer()
+    afficher(compteur.valeur)
+}

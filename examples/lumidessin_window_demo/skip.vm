@@ -1,0 +1,6 @@
+Interactif et non headless par conception (voir le commentaire d'en-tête de
+main.lum) : ouvre une vraie fenêtre et attend un événement de fermeture du
+système d'exploitation, que la corpus de conformité -- un sous-processus CLI
+sans utilisateur -- n'envoie jamais. Sans ce marqueur, le cas bloque jusqu'au
+délai d'expiration (30 s), ce qui consomme à lui seul tout le budget de la
+suite ctest « conformance » (le même délai) et la fait échouer.

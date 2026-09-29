@@ -1,9 +1,11 @@
+#include "lumiere/interpreter/runtime/numeric.hpp"
 #include "ast_to_lir.hpp"
 
 #include "lumiere/interpreter/vm/compiler.hpp"
 #include "lumiere/lexer/token.hpp"
 #include "lumiere/parser/ast.hpp"
 #include "lumiere/parser/utf8.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -19,54 +21,18 @@ namespace lumiere
 namespace
 {
 
-using TypeAliasTable = std::unordered_map<std::string, const TypeExpr *>;
-
 std::string runtime_type_name(const TypeExpr &type,
                               const TypeAliasTable &aliases,
-                              std::unordered_set<std::string> resolving = {})
+                              bool resolve_nominal = true)
 {
-    if (type.empty() || type.kind == TypeExprKind::INTEGER_ARGUMENT)
+    try
     {
-        return type.to_string();
+        return resolve_type_aliases(type, aliases, {}, resolve_nominal).to_string();
     }
-    if (type.kind == TypeExprKind::NAMED)
+    catch (const std::invalid_argument &error)
     {
-        const auto alias = aliases.find(type.name);
-        if (alias == aliases.end())
-        {
-            return type.name;
-        }
-        if (!resolving.insert(type.name).second)
-        {
-            throw VmCompileError("VM: cycle d'alias de type impliquant '" +
-                                 type.name + "'");
-        }
-        return runtime_type_name(*alias->second, aliases, std::move(resolving));
+        throw VmCompileError("VM: " + std::string(error.what()));
     }
-    if (type.kind == TypeExprKind::UNION)
-    {
-        std::string result;
-        for (const TypeExpr &child : type.children)
-        {
-            if (!result.empty())
-            {
-                result += " | ";
-            }
-            result += runtime_type_name(child, aliases, resolving);
-        }
-        return result;
-    }
-
-    std::string result = type.name + '[';
-    for (std::size_t i = 0; i < type.children.size(); ++i)
-    {
-        if (i > 0)
-        {
-            result += ',';
-        }
-        result += runtime_type_name(type.children[i], aliases, resolving);
-    }
-    return result + ']';
 }
 
 // Maps source tokens into LIR source coordinates.
@@ -91,7 +57,7 @@ std::string token_label(const Token &token)
     out << "VM: forme AST invalide pour " << what;
     if (!token.lexeme.empty())
     {
-        out << " pres de '" << token.lexeme << "'";
+        out << " près de '" << token.lexeme << "'";
     }
     out << " (" << token.line << ":" << token.column << ")";
     throw VmCompileError(out.str());
@@ -105,15 +71,19 @@ Value literal_value(const Token &token)
     switch (token.type)
     {
     case TokenType::ENTIER_LIT:
-        return Value::entier(std::stoll(token.lexeme));
+        // The lexer already refused a literal that does not fit.
+        return Value::entier(numeric::parse_integer_literal(token.lexeme).value_or(0));
     case TokenType::DECIMAL_LIT:
-        return Value::decimal(std::stod(token.lexeme));
+        // See the tree walker: the tokenizer has already refused anything
+        // this could fail on.
+        return Value::decimal(numeric::parse_decimal_literal(token.lexeme).value_or(0.0));
     case TokenType::TEXTE_LIT:
-        return Value::texte(token.lexeme.substr(1, token.lexeme.size() - 2));
+        // decoded is the escape-resolved literal body (see Tokenizer::scan_string);
+        // lexeme is the raw quoted source slice, kept only for diagnostics.
+        return Value::texte(token.decoded);
     case TokenType::SYMBOLE_LIT:
     {
-        const std::optional<char32_t> character =
-            utf8::decode_single_character(std::string_view(token.lexeme).substr(1, token.lexeme.size() - 2));
+        const std::optional<char32_t> character = utf8::decode_single_character(token.decoded);
         if (!character.has_value())
         {
             throw VmCompileError("VM: symbole invalide");
@@ -127,7 +97,7 @@ Value literal_value(const Token &token)
     case TokenType::RIEN:
         return Value::rien();
     default:
-        invalid_ast("le litteral '" + token_label(token) + "'", token);
+        invalid_ast("le littéral '" + token_label(token) + "'", token);
     }
 }
 
@@ -137,6 +107,7 @@ class FunctionLowerer final : public ExprVisitor, public StmtVisitor
 public:
     using FunctionTable = std::unordered_map<std::string, FunctionDeclStmt *>;
     using GlobalTypeTable = std::unordered_map<std::string, std::string>;
+    using NominalValueTable = std::unordered_map<std::string, std::string>;
 
     FunctionLowerer(LirModule &module,
                     LirFunction &function,
@@ -149,7 +120,8 @@ public:
                     bool module_scope = false,
                     std::size_t parameter_offset = 0,
                     const ResolvedVmImports *imports = nullptr,
-                    const TypeAliasTable *type_aliases = nullptr)
+                    const TypeAliasTable *type_aliases = nullptr,
+                    const NominalValueTable *nominal_type_values = nullptr)
         : m_module(module),
           m_function(function),
           m_functions(functions),
@@ -162,7 +134,10 @@ public:
           m_module_scope(module_scope),
           m_parameter_offset(parameter_offset),
           m_imports(imports),
-          m_type_aliases(type_aliases)
+          m_type_aliases(type_aliases == nullptr ? TypeAliasTable{} : *type_aliases),
+          m_nominal_type_values(nominal_type_values == nullptr
+                                    ? NominalValueTable{}
+                                    : *nominal_type_values)
     {
         m_function.return_type = m_return_type;
         m_current_block = m_function.append_block().index;
@@ -198,7 +173,7 @@ public:
             {
                 const LirOperand nil = constant_nil(Token{TokenType::RIEN, "rien", 0, 0});
                 m_function.set_terminator(m_current_block,
-                                          LirTerminator::return_value(assert_type(nil, m_return_type, {})));
+                                          LirTerminator::return_value(assert_type(nil, m_return_type, {}, current_function_context())));
             }
         }
     }
@@ -228,7 +203,7 @@ public:
             const auto self = lookup_local("ici");
             if (!self.has_value())
             {
-                throw VmCompileError("VM: 'parent' ne peut etre utilise hors d'une methode");
+                throw VmCompileError("VM: 'parent' ne peut être utilise hors d'une méthode");
             }
             m_last_value = emit_value(LirOpcode::IR_OP_LOAD_LOCAL,
                                       {LirOperand::local(*self)},
@@ -264,7 +239,7 @@ public:
                                           {lower_expr(*index->object),
                                            lower_expr(*index->index),
                                            lower_expr(*expr.right)},
-                                          lir_loc(index->bracket));
+                                          lir_loc(index->index->start_token()));
                 return;
             }
             if (auto *member = dynamic_cast<MemberAccessExpr *>(expr.left.get()))
@@ -295,7 +270,8 @@ public:
                 LirOperand assigned_value = lower_expr(*expr.right);
                 if (const auto type = m_local_types.find(*local); type != m_local_types.end() && !type->second.empty())
                 {
-                    assigned_value = assert_type(assigned_value, type->second, lir_loc(expr.op));
+                    assigned_value = assert_type(assigned_value, type->second, lir_loc(expr.op),
+                                                 variable_context(identifier->name.lexeme));
                 }
                 emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
                             {LirOperand::local(*local), assigned_value},
@@ -316,7 +292,8 @@ public:
                 LirOperand assigned_value = lower_expr(*expr.right);
                 if (!capture->type.empty())
                 {
-                    assigned_value = assert_type(assigned_value, capture->type, lir_loc(expr.op));
+                    assigned_value = assert_type(assigned_value, capture->type, lir_loc(expr.op),
+                                                 variable_context(identifier->name.lexeme));
                 }
                 emit_effect(LirOpcode::IR_OP_STORE_CAPTURE,
                             {capture->operand, assigned_value},
@@ -336,7 +313,7 @@ public:
                                            m_global_types->contains(identifier->name.lexeme);
             if (!declared_variable && !m_functions.contains(identifier->name.lexeme))
             {
-                throw VmCompileError("VM: affectation a une variable globale non declaree '" +
+                throw VmCompileError("VM: affectation a une variable globale non déclarée '" +
                                      identifier->name.lexeme + "'");
             }
             LirOperand assigned = lower_expr(*expr.right);
@@ -345,7 +322,8 @@ public:
                 const auto type = m_global_types->find(identifier->name.lexeme);
                 if (type != m_global_types->end() && !type->second.empty())
                 {
-                    assigned = assert_type(assigned, type->second, lir_loc(expr.op));
+                    assigned = assert_type(assigned, type->second, lir_loc(expr.op),
+                                           variable_context(identifier->name.lexeme));
                 }
             }
             const std::size_t global = m_module.add_global(identifier->name.lexeme);
@@ -409,11 +387,28 @@ public:
         operands.push_back(lower_expr(*expr.right));
         m_last_value = emit_value(opcode, std::move(operands), lir_loc(expr.op));
     }
+    void visit(SetExpr &expr) override
+    {
+        if (expr.elements.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
+        {
+            throw VmCompileError("VM: trop d'éléments dans un littéral d'ensemble");
+        }
+
+        std::vector<LirOperand> operands;
+        operands.reserve(expr.elements.size());
+        for (auto &element : expr.elements)
+        {
+            operands.push_back(lower_expr(*element));
+        }
+
+        m_last_value = emit_value(LirOpcode::IR_OP_ENSEMBLE, std::move(operands), lir_loc(expr.brace));
+    }
+
     void visit(DictionaryExpr &expr) override
     {
         if (expr.entries.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
         {
-            throw VmCompileError("VM: trop d'entrees dans un litteral de dictionnaire");
+            throw VmCompileError("VM: trop d'entrées dans un littéral de dictionnaire");
         }
 
         std::vector<LirOperand> operands;
@@ -470,7 +465,7 @@ public:
     {
         if (expr.elements.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
         {
-            throw VmCompileError("VM: trop d'elements dans un litteral de liste");
+            throw VmCompileError("VM: trop d'éléments dans un littéral de liste");
         }
 
         std::vector<LirOperand> operands;
@@ -497,7 +492,7 @@ public:
     {
         m_last_value = emit_value(LirOpcode::IR_OP_INDEX_GET,
                                   {lower_expr(*expr.object), lower_expr(*expr.index)},
-                                  lir_loc(expr.bracket));
+                                  lir_loc(expr.index->start_token()));
     }
 
     void visit(PropagationExpr &expr) override
@@ -517,6 +512,14 @@ public:
 
     void visit(CallExpr &expr) override
     {
+        const LirSourceLocation call_source = lir_loc(call_site_token(expr));
+        std::vector<LirSourceLocation> argument_sources;
+        argument_sources.reserve(expr.args.size());
+        for (const Argument &argument : expr.args)
+        {
+            argument_sources.push_back(lir_loc(argument.site));
+        }
+
         auto *callee = dynamic_cast<IdentifierExpr *>(expr.callee.get());
         if (auto *member = dynamic_cast<MemberAccessExpr *>(expr.callee.get()))
         {
@@ -537,10 +540,12 @@ public:
                                          : LirOpcode::IR_OP_CALL_MEMBER;
             m_last_value = emit_value(opcode,
                                       std::move(operands),
-                                      lir_loc(member->member));
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
-        if (callee != nullptr && lookup_local(callee->name.lexeme).has_value())
+        if (callee == nullptr || lookup_local(callee->name.lexeme).has_value() ||
+            resolve_capture(callee->name.lexeme).has_value())
         {
             std::vector<LirOperand> operands{lower_expr(*expr.callee)};
             for (const Argument &arg : expr.args)
@@ -551,21 +556,10 @@ public:
             {
                 throw VmCompileError("VM: trop d'arguments dans un appel");
             }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL, std::move(operands), lir_loc(expr.paren));
-            return;
-        }
-        if (callee == nullptr)
-        {
-            std::vector<LirOperand> operands{lower_expr(*expr.callee)};
-            for (const Argument &arg : expr.args)
-            {
-                append_call_argument(operands, arg.name, lower_expr(*arg.value));
-            }
-            if (expr.args.size() > static_cast<std::size_t>(std::numeric_limits<std::uint8_t>::max()))
-            {
-                throw VmCompileError("VM: trop d'arguments dans un appel");
-            }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL, std::move(operands), lir_loc(expr.paren));
+            m_last_value = emit_value(LirOpcode::IR_OP_CALL,
+                                      std::move(operands),
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
 
@@ -582,7 +576,10 @@ public:
             {
                 throw VmCompileError("VM: trop d'arguments dans un appel");
             }
-            m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL, std::move(operands), lir_loc(expr.paren));
+            m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL,
+                                      std::move(operands),
+                                      call_source,
+                                      std::move(argument_sources));
             return;
         }
 
@@ -607,7 +604,7 @@ public:
                 }
                 if (target == params.size())
                 {
-                    throw VmCompileError("VM: aucun parametre nomme '" + arg.name + "'");
+                    throw VmCompileError("VM: aucun paramètre nommé '" + arg.name + "'");
                 }
             }
             else
@@ -625,7 +622,7 @@ public:
 
             if (bound_argument[target].has_value())
             {
-                throw VmCompileError("VM: le parametre '" + params[target].name + "' est fourni plusieurs fois");
+                throw VmCompileError("VM: le paramètre '" + params[target].name + "' est fourni plusieurs fois");
             }
             const std::size_t argument_local = allocate_hidden_local("$arg");
             bound_argument[target] = argument_local;
@@ -655,7 +652,7 @@ public:
             {
                 if (!params[i].default_value)
                 {
-                    throw VmCompileError("VM: argument manquant pour le parametre '" + params[i].name + "'");
+                    throw VmCompileError("VM: argument manquant pour le paramètre '" + params[i].name + "'");
                 }
                 append_call_argument(operands, "", constant_nil(expr.paren));
             }
@@ -680,7 +677,9 @@ public:
         {
             throw VmCompileError("VM: trop d'arguments ABI dans un appel");
         }
-        m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL, std::move(operands), lir_loc(expr.paren));
+        m_last_value = emit_value(LirOpcode::IR_OP_CALL_GLOBAL,
+                                  std::move(operands),
+                                  call_source);
     }
 
     void visit(BlockStmt &stmt) override
@@ -711,7 +710,7 @@ public:
         const LirOperand value = stmt.value ? lower_expr(*stmt.value) : constant_nil(stmt.keyword);
         const LirOperand checked = m_return_type.empty()
                                        ? value
-                                       : assert_type(value, m_return_type, lir_loc(stmt.keyword));
+                                       : assert_type(value, m_return_type, lir_loc(stmt.keyword), current_function_context());
         m_function.set_terminator(
             m_current_block,
             LirTerminator::return_value(checked, lir_loc(stmt.keyword)));
@@ -724,7 +723,8 @@ public:
             LirOperand value = stmt.initializer ? lower_expr(*stmt.initializer) : constant_nil(stmt.name);
             if (!stmt.type.empty())
             {
-                value = assert_type(value, type_name(stmt.type), lir_loc(stmt.name));
+                value = assert_type(value, type_name(stmt.type), lir_loc(stmt.name),
+                                   variable_context(stmt.name.lexeme));
             }
             emit_effect(LirOpcode::IR_OP_STORE_GLOBAL,
                         {LirOperand::global(m_module.add_global(stmt.name.lexeme)), value},
@@ -733,7 +733,7 @@ public:
         }
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: variable locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: variable locale dupliquée '" + stmt.name.lexeme + "'");
         }
 
         const std::size_t local_index = m_next_local_index++;
@@ -746,7 +746,8 @@ public:
         if (!stmt.type.empty())
         {
             m_local_types.emplace(local_index, type_name(stmt.type));
-            initial_value = assert_type(initial_value, type_name(stmt.type), lir_loc(stmt.name));
+            initial_value = assert_type(initial_value, type_name(stmt.type), lir_loc(stmt.name),
+                                        variable_context(stmt.name.lexeme));
         }
         if (stmt.is_fixe)
         {
@@ -760,7 +761,7 @@ public:
     {
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: fonction locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: fonction locale dupliquée '" + stmt.name.lexeme + "'");
         }
         const std::size_t local_index = m_next_local_index++;
         m_function.locals.push_back({local_index, stmt.name.lexeme});
@@ -795,7 +796,7 @@ public:
 
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: classe locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: classe locale dupliquée '" + stmt.name.lexeme + "'");
         }
         const std::size_t local = m_next_local_index++;
         m_function.locals.push_back({local, stmt.name.lexeme});
@@ -804,6 +805,10 @@ public:
 
         LirClassDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
+        descriptor.type_identity = nominal_type_identity(m_function.source_path, stmt.name);
+        Token identity = stmt.name;
+        identity.lexeme = descriptor.type_identity;
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, TypeExpr::named(identity));
         descriptor.parent = type_name(stmt.parent);
         for (const TypeExpr &interface : stmt.interfaces)
         {
@@ -852,10 +857,14 @@ public:
 
         if (has_binding_in_current_scope(stmt.name.lexeme))
         {
-            throw VmCompileError("VM: interface locale dupliquee '" + stmt.name.lexeme + "'");
+            throw VmCompileError("VM: interface locale dupliquée '" + stmt.name.lexeme + "'");
         }
         LirInterfaceDescriptor descriptor;
         descriptor.name = stmt.name.lexeme;
+        descriptor.type_identity = nominal_type_identity(m_function.source_path, stmt.name);
+        Token identity = stmt.name;
+        identity.lexeme = descriptor.type_identity;
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, TypeExpr::named(identity));
         for (auto &member : stmt.methods)
         {
             auto *method = dynamic_cast<FunctionDeclStmt *>(member.get());
@@ -885,15 +894,27 @@ public:
                     {LirOperand::local(local), value},
                     lir_loc(stmt.name));
     }
-    void visit(TypeAliasDeclStmt &) override
+    void visit(TypeAliasDeclStmt &stmt) override
     {
-        // Type aliases are erased before lowering.
+        const TypeExpr resolved = resolve_type_aliases(stmt.target, m_type_aliases);
+        if (resolved.kind == TypeExprKind::NAMED &&
+            resolved.name.find('@') != std::string::npos)
+        {
+            std::string value_name = runtime_type_name(stmt.target, m_type_aliases, false);
+            for (auto value = m_nominal_type_values.find(value_name);
+                 value != m_nominal_type_values.end();
+                 value = m_nominal_type_values.find(value_name))
+                value_name = value->second;
+            m_nominal_type_values.insert_or_assign(stmt.name.lexeme,
+                                                   std::move(value_name));
+        }
+        m_type_aliases.insert_or_assign(stmt.name.lexeme, resolved);
     }
     void visit(ImportStmt &stmt) override
     {
         if (m_imports == nullptr || !m_imports->contains(&stmt))
         {
-            throw VmCompileError("VM: import non resolu '" + stmt.module_name.lexeme + "'");
+            throw VmCompileError("VM: import non résolu '" + stmt.module_name.lexeme + "'");
         }
         const ResolvedVmImport &resolved = m_imports->at(&stmt);
         for (const std::string &initializer : resolved.initializer_symbols)
@@ -906,7 +927,7 @@ public:
         {
             if (has_binding_in_current_scope(name))
             {
-                throw VmCompileError("VM: liaison d'import dupliquee '" + name + "'");
+                throw VmCompileError("VM: liaison d'import dupliquée '" + name + "'");
             }
             const std::size_t local = m_next_local_index++;
             m_function.locals.push_back({local, name});
@@ -921,14 +942,26 @@ public:
         {
             for (const ImportStmt::ImportedMember &member : stmt.imported_members)
             {
-                const auto symbol = resolved.export_symbols.find(member.name.lexeme);
-                if (symbol == resolved.export_symbols.end())
+                if (const auto type = resolved.export_types.find(member.name.lexeme); type != resolved.export_types.end())
                 {
-                    throw VmCompileError("VM: membre non exporte ou introuvable dans le module: " + member.name.lexeme);
+                    m_type_aliases.insert_or_assign(member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme,
+                                                  type->second);
+                    if (!resolved.export_symbols.contains(member.name.lexeme) &&
+                        !resolved.export_type_symbols.contains(member.name.lexeme))
+                        continue;
+                }
+                auto symbol = resolved.export_symbols.find(member.name.lexeme);
+                const auto type_symbol = resolved.export_type_symbols.find(member.name.lexeme);
+                const std::string *symbol_name = symbol == resolved.export_symbols.end()
+                    ? (type_symbol == resolved.export_type_symbols.end() ? nullptr : &type_symbol->second)
+                    : &symbol->second;
+                if (symbol_name == nullptr)
+                {
+                    throw VmCompileError("VM: membre non exporté ou introuvable dans le module: " + member.name.lexeme);
                 }
                 const LirOperand value = emit_value(
                     LirOpcode::IR_OP_LOAD_GLOBAL,
-                    {LirOperand::global(m_module.add_global(symbol->second))},
+                    {LirOperand::global(m_module.add_global(*symbol_name))},
                     lir_loc(member.name));
                 bind_local(member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme,
                            value,
@@ -942,6 +975,11 @@ public:
         {
             descriptor.members.push_back({name, m_module.add_global(symbol)});
         }
+        for (const auto &[name, symbol] : resolved.export_type_symbols)
+        {
+            if (!resolved.export_symbols.contains(name))
+                descriptor.members.push_back({name, m_module.add_global(symbol)});
+        }
         const std::size_t descriptor_index = m_module.namespaces.size();
         m_module.namespaces.push_back(std::move(descriptor));
         const LirOperand value = emit_value(LirOpcode::IR_OP_NAMESPACE,
@@ -951,6 +989,8 @@ public:
                                       ? stmt.module_name.lexeme.substr(stmt.module_name.lexeme.rfind('.') + 1)
                                       : stmt.alias.lexeme;
         bind_local(alias, value, stmt.alias.lexeme.empty() ? stmt.module_name : stmt.alias);
+        for (const auto &[name, type] : resolved.export_types)
+            m_type_aliases.insert_or_assign(alias + '.' + name, type);
     }
     void visit(IfStmt &stmt) override
     {
@@ -986,12 +1026,15 @@ public:
     void visit(ForStmt &stmt) override
     {
         const LirOperand iterable = lower_expr(*stmt.iterable);
+        const LirOperand snapshot = emit_value(LirOpcode::IR_OP_ITERATION_SNAPSHOT,
+                                               {iterable},
+                                               lir_loc(stmt.iterable->start_token()));
         const std::size_t iterable_local = allocate_hidden_local("$iter");
         const std::size_t index_local = allocate_hidden_local("$index");
         const std::size_t item_local = m_next_local_index++;
 
         emit_effect(LirOpcode::IR_OP_STORE_LOCAL,
-                    {LirOperand::local(iterable_local), iterable},
+                    {LirOperand::local(iterable_local), snapshot},
                     lir_loc(stmt.variable));
 
         const std::size_t zero_constant = m_module.add_constant(Value::entier(0), "0");
@@ -1050,6 +1093,9 @@ public:
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
         leave_scope();
+        // The loop variable and everything the body declares are new bindings on
+        // each turn, so their slots start each turn empty.
+        clear_body_locals(body_block, item_local, stmt.variable);
         if (!current_block().is_terminated())
         {
             m_function.set_terminator(m_current_block, LirTerminator::jump(increment_block));
@@ -1092,9 +1138,13 @@ public:
                                                         lir_loc(Token{TokenType::TANT_QUE, "tant que", 0, 0})));
 
         m_current_block = body_block;
+        const std::size_t first_body_local = m_next_local_index;
         m_loop_stack.push_back({condition_block, exit_block});
         stmt.body->accept(*this);
         m_loop_stack.pop_back();
+        clear_body_locals(body_block,
+                          first_body_local,
+                          Token{TokenType::TANT_QUE, "tant que", 0, 0});
         if (!current_block().is_terminated())
         {
             m_function.set_terminator(m_current_block, LirTerminator::jump(condition_block));
@@ -1239,7 +1289,8 @@ public:
                         matched = assert_type(
                             matched,
                             m_return_type,
-                            lir_loc(branch.terminator_token));
+                            lir_loc(branch.terminator_token),
+                            current_function_context());
                     }
                     m_function.set_terminator(m_current_block,
                                               LirTerminator::return_value(
@@ -1336,7 +1387,10 @@ private:
     bool m_module_scope = false;
     std::size_t m_parameter_offset = 0;
     const ResolvedVmImports *m_imports = nullptr;
-    const TypeAliasTable *m_type_aliases = nullptr;
+    TypeAliasTable m_type_aliases;
+    std::vector<TypeAliasTable> m_type_alias_scopes;
+    NominalValueTable m_nominal_type_values;
+    std::vector<NominalValueTable> m_nominal_type_value_scopes;
     LirOperand m_last_value = LirOperand::temp(0);
     std::size_t m_next_temp = 0;
     std::size_t m_current_block = 0;
@@ -1364,8 +1418,18 @@ private:
 
     [[nodiscard]] LirOperand load_named_value(const Token &name)
     {
-        IdentifierExpr identifier(name);
-        return lower_expr(identifier);
+        Token part = name;
+        auto dot = name.lexeme.find('.');
+        part.lexeme = name.lexeme.substr(0, dot);
+        ExprPtr expression = std::make_unique<IdentifierExpr>(part);
+        while (dot != std::string::npos)
+        {
+            const auto end = name.lexeme.find('.', dot + 1);
+            part.lexeme = name.lexeme.substr(dot + 1, end == std::string::npos ? end : end - dot - 1);
+            expression = std::make_unique<MemberAccessExpr>(std::move(expression), name, part);
+            dot = end;
+        }
+        return lower_expr(*expression);
     }
 
     [[nodiscard]] LirOperand emit_class_value(const std::size_t descriptor_index,
@@ -1379,7 +1443,11 @@ private:
         for (const TypeExpr &interface : stmt.interfaces)
         {
             Token resolved = interface.as_token();
-            resolved.lexeme = type_name(interface);
+            resolved.lexeme = runtime_type_name(interface, m_type_aliases, false);
+            for (auto value = m_nominal_type_values.find(resolved.lexeme);
+                 value != m_nominal_type_values.end();
+                 value = m_nominal_type_values.find(resolved.lexeme))
+                resolved.lexeme = value->second;
             operands.push_back(load_named_value(resolved));
         }
         return emit_value(LirOpcode::IR_OP_CLASS, std::move(operands), lir_loc(stmt.name));
@@ -1398,6 +1466,7 @@ private:
         {
             function.params.push_back({i + 1, method.params[i].name});
             function.optional_params.push_back(static_cast<bool>(method.params[i].default_value));
+            function.parameter_names.push_back(method.params[i].name);
         }
         std::size_t flag = method.params.size() + 1;
         for (const Parameter &parameter : method.params)
@@ -1419,7 +1488,8 @@ private:
                                 false,
                                 1,
                                 m_imports,
-                                m_type_aliases);
+                                &m_type_aliases,
+                                &m_nominal_type_values);
         lowerer.lower(*method.body, method.params);
 
         LirMethodDescriptor descriptor;
@@ -1446,6 +1516,44 @@ private:
         const std::size_t temp_index = m_next_temp++;
         m_function.temps.push_back(temp_index);
         return LirOperand::temp(temp_index);
+    }
+
+    // Puts a CLEAR_LOCALS at the top of a loop body covering every slot the body
+    // allocated. It goes in after lowering because only then is the range known,
+    // and at the front because the body's first act must be to start from empty
+    // slots -- including the loop variable, which is stored just after it.
+    //
+    // Reusing one slot across iterations is what a frame naturally does, and it
+    // is invisible until a closure captures that slot: the cell is created once
+    // and every closure made later in the loop shares it, so all of them see the
+    // last iteration's value. The tree walker gives each iteration its own
+    // environment and so its own binding; this is how the VM agrees.
+    void clear_body_locals(const std::size_t body_block,
+                           const std::size_t first_local,
+                           const Token &site)
+    {
+        const std::size_t count = m_next_local_index - first_local;
+        if (count == 0)
+        {
+            return;
+        }
+        std::vector<LirInstruction> &instructions = m_function.blocks[body_block].instructions;
+        instructions.insert(instructions.begin(),
+                            LirInstruction::make(LirOpcode::IR_OP_CLEAR_LOCALS,
+                                                 LirOperand::temp(0),
+                                                 {LirOperand::local(first_local),
+                                                  LirOperand::local(count)},
+                                                 lir_loc(site)));
+    }
+
+    [[nodiscard]] std::string variable_context(const std::string &name) const
+    {
+        return "la variable '" + name + "'";
+    }
+
+    [[nodiscard]] std::string current_function_context() const
+    {
+        return "la fonction '" + m_function.name + "'";
     }
 
     [[nodiscard]] std::size_t allocate_hidden_local()
@@ -1504,24 +1612,31 @@ private:
                                                 lir_loc(params[i].type));
             const LirOperand checked = assert_type(value,
                                                    type_name(params[i].type),
-                                                   lir_loc(params[i].type));
+                                                   lir_loc(params[i].type),
+                                                   "le paramètre '" + params[i].name + "'");
             emit_effect(LirOpcode::IR_OP_DISCARD, {checked}, lir_loc(params[i].type));
         }
     }
 
     [[nodiscard]] LirOperand assert_type(const LirOperand value,
                                          const std::string &type_name,
-                                         const LirSourceLocation source)
+                                         const LirSourceLocation source,
+                                         const std::string &context)
     {
+        // The operand names an annotation, not a bare type: the failure message
+        // has to say what asked for the type, the way the tree walker does.
         const std::size_t type_index = m_module.add_type(type_name);
+        const std::size_t annotation_index = m_module.add_annotation(type_index, context);
         return emit_value(LirOpcode::IR_OP_ASSERT_TYPE,
-                          {value, LirOperand::type(type_index)},
+                          {value, LirOperand::annotation(annotation_index)},
                           source);
     }
 
     void begin_scope()
     {
         m_scope_stack.emplace_back();
+        m_type_alias_scopes.push_back(m_type_aliases);
+        m_nominal_type_value_scopes.push_back(m_nominal_type_values);
     }
 
     void leave_scope()
@@ -1541,6 +1656,10 @@ private:
             }
         }
         m_scope_stack.pop_back();
+        m_type_aliases = std::move(m_type_alias_scopes.back());
+        m_type_alias_scopes.pop_back();
+        m_nominal_type_values = std::move(m_nominal_type_value_scopes.back());
+        m_nominal_type_value_scopes.pop_back();
     }
 
     void declare_binding(const std::string &name, const std::size_t local_index)
@@ -1634,6 +1753,7 @@ private:
         {
             nested.params.push_back({i, params[i].name});
             nested.optional_params.push_back(static_cast<bool>(params[i].default_value));
+            nested.parameter_names.push_back(params[i].name);
         }
         std::size_t flag_index = params.size();
         for (const Parameter &param : params)
@@ -1655,7 +1775,8 @@ private:
                                 false,
                                 0,
                                 m_imports,
-                                m_type_aliases);
+                                &m_type_aliases,
+                                &m_nominal_type_values);
         lowerer.lower(body, params);
 
         std::vector<LirOperand> operands{LirOperand::function(function_index)};
@@ -1743,12 +1864,17 @@ private:
     // names its result.
     [[nodiscard]] LirOperand emit_value(LirOpcode opcode,
                                         std::vector<LirOperand> operands,
-                                        LirSourceLocation source)
+                                        LirSourceLocation source,
+                                        std::vector<LirSourceLocation> argument_sources = {})
     {
         const LirOperand destination = allocate_temp();
         m_function.append_instruction(
             m_current_block,
-            LirInstruction::make(opcode, destination, std::move(operands), source));
+            LirInstruction::make(opcode,
+                                 destination,
+                                 std::move(operands),
+                                 source,
+                                 std::move(argument_sources)));
         return destination;
     }
 
@@ -1771,21 +1897,36 @@ private:
 
     [[nodiscard]] std::string type_name(const TypeExpr &type) const
     {
-        return m_type_aliases == nullptr
-                   ? type.to_string()
-                   : runtime_type_name(type, *m_type_aliases);
+        return runtime_type_name(type, m_type_aliases);
     }
 };
 
 } // namespace
 
-LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
+LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports,
+                        const TypeAliasTable &imported_types)
 {
     LirModule module;
     module.name = program.source_path.empty() ? "__module__" : program.source_path;
     FunctionLowerer::FunctionTable functions;
     FunctionLowerer::GlobalTypeTable global_types;
-    TypeAliasTable type_aliases;
+    FunctionLowerer::NominalValueTable nominal_type_values;
+    TypeAliasTable type_aliases = imported_types;
+    for (const auto &statement : program.statements)
+    {
+        if (const auto *klass = dynamic_cast<const ClassDeclStmt *>(statement.get()))
+        {
+            Token identity = klass->name;
+            identity.lexeme = nominal_type_identity(program.source_path, klass->name);
+            type_aliases.insert_or_assign(klass->name.lexeme, TypeExpr::named(identity));
+        }
+        else if (const auto *interface = dynamic_cast<const InterfaceDeclStmt *>(statement.get()))
+        {
+            Token identity = interface->name;
+            identity.lexeme = nominal_type_identity(program.source_path, interface->name);
+            type_aliases.insert_or_assign(interface->name.lexeme, TypeExpr::named(identity));
+        }
+    }
     std::unordered_set<std::string> fixed_globals;
     struct FunctionWork
     {
@@ -1801,7 +1942,25 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         if (auto *alias =
                 dynamic_cast<TypeAliasDeclStmt *>(statement.get()))
         {
-            type_aliases.emplace(alias->name.lexeme, &alias->target);
+            type_aliases.insert_or_assign(alias->name.lexeme, alias->target);
+        }
+    }
+    for (auto &statement : program.statements)
+    {
+        if (const auto *alias =
+                dynamic_cast<const TypeAliasDeclStmt *>(statement.get()))
+        {
+            const TypeExpr resolved = resolve_type_aliases(alias->target, type_aliases);
+            if (resolved.kind == TypeExprKind::NAMED &&
+                resolved.name.find('@') != std::string::npos)
+            {
+                nominal_type_values.insert_or_assign(
+                    alias->name.lexeme,
+                    runtime_type_name(alias->target, type_aliases, false));
+            }
+            type_aliases.insert_or_assign(
+                alias->name.lexeme,
+                resolved);
         }
     }
 
@@ -1820,7 +1979,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             if (function->params.size() > 255)
             {
-                throw VmCompileError("VM: trop de parametres dans '" + function->name.lexeme + "'");
+                throw VmCompileError("VM: trop de paramètres dans '" + function->name.lexeme + "'");
             }
             if (function->body == nullptr)
             {
@@ -1828,7 +1987,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
             }
             if (!functions.emplace(function->name.lexeme, function).second)
             {
-                throw VmCompileError("VM: fonction globale dupliquee '" + function->name.lexeme + "'");
+                throw VmCompileError("VM: fonction globale dupliquée '" + function->name.lexeme + "'");
             }
             const std::size_t function_index = module.functions.size();
             functions_to_lower.push_back({function, function_index, false});
@@ -1844,6 +2003,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             LirInterfaceDescriptor descriptor;
             descriptor.name = interface->name.lexeme;
+            descriptor.type_identity = nominal_type_identity(program.source_path, interface->name);
             for (auto &member : interface->methods)
             {
                 auto *method = dynamic_cast<FunctionDeclStmt *>(member.get());
@@ -1873,6 +2033,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             LirClassDescriptor descriptor;
             descriptor.name = klass->name.lexeme;
+            descriptor.type_identity = nominal_type_identity(program.source_path, klass->name);
             descriptor.parent = runtime_type_name(klass->parent, type_aliases);
             for (const TypeExpr &interface : klass->interfaces)
             {
@@ -1924,7 +2085,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                     variable->name.lexeme,
                     runtime_type_name(variable->type, type_aliases)).second)
             {
-                throw VmCompileError("VM: variable globale dupliquee '" + variable->name.lexeme + "'");
+                throw VmCompileError("VM: variable globale dupliquée '" + variable->name.lexeme + "'");
             }
             if (variable->is_fixe)
             {
@@ -1952,6 +2113,7 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
         {
             lir_function.params.push_back({param_index + parameter_offset, function->params[param_index].name});
             lir_function.optional_params.push_back(static_cast<bool>(function->params[param_index].default_value));
+            lir_function.parameter_names.push_back(function->params[param_index].name);
         }
         std::size_t flag_index = function->params.size() + parameter_offset;
         for (const Parameter &param : function->params)
@@ -1973,7 +2135,8 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 false,
                                 parameter_offset,
                                 &imports,
-                                &type_aliases);
+                                &type_aliases,
+                                &nominal_type_values);
         lowerer.lower(*function->body, function->params);
     }
 
@@ -1993,7 +2156,8 @@ LirModule AstToLir::lower(Program &program, const ResolvedVmImports &imports)
                                 true,
                                 0,
                                 &imports,
-                                &type_aliases);
+                                &type_aliases,
+                                &nominal_type_values);
         lowerer.lower_module_statements(initializer_statements);
         module.initializer_functions.push_back(module.functions.size() - 1);
     }

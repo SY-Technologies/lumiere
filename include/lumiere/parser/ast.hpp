@@ -22,6 +22,10 @@ namespace lumiere
     struct Argument
     {
         std::string name;
+        // Named arguments point at their name; positional arguments point at
+        // the first token of their expression. Runtime diagnostics retain this
+        // after evaluation so they can identify the argument that failed.
+        Token site;
         ExprPtr value;
     };
 
@@ -42,6 +46,7 @@ namespace lumiere
     struct IdentifierExpr;
     struct BinaryExpr;
     struct DictionaryExpr;
+    struct SetExpr;
     struct UnaryExpr;
     struct CastExpr;
     struct TypeCheckExpr;
@@ -79,6 +84,7 @@ namespace lumiere
         virtual void visit(IdentifierExpr &) = 0;
         virtual void visit(BinaryExpr &) = 0;
         virtual void visit(DictionaryExpr &) = 0;
+        virtual void visit(SetExpr &) = 0;
         virtual void visit(UnaryExpr &) = 0;
         virtual void visit(CastExpr &) = 0;
         virtual void visit(TypeCheckExpr &) = 0;
@@ -118,6 +124,19 @@ namespace lumiere
     {
         virtual ~Expr() = default;
         virtual void accept(ExprVisitor &v) = 0;
+
+        /**
+         * @brief The first token of this expression.
+         *
+         * A runtime diagnostic about an expression's value as a whole points
+         * here; `docs/runtime-diagnostic-locations.md` says which failures
+         * those are. It is pure so that a new expression node cannot forget to
+         * answer: the question used to be asked by a chain of `dynamic_cast`
+         * ending in one that throws, and `agir selon` -- an expression as well
+         * as a statement -- was not in it, so using one as an index or as the
+         * thing iterated aborted with `std::bad_cast`.
+         */
+        [[nodiscard]] virtual const Token &start_token() const = 0;
     };
 
     struct Stmt
@@ -136,6 +155,8 @@ namespace lumiere
             : token(std::move(token)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return token; }
     };
 
     struct IdentifierExpr : Expr
@@ -146,6 +167,8 @@ namespace lumiere
             : name(std::move(name)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return name; }
     };
 
     struct BinaryExpr : Expr
@@ -158,6 +181,8 @@ namespace lumiere
             : left(std::move(left)), op(std::move(op)), right(std::move(right)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return left->start_token(); }
     };
 
     struct DictionaryEntryExpr
@@ -175,6 +200,22 @@ namespace lumiere
             : brace(std::move(brace)), entries(std::move(entries)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return brace; }
+    };
+
+    /** @brief A set literal, `{a, b, c}`. An empty `{}` is a dictionary. */
+    struct SetExpr : Expr
+    {
+        Token brace; // the '{' token for error reporting
+        ExprList elements;
+
+        SetExpr(Token brace, ExprList elements)
+            : brace(std::move(brace)), elements(std::move(elements)) {}
+
+        void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return brace; }
     };
 
     struct UnaryExpr : Expr
@@ -186,6 +227,8 @@ namespace lumiere
             : op(std::move(op)), operand(std::move(operand)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return op; }
     };
 
     struct CastExpr : Expr
@@ -197,6 +240,8 @@ namespace lumiere
             : operand(std::move(operand)), target_type(std::move(target_type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return operand->start_token(); }
     };
 
     struct TypeCheckExpr : Expr
@@ -209,6 +254,8 @@ namespace lumiere
             : operand(std::move(operand)), keyword(std::move(keyword)), type(std::move(type)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return operand->start_token(); }
     };
 
     struct FunctionExpr : Expr
@@ -225,6 +272,8 @@ namespace lumiere
               body(std::move(body)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
     };
 
     struct CallExpr : Expr
@@ -237,6 +286,8 @@ namespace lumiere
             : callee(std::move(callee)), paren(std::move(paren)), args(std::move(args)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return callee->start_token(); }
     };
 
     struct ListExpr : Expr
@@ -248,6 +299,8 @@ namespace lumiere
             : bracket(std::move(bracket)), elements(std::move(elements)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return bracket; }
     };
 
     struct MemberAccessExpr : Expr
@@ -260,6 +313,8 @@ namespace lumiere
             : object(std::move(object)), dot(std::move(dot)), member(std::move(member)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return object->start_token(); }
     };
 
     struct IndexAccessExpr : Expr
@@ -272,6 +327,8 @@ namespace lumiere
             : object(std::move(object)), bracket(std::move(bracket)), index(std::move(index)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return object->start_token(); }
     };
     struct PropagationExpr : Expr
     {
@@ -282,7 +339,19 @@ namespace lumiere
             : keyword(std::move(keyword)), operand(std::move(operand)) {}
 
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
     };
+
+    /** @brief Token that names the callable in a source-level call. */
+    inline const Token &call_site_token(const CallExpr &expr)
+    {
+        if (const auto *member = dynamic_cast<const MemberAccessExpr *>(expr.callee.get()))
+        {
+            return member->member;
+        }
+        return expr.callee->start_token();
+    }
 
     // Statement nodes 
 
@@ -566,6 +635,9 @@ namespace lumiere
 
         void accept(StmtVisitor &v) override { v.visit(*this); }
         void accept(ExprVisitor &v) override { v.visit(*this); }
+
+        // The keyword, as for every other control-flow construct.
+        [[nodiscard]] const Token &start_token() const override { return keyword; }
     };
 
 } // namespace lumiere

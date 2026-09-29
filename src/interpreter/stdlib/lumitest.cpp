@@ -102,11 +102,18 @@ void run_before_all_hooks_if_needed(IRuntime &runtime,
             continue;
         }
 
-        group.before_all_ran = true;
+        // Marked ran only once every hook has actually completed. A hook that
+        // throws must leave this group retried on the next test(), not marked
+        // done: setting the flag first (as before) meant a failing avant_tout
+        // reported its error on the first test in the group and then silently
+        // skipped setup -- never retried, never reported again -- for every
+        // test after it, which could pass or fail for unrelated reasons with
+        // no fixture in place.
         for (const Value &hook : group.before_all_hooks)
         {
             run_hook(runtime, hook, site, "LumiTest.avant_tout");
         }
+        group.before_all_ran = true;
     }
 }
 
@@ -177,7 +184,7 @@ bool value_contains(IRuntime &runtime,
 
     if (container.is_ensemble())
     {
-        for (const Value &element : container.as_ensemble()->elements)
+        for (const Value &element : container.as_ensemble()->items())
         {
             if (runtime.is_equal(element, expected))
             {
@@ -189,7 +196,7 @@ bool value_contains(IRuntime &runtime,
 
     if (container.is_dictionnaire())
     {
-        for (const auto &entry : container.as_dictionnaire()->entries)
+        for (const auto &entry : container.as_dictionnaire()->items())
         {
             if (runtime.is_equal(entry.first, expected))
             {
@@ -223,8 +230,8 @@ double as_numeric(IRuntime &runtime,
     return 0.0;
 }
 
-void bind_context_methods(const std::shared_ptr<LumiereObject> &context,
-                          const std::shared_ptr<LumiereObject> &root)
+void bind_context_methods(const Ref<LumiereObject> &context,
+                          const Ref<LumiereObject> &root)
 {
     static const std::vector<std::string> method_names = {
         "test",
@@ -250,16 +257,23 @@ void bind_context_methods(const std::shared_ptr<LumiereObject> &context,
 } // namespace
 
 void register_lumitest_module(Module &module,
-                              std::shared_ptr<LumiTestModuleState> state)
+                              Ref<LumiTestModuleState> state_ref)
 {
     const auto &make_native_function = native_function_factory();
-    module.state = state;
-    auto root = std::make_shared<LumiereObject>();
-    auto context_object = std::make_shared<LumiereObject>();
-    const Value context_value = Value::objet(context_object);
+    module.state = state_ref;
+    auto root = make_ref<LumiereObject>();
+    auto context_object = make_ref<LumiereObject>();
+    // The handlers below reach the module state and the context object through
+    // raw pointers. A Ref captured inside a std::function is a reference the
+    // collector cannot see, and the context object closes a cycle with the very
+    // methods bound onto it, so such a capture would leak the whole module.
+    // The owning references are declared on each finished function instead,
+    // once the table below is complete.
+    auto *const state = state_ref.get();
+    auto *const context = context_object.get();
 
     root->fields["test"] = Value::fonction(make_native_function(
-        [state, context_value](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+        [state, context](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             if (state->abort_requested)
             {
                 return Value::rien();
@@ -302,7 +316,7 @@ void register_lumitest_module(Module &module,
                     }
                 }
 
-                invoke_callback(runtime, args[1].value, native_args.site, context_value);
+                invoke_callback(runtime, args[1].value, native_args.site, Value::objet(Ref<LumiereObject>(context)));
                 result.passed = true;
             }
             catch (const RuntimeError &error)
@@ -360,7 +374,7 @@ void register_lumitest_module(Module &module,
         }));
 
     root->fields["groupe"] = Value::fonction(make_native_function(
-        [state, context_value](IRuntime &runtime, const NativeArgs &native_args) -> Value {
+        [state, context](IRuntime &runtime, const NativeArgs &native_args) -> Value {
             if (state->abort_requested)
             {
                 return Value::rien();
@@ -381,7 +395,7 @@ void register_lumitest_module(Module &module,
 
             try
             {
-                invoke_callback(runtime, args[1].value, native_args.site, context_value);
+                invoke_callback(runtime, args[1].value, native_args.site, Value::objet(Ref<LumiereObject>(context)));
 
                 if (state->group_contexts.back().before_all_ran)
                 {
@@ -590,6 +604,18 @@ void register_lumitest_module(Module &module,
             return Value::rien();
         }));
 
+    // Each handler above holds the module state, and two of them the context
+    // object. Declaring both on every one of them is truthful -- the function
+    // really does own them from here -- and it is what makes the context
+    // object's cycle with its own methods one a collection can break.
+    for (auto &[name, field] : root->fields)
+    {
+        if (field.is_fonction())
+        {
+            field.as_fonction()->native_captures = {state_ref, context_object};
+        }
+    }
+
     bind_context_methods(context_object, root);
 
     stdlib_bind_public_value(module, "test", root->fields["test"]);
@@ -605,5 +631,28 @@ void register_lumitest_module(Module &module,
     stdlib_bind_public_value(module, "vérifier_contient", root->fields["vérifier_contient"]);
     stdlib_bind_public_value(module, "vérifier_approx", root->fields["vérifier_approx"]);
 }
+
+
+void LumiTestModuleState::trace_references(RefVisitor &visitor) const
+{
+    const auto visit_all = [&visitor](const std::vector<Value> &hooks) {
+        for (const Value &hook : hooks)
+        {
+            if (RefCounted *held = hook.ref())
+            {
+                visitor.visit(held);
+            }
+        }
+    };
+    for (const GroupContext &group : group_contexts)
+    {
+        visit_all(group.before_all_hooks);
+        visit_all(group.before_each_hooks);
+        visit_all(group.after_each_hooks);
+        visit_all(group.after_all_hooks);
+    }
+}
+
+void LumiTestModuleState::clear_references() { group_contexts.clear(); }
 
 } // namespace lumiere

@@ -19,7 +19,7 @@ std::uint8_t require_u8_index(const std::size_t index, const char *what)
 {
     if (index > 0xFF)
     {
-        throw VmCompileError(std::string("VM: ") + what + " depasse le format bytecode sur un octet");
+        throw VmCompileError(std::string("VM: ") + what + " dépasse le format bytecode sur un octet");
     }
     return static_cast<std::uint8_t>(index);
 }
@@ -28,7 +28,7 @@ std::uint16_t require_u16_offset(const std::size_t offset, const char *what)
 {
     if (offset > 0xFFFF)
     {
-        throw VmCompileError(std::string("VM: ") + what + " depasse le format bytecode sur deux octets");
+        throw VmCompileError(std::string("VM: ") + what + " dépasse le format bytecode sur deux octets");
     }
     return static_cast<std::uint16_t>(offset);
 }
@@ -62,6 +62,8 @@ std::size_t instr_size(const LirModule &module,
     case LirOpcode::IR_OP_LOAD_CAPTURE:
     case LirOpcode::IR_OP_STORE_CAPTURE:
         return 2;
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        return 3;
     case LirOpcode::IR_OP_CLOSURE:
         return 4 + (instruction.operands.size() - 1) * 2;
     case LirOpcode::IR_OP_NOT:
@@ -98,7 +100,9 @@ std::size_t instr_size(const LirModule &module,
         return 3;
     case LirOpcode::IR_OP_LIST:
     case LirOpcode::IR_OP_DICTIONARY:
+    case LirOpcode::IR_OP_ENSEMBLE:
         return 2;
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
     case LirOpcode::IR_OP_INDEX_GET:
     case LirOpcode::IR_OP_INDEX_SET:
@@ -201,6 +205,13 @@ void emit_instr(const LirModule &module,
         chunk.write_byte(require_u8_index(instruction.operands.at(0).index, "l'index de local"),
                          bc_loc(instruction.source));
         return;
+    case LirOpcode::IR_OP_CLEAR_LOCALS:
+        chunk.write_opcode(Opcode::CLEAR_LOCALS, bc_loc(instruction.source));
+        chunk.write_byte(require_u8_index(instruction.operands.at(0).index, "l'index de local"),
+                         bc_loc(instruction.source));
+        chunk.write_byte(require_u8_index(instruction.operands.at(1).index, "le nombre de locaux"),
+                         bc_loc(instruction.source));
+        return;
     case LirOpcode::IR_OP_LOAD_CAPTURE:
         chunk.write_opcode(Opcode::GET_CAPTURE, bc_loc(instruction.source));
         chunk.write_byte(require_u8_index(instruction.operands.at(0).index, "l'index de capture"),
@@ -215,7 +226,7 @@ void emit_instr(const LirModule &module,
     {
         const std::size_t function_index = instruction.operands.at(0).index;
         chunk.write_opcode(Opcode::CLOSURE, bc_loc(instruction.source));
-        chunk.write_u16(require_u16_offset(function_index, "l'index de fonction fermee"),
+        chunk.write_u16(require_u16_offset(function_index, "l'index de fonction fermée"),
                         bc_loc(instruction.source));
         chunk.write_byte(require_u8_index(instruction.operands.size() - 1, "le nombre de captures"),
                          bc_loc(instruction.source));
@@ -279,8 +290,12 @@ void emit_instr(const LirModule &module,
         chunk.write_byte(static_cast<std::uint8_t>(arity), bc_loc(instruction.source));
         for (std::size_t i = 1; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 1) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }
@@ -292,8 +307,12 @@ void emit_instr(const LirModule &module,
                                 bc_loc(instruction.source));
         for (std::size_t i = 1; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 1) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }
@@ -322,8 +341,12 @@ void emit_instr(const LirModule &module,
         }
         for (std::size_t i = 2; i < instruction.operands.size(); i += 2)
         {
+            const std::size_t argument = (i - 2) / 2;
+            const SourceLocation location = argument < instruction.argument_sources.size()
+                                                ? bc_loc(instruction.argument_sources[argument])
+                                                : bc_loc(instruction.source);
             chunk.write_u16(require_u16_offset(instruction.operands[i].index, "l'index de nom d'argument"),
-                            bc_loc(instruction.source));
+                            location);
         }
         return;
     }
@@ -383,8 +406,15 @@ void emit_instr(const LirModule &module,
         chunk.write_opcode(Opcode::DICTIONARY, bc_loc(instruction.source));
         chunk.write_byte(static_cast<std::uint8_t>(instruction.operands.size() / 2), bc_loc(instruction.source));
         return;
+    case LirOpcode::IR_OP_ENSEMBLE:
+        chunk.write_opcode(Opcode::ENSEMBLE, bc_loc(instruction.source));
+        chunk.write_byte(static_cast<std::uint8_t>(instruction.operands.size()), bc_loc(instruction.source));
+        return;
     case LirOpcode::IR_OP_SEQUENCE_LENGTH:
         chunk.write_opcode(Opcode::SEQUENCE_LENGTH, bc_loc(instruction.source));
+        return;
+    case LirOpcode::IR_OP_ITERATION_SNAPSHOT:
+        chunk.write_opcode(Opcode::ITERATION_SNAPSHOT, bc_loc(instruction.source));
         return;
     case LirOpcode::IR_OP_INDEX_GET:
         chunk.write_opcode(Opcode::INDEX_GET, bc_loc(instruction.source));
@@ -529,6 +559,11 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         bytecode_module.globals.push_back(global.name);
     }
+    bytecode_module.annotations.reserve(module.annotations.size());
+    for (const LirAnnotation &annotation : module.annotations)
+    {
+        bytecode_module.annotations.push_back({annotation.type_index, annotation.context});
+    }
     bytecode_module.types.reserve(module.types.size());
     for (const LirType &type : module.types)
     {
@@ -543,6 +578,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         VmClassDescriptor descriptor;
         descriptor.name = klass.name;
+        descriptor.type_identity = klass.type_identity;
         descriptor.parent = klass.parent;
         descriptor.interfaces = klass.interfaces;
         for (const LirFieldDescriptor &field : klass.fields)
@@ -563,7 +599,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
                 if (source.kind != LirOperandKind::IR_OPERAND_LOCAL &&
                     source.kind != LirOperandKind::IR_OPERAND_CAPTURE)
                 {
-                    throw VmCompileError("VM: source de capture de methode invalide");
+                    throw VmCompileError("VM: source de capture de méthode invalide");
                 }
                 emitted.capture_sources.push_back({source.kind == LirOperandKind::IR_OPERAND_CAPTURE,
                                                    source.index});
@@ -576,6 +612,7 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
     {
         VmInterfaceDescriptor descriptor;
         descriptor.name = interface.name;
+        descriptor.type_identity = interface.type_identity;
         for (const LirInterfaceMethodDescriptor &method : interface.methods)
         {
             descriptor.methods.push_back({method.name, method.parameter_types, method.return_type});
@@ -618,10 +655,19 @@ ModuleBytecode LirToBytecode::emit(const LirModule &module, const std::size_t en
         bytecode_function.arity = lir_function.params.size();
         bytecode_function.source_arity = lir_function.source_arity;
         bytecode_function.optional_params = lir_function.optional_params;
+        bytecode_function.parameter_names = lir_function.parameter_names;
         bytecode_function.local_slot_count = lir_function.params.size() + lir_function.locals.size();
         bytecode_function.capture_count = lir_function.captures.size();
         emit_fn(module, lir_function, bytecode_function);
         bytecode_module.functions.push_back(std::move(bytecode_function));
+    }
+
+    for (const std::size_t index : bytecode_module.initializer_function_indices)
+    {
+        if (index < bytecode_module.functions.size())
+        {
+            bytecode_module.functions[index].is_module_initializer = true;
+        }
     }
 
     return bytecode_module;

@@ -1,0 +1,16 @@
+importer JSON
+
+fonction principal() {
+    soit q = '"'
+    soit texte = "{" + q + "langage" + q + ": " + q + "Lumière" + q + ", " + q + "version" + q + ": 1, " + q + "stable" + q + ": true, " + q + "notes" + q + ": [1.5, null, " + q + "ok" + q + "]}"
+    soit valeur = agir selon JSON.analyser(texte) {
+        Succès(v) -> v
+        Échec(e) -> { afficher("echec: " + e.cause) rien }
+    }
+    afficher(valeur["langage"])
+    soit relu = agir selon JSON.encoder_indenté(valeur, 2) {
+        Succès(t) -> t
+        Échec(e) -> "echec: " + e.cause
+    }
+    afficher(relu)
+}

@@ -1,0 +1,5 @@
+// Une valeur non appelable désigne l'expression appelée.
+fonction principal() {
+    soit valeur = 1
+    valeur()
+}

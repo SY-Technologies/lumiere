@@ -147,7 +147,7 @@ namespace lumiere
                     DiagnosticSeverity::ERROR_LEVEL,
                     error.message,
                     "",
-                    {start, end, error.token.start_line, error.token.start_column},
+                    {start, end, error.token.line, error.token.column},
                 });
                 if (m_current == statement_start && !is_at_end())
                 {
@@ -340,7 +340,7 @@ namespace lumiere
             {
                 if (is_prive)
                 {
-                    error(peek(), "une classe de niveau fichier ne peut pas etre marquee 'prive'");
+                    error(peek(), "une classe de niveau fichier ne peut pas être marquée 'privé'");
                 }
                 return parse_class_decl(true);
             }
@@ -348,7 +348,7 @@ namespace lumiere
             {
                 if (is_prive)
                 {
-                    error(peek(), "une interface de niveau fichier ne peut pas etre marquee 'prive'");
+                    error(peek(), "une interface de niveau fichier ne peut pas être marquée 'privé'");
                 }
                 return parse_interface_decl(true);
             }
@@ -437,7 +437,7 @@ namespace lumiere
         while (check(TokenType::POINT) && m_tokens[m_current + 1].type == TokenType::IDENT)
         {
             advance();
-            const Token &segment = expect(TokenType::IDENT, "attendu un segment de package apres '.'");
+            const Token &segment = expect(TokenType::IDENT, "attendu un segment de package après '.'");
             module_name += ".";
             module_name += segment.lexeme;
         }
@@ -447,24 +447,24 @@ namespace lumiere
 
     std::vector<ImportStmt::ImportedMember> Parser::parse_imported_members()
     {
-        expect(TokenType::ACCOLADE_OUV, "attendu '{' pour ouvrir la liste des imports selectifs");
+        expect(TokenType::ACCOLADE_OUV, "attendu '{' pour ouvrir la liste des imports sélectifs");
 
         std::vector<ImportStmt::ImportedMember> members;
         do
         {
-            const Token &name = expect(TokenType::IDENT, "attendu un nom membre dans l'import selectif");
+            const Token &name = expect(TokenType::IDENT, "attendu un nom membre dans l'import sélectif");
             Token alias(TokenType::RIEN, "", name.line, name.column);
 
             if (check(TokenType::COMME))
             {
                 advance();
-                alias = expect(TokenType::IDENT, "attendu un alias apres 'comme'");
+                alias = expect(TokenType::IDENT, "attendu un alias après 'comme'");
             }
 
             members.emplace_back(name, alias);
         } while (match({TokenType::VIRGULE}));
 
-        expect(TokenType::ACCOLADE_FERM, "attendu '}' apres la liste des imports selectifs");
+        expect(TokenType::ACCOLADE_FERM, "attendu '}' après la liste des imports sélectifs");
         return members;
     }
 
@@ -543,19 +543,11 @@ namespace lumiere
     {
         advance(); // consume si
 
-        // optional parentheses around condition
-        bool has_parens = check(TokenType::PAREN_OUV);
-        if (has_parens)
-        {
-            advance();
-        } // consume (
-
+        // A condition is an expression, parentheses included. Treating a leading
+        // '(' as the condition's own delimiter made `si (a) >= b` stop at `(a)`
+        // and then refuse the `>=`; a grouped expression already accepts
+        // `si (a) {`, with the same tree.
         ExprPtr condition = parse_expression();
-
-        if (has_parens)
-        {
-            expect(TokenType::PAREN_FERM, "attendu ')' après la condition");
-        }
 
         StmtPtr then_branch = parse_block();
 
@@ -584,19 +576,8 @@ namespace lumiere
     {
         advance(); // consume tant que
 
-        // optional parentheses around condition
-        bool has_parens = check(TokenType::PAREN_OUV);
-        if (has_parens)
-        {
-            advance(); // consume (
-        }
-
+        // As for `si`: the condition is an ordinary expression.
         ExprPtr condition = parse_expression();
-
-        if (has_parens)
-        {
-            expect(TokenType::PAREN_FERM, "attendu ')' après la condition");
-        }
 
         StmtPtr body = parse_block();
 
@@ -927,7 +908,7 @@ namespace lumiere
 
         do
         {
-            Argument arg;
+            Argument arg{"", peek(), nullptr};
 
             // check for named argument — name: value
             if (can_appear_as_member_name(peek().type) &&
@@ -1330,25 +1311,42 @@ namespace lumiere
             return std::make_unique<ListExpr>(std::move(bracket), std::move(elements));
         }
 
-        // ── Dictionary literal — {clé: valeur}
+        // ── Dictionary literal — {clé: valeur} — or set literal — {élément, ...}
+        // The first entry decides: a ':' after it means a dictionary. An empty
+        // '{}' is the empty dictionary; the empty set is written [].en_ensemble().
         if (match({TokenType::ACCOLADE_OUV}))
         {
             Token brace = previous();
-            std::vector<DictionaryEntryExpr> entries;
 
-            if (!check(TokenType::ACCOLADE_FERM))
+            if (match({TokenType::ACCOLADE_FERM}))
             {
-                do
+                return std::make_unique<DictionaryExpr>(std::move(brace), std::vector<DictionaryEntryExpr>{});
+            }
+
+            ExprPtr first = parse_expression();
+
+            if (match({TokenType::DEUX_POINTS}))
+            {
+                std::vector<DictionaryEntryExpr> entries;
+                entries.push_back(DictionaryEntryExpr{std::move(first), parse_expression()});
+                while (match({TokenType::VIRGULE}))
                 {
                     ExprPtr key = parse_expression();
                     expect(TokenType::DEUX_POINTS, "attendu ':' après la clé du dictionnaire");
-                    ExprPtr value = parse_expression();
-                    entries.push_back(DictionaryEntryExpr{std::move(key), std::move(value)});
-                } while (match({TokenType::VIRGULE}));
+                    entries.push_back(DictionaryEntryExpr{std::move(key), parse_expression()});
+                }
+                expect(TokenType::ACCOLADE_FERM, "attendu '}' après le dictionnaire");
+                return std::make_unique<DictionaryExpr>(std::move(brace), std::move(entries));
             }
 
-            expect(TokenType::ACCOLADE_FERM, "attendu '}' après le dictionnaire");
-            return std::make_unique<DictionaryExpr>(std::move(brace), std::move(entries));
+            ExprList elements;
+            elements.push_back(std::move(first));
+            while (match({TokenType::VIRGULE}))
+            {
+                elements.push_back(parse_expression());
+            }
+            expect(TokenType::ACCOLADE_FERM, "attendu '}' après l'ensemble");
+            return std::make_unique<SetExpr>(std::move(brace), std::move(elements));
         }
 
         // ── Grouped expression — (expr)

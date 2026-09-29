@@ -1,0 +1,93 @@
+// Un script d'exploitation : produire le journal d'un service, puis l'analyser
+// ligne par ligne -- découper, convertir, compter, agréger par clé. C'est ce
+// qu'un programme ordinaire fait de ses données, et aucune de ces opérations
+// n'est là parce qu'un chemin de l'interpréteur la rendrait rapide.
+
+// Le générateur congruentiel classique de rand(). Ses bits de poids faible
+// alternent, donc on tire dans les bits 16 à 30, comme le fait rand().
+classe Hasard {
+    etat: Entier
+
+    fonction suivant(borne: Entier) -> Entier {
+        ici.etat = (ici.etat * 1103515245 + 12345) % 2147483648
+        retourne ici.etat / 65536 % borne
+    }
+}
+
+classe Statistique {
+    appels: Entier
+    duree_totale: Entier
+    duree_max: Entier
+
+    fonction enregistrer(duree: Entier) {
+        ici.appels = ici.appels + 1
+        ici.duree_totale = ici.duree_totale + duree
+        si duree > ici.duree_max {
+            ici.duree_max = duree
+        }
+    }
+}
+
+fonction produire(nombre: Entier, hasard: Hasard) -> Liste[Texte] {
+    soit niveaux = ["INFO", "INFO", "INFO", "INFO", "WARN", "ERREUR"]
+    soit methodes = ["GET", "GET", "GET", "POST", "PUT", "DELETE"]
+    soit chemins = ["/api/commandes", "/api/clients", "/api/produits", "/sante",
+                    "/api/factures", "/connexion", "/api/stocks"]
+    soit statuts = [200, 200, 200, 200, 201, 204, 304, 400, 404, 500]
+    soit lignes: Liste[Texte] = []
+    soit index = 0
+    tant que index < nombre {
+        soit seconde = index % 86400
+        soit ligne = "2026-09-23T" + seconde / 3600 + ":" + seconde / 60 % 60 + ":" + seconde % 60
+        ligne = ligne + " " + niveaux[hasard.suivant(6)] + " " + methodes[hasard.suivant(6)]
+        ligne = ligne + " " + chemins[hasard.suivant(7)] + " " + statuts[hasard.suivant(10)]
+        ligne = ligne + " " + (3 + hasard.suivant(250)) + " utilisateur" + hasard.suivant(2000)
+        lignes.ajouter(ligne)
+        index = index + 1
+    }
+    retourne lignes
+}
+
+fonction analyser(lignes: Liste[Texte]) {
+    soit par_niveau: Dictionnaire[Texte, Entier] = {}
+    soit par_chemin: Dictionnaire[Texte, Statistique] = {}
+    soit utilisateurs = [].en_ensemble()
+    soit erreurs_serveur = 0
+
+    pour chaque ligne dans lignes {
+        soit champs = ligne.separer(" ")
+        soit niveau = champs[1]
+        si par_niveau.contient(niveau) {
+            par_niveau[niveau] = par_niveau[niveau] + 1
+        } sinon {
+            par_niveau[niveau] = 1
+        }
+
+        soit chemin = champs[3]
+        si non par_chemin.contient(chemin) {
+            par_chemin[chemin] = Statistique(appels: 0, duree_totale: 0, duree_max: 0)
+        }
+        par_chemin[chemin].enregistrer(champs[5] en Entier)
+
+        utilisateurs.ajouter(champs[6])
+        soit statut = champs[4] en Entier
+        si statut >= 500 {
+            erreurs_serveur = erreurs_serveur + 1
+        }
+    }
+
+    pour chaque niveau dans par_niveau {
+        afficher(niveau + " " + par_niveau[niveau])
+    }
+    pour chaque chemin dans par_chemin {
+        soit statistique = par_chemin[chemin]
+        afficher(chemin + " " + statistique.appels + " " + statistique.duree_totale / statistique.appels
+                 + " " + statistique.duree_max)
+    }
+    afficher("utilisateurs " + utilisateurs.taille())
+    afficher("erreurs " + erreurs_serveur)
+}
+
+fonction principal() {
+    analyser(produire(40000, Hasard(etat: 42)))
+}

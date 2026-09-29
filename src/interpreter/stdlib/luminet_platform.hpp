@@ -56,6 +56,16 @@ SocketSize platform_socket_recvfrom(SocketHandle handle,
                                     sockaddr *addr,
                                     socklen_t *addrlen);
 bool platform_socket_set_timeout(SocketHandle handle, int64_t timeout_ms);
+// Connects handle to addr, bounded by timeout_ms: unlike SO_RCVTIMEO/SO_SNDTIMEO
+// (which platform_socket_set_timeout sets and which do not bound connect()),
+// this drives the handshake itself through a non-blocking connect + poll/select,
+// leaving the socket back in blocking mode before returning either way. On
+// failure or timeout it returns false with the OS error state (errno /
+// WSAGetLastError) set so socket_last_error_message() reports the right cause.
+bool platform_socket_connect_with_timeout(SocketHandle handle,
+                                          const sockaddr *addr,
+                                          socklen_t addrlen,
+                                          int64_t timeout_ms);
 void platform_socket_enable_reuse_address(SocketHandle handle);
 void platform_socket_enable_nosigpipe(SocketHandle handle);
 bool platform_socket_enable_broadcast(SocketHandle handle);

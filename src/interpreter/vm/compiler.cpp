@@ -6,10 +6,12 @@
 #include "lumiere/parser/parser.hpp"
 #include "lumiere/interpreter/stdlib/modules.hpp"
 #include "lumiere/source_file.hpp"
+#include "lumiere/interpreter/runtime/nominal_type.hpp"
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <unordered_map>
@@ -23,6 +25,8 @@ namespace
 struct LinkedUnit
 {
     std::unordered_map<std::string, std::size_t> exports;
+    std::unordered_map<std::string, std::size_t> type_value_exports;
+    TypeAliasTable type_exports;
     std::vector<std::size_t> initializers;
 };
 
@@ -150,6 +154,13 @@ void collect_imports_from_expr(Expr &expr, std::vector<CollectedImport> &imports
         collect_imports_from_expr(*binary->left, imports);
         collect_imports_from_expr(*binary->right, imports);
     }
+    else if (auto *set = dynamic_cast<SetExpr *>(&expr))
+    {
+        for (ExprPtr &element : set->elements)
+        {
+            collect_imports_from_expr(*element, imports);
+        }
+    }
     else if (auto *dictionary = dynamic_cast<DictionaryExpr *>(&expr))
     {
         for (DictionaryEntryExpr &entry : dictionary->entries)
@@ -256,6 +267,7 @@ LirOperand remap_operand(const LirOperand operand,
                          const std::vector<std::size_t> &globals,
                          const std::vector<std::size_t> &functions,
                          const std::vector<std::size_t> &types,
+                         const std::vector<std::size_t> &annotations,
                          const std::vector<std::size_t> &members,
                          const std::vector<std::size_t> &classes,
                          const std::vector<std::size_t> &interfaces,
@@ -268,6 +280,7 @@ LirOperand remap_operand(const LirOperand operand,
     case LirOperandKind::IR_OPERAND_GLOBAL: return LirOperand::global(globals.at(operand.index));
     case LirOperandKind::IR_OPERAND_FUNCTION: return LirOperand::function(functions.at(operand.index));
     case LirOperandKind::IR_OPERAND_TYPE: return LirOperand::type(types.at(operand.index));
+    case LirOperandKind::IR_OPERAND_ANNOTATION: return LirOperand::annotation(annotations.at(operand.index));
     case LirOperandKind::IR_OPERAND_MEMBER: return LirOperand::member(members.at(operand.index));
     case LirOperandKind::IR_OPERAND_CLASS: return LirOperand::klass(classes.at(operand.index));
     case LirOperandKind::IR_OPERAND_INTERFACE: return LirOperand::interface(interfaces.at(operand.index));
@@ -311,6 +324,12 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
     for (const LirType &type : source.types)
     {
         types.push_back(target.add_type(type.name));
+    }
+    // An annotation points into the type table, so it is remapped after types.
+    std::vector<std::size_t> annotations;
+    for (const LirAnnotation &annotation : source.annotations)
+    {
+        annotations.push_back(target.add_annotation(types.at(annotation.type_index), annotation.context));
     }
     std::vector<std::size_t> members;
     for (const LirMember &member : source.members)
@@ -364,7 +383,7 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
             method.function_index = functions.at(method.function_index);
             for (LirOperand &capture : method.capture_sources)
             {
-                capture = remap_operand(capture, constants, globals, functions, types, members, classes, interfaces,
+                capture = remap_operand(capture, constants, globals, functions, types, annotations, members, classes, interfaces,
                                         argument_names, namespaces);
             }
         }
@@ -384,6 +403,10 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
     for (const LirFunction &source_function : source.functions)
     {
         LirFunction &function = target.append_function(prefix + source_function.name);
+        // Blocks own their terminators through a unique_ptr, so a function
+        // cannot simply be copied: every plain field is listed here by hand,
+        // and a new one added to LirFunction has to be added here too or it
+        // silently arrives empty in the linked module.
         function.params = source_function.params;
         function.return_type = source_function.return_type;
         function.source_path = source_function.source_path;
@@ -391,13 +414,14 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
         function.locals = source_function.locals;
         function.source_arity = source_function.source_arity;
         function.optional_params = source_function.optional_params;
+        function.parameter_names = source_function.parameter_names;
         function.temps = source_function.temps;
         function.entry_block = source_function.entry_block;
         for (const LirCapture &capture : source_function.captures)
         {
             function.captures.push_back({capture.index,
                                          capture.name,
-                                         remap_operand(capture.source, constants, globals, functions, types,
+                                         remap_operand(capture.source, constants, globals, functions, types, annotations,
                                                        members, classes, interfaces, argument_names, namespaces)});
         }
         for (const LirBlock &source_block : source_function.blocks)
@@ -408,19 +432,21 @@ MergeResult merge_module(LirModule &target, const LirModule &source, const std::
                 std::vector<LirOperand> operands;
                 for (const LirOperand operand : source_instruction.operands)
                 {
-                    operands.push_back(remap_operand(operand, constants, globals, functions, types, members, classes,
+                    operands.push_back(remap_operand(operand, constants, globals, functions, types, annotations, members, classes,
                                                      interfaces, argument_names, namespaces));
                 }
                 block.instructions.push_back(LirInstruction::make(
                     source_instruction.opcode,
-                    remap_operand(source_instruction.destination, constants, globals, functions, types,
+                    remap_operand(source_instruction.destination, constants, globals, functions, types, annotations,
                                   members, classes, interfaces, argument_names, namespaces),
-                    std::move(operands), source_instruction.source));
+                    std::move(operands),
+                    source_instruction.source,
+                    source_instruction.argument_sources));
             }
             std::vector<LirOperand> term_operands;
             for (const LirOperand operand : source_block.terminator->operands)
             {
-                term_operands.push_back(remap_operand(operand, constants, globals, functions, types, members, classes,
+                term_operands.push_back(remap_operand(operand, constants, globals, functions, types, annotations, members, classes,
                                                       interfaces, argument_names, namespaces));
             }
             block.terminator = std::make_unique<LirTerminator>(LirTerminator{
@@ -481,7 +507,11 @@ std::optional<LinkedUnit> link_builtin(LinkContext &context, const std::string &
             LirOpcode::IR_OP_STORE_GLOBAL, LirOperand::temp(0),
             {LirOperand::global(global), value}));
         result.exports[name] = global;
+        if (module.public_type_values.contains(name))
+            result.type_value_exports[name] = global;
     }
+    for (const std::string &name : module.public_type_aliases)
+        result.type_exports.insert_or_assign(name, module.type_aliases.at(name));
     block.terminator = std::make_unique<LirTerminator>(LirTerminator::return_nil());
     result.initializers.push_back(initializer_index);
     context.loaded.emplace(key, result);
@@ -540,12 +570,38 @@ LinkedUnit link_unit(LinkContext &context,
     }
 
     ResolvedVmImports resolved_imports;
+    TypeAliasTable type_aliases;
     for (const ImportResolution &resolution : imports)
     {
         ResolvedVmImport resolved;
+        resolved.export_types = resolution.unit.type_exports;
+        const ImportStmt &import = *resolution.statement;
+        if (resolution.top_level)
+        {
+            if (!import.imported_members.empty())
+            {
+                for (const auto &member : import.imported_members)
+                {
+                    const auto type = resolution.unit.type_exports.find(member.name.lexeme);
+                    if (type != resolution.unit.type_exports.end())
+                        type_aliases.insert_or_assign(member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme,
+                                                      type->second);
+                }
+            }
+            else
+            {
+                const std::string alias = import.alias.lexeme.empty() ? default_alias(import.module_name.lexeme) : import.alias.lexeme;
+                for (const auto &[name, type] : resolution.unit.type_exports)
+                    type_aliases.insert_or_assign(alias + '.' + name, type);
+            }
+        }
         for (const auto &[name, global] : resolution.unit.exports)
         {
             resolved.export_symbols[name] = context.module.globals.at(global).name;
+        }
+        for (const auto &[name, global] : resolution.unit.type_value_exports)
+        {
+            resolved.export_type_symbols[name] = context.module.globals.at(global).name;
         }
         for (const std::size_t initializer : resolution.unit.initializers)
         {
@@ -556,8 +612,54 @@ LinkedUnit link_unit(LinkContext &context,
         resolved_imports.emplace(resolution.statement, std::move(resolved));
     }
     AstToLir lowerer;
-    LirModule local = lowerer.lower(program, resolved_imports);
+    LirModule local = lowerer.lower(program, resolved_imports, type_aliases);
+    for (const auto &statement : program.statements)
+    {
+        if (const auto *klass = dynamic_cast<ClassDeclStmt *>(statement.get()))
+        {
+            Token identity = klass->name;
+            identity.lexeme = nominal_type_identity(program.source_path, klass->name);
+            type_aliases.insert_or_assign(klass->name.lexeme, TypeExpr::named(identity));
+        }
+        else if (const auto *interface = dynamic_cast<InterfaceDeclStmt *>(statement.get()))
+        {
+            Token identity = interface->name;
+            identity.lexeme = nominal_type_identity(program.source_path, interface->name);
+            type_aliases.insert_or_assign(interface->name.lexeme, TypeExpr::named(identity));
+        }
+        if (const auto *alias = dynamic_cast<TypeAliasDeclStmt *>(statement.get()))
+            type_aliases.insert_or_assign(alias->name.lexeme, alias->target);
+    }
     const MergeResult merged = merge_module(context.module, local, prefix);
+
+    std::unordered_map<std::string, std::size_t> nominal_values;
+    for (const ImportResolution &resolution : imports)
+    {
+        for (const auto &[name, type] : resolution.unit.type_exports)
+        {
+            const auto value = resolution.unit.type_value_exports.find(name);
+            if (value != resolution.unit.type_value_exports.end() &&
+                type.kind == TypeExprKind::NAMED)
+                nominal_values.insert_or_assign(type.name, value->second);
+        }
+    }
+    for (const auto &statement : program.statements)
+    {
+        const Token *declaration = nullptr;
+        if (const auto *klass = dynamic_cast<ClassDeclStmt *>(statement.get()))
+            declaration = &klass->name;
+        else if (const auto *interface = dynamic_cast<InterfaceDeclStmt *>(statement.get()))
+            declaration = &interface->name;
+        else
+            continue;
+
+        const auto global = std::find_if(local.globals.begin(), local.globals.end(),
+            [&](const LirGlobal &candidate) { return candidate.name == declaration->lexeme; });
+        if (global != local.globals.end())
+            nominal_values.insert_or_assign(
+                nominal_type_identity(program.source_path, *declaration),
+                merged.globals.at(global->index));
+    }
 
     std::vector<std::size_t> own_initializers = merged.initializers;
     const bool has_top_level_import = std::any_of(imports.begin(), imports.end(), [](const ImportResolution &import) {
@@ -581,10 +683,20 @@ LinkedUnit link_unit(LinkContext &context,
             {
                 for (const ImportStmt::ImportedMember &member : import.imported_members)
                 {
+                    if (resolution.unit.type_exports.contains(member.name.lexeme) &&
+                        !resolution.unit.exports.contains(member.name.lexeme) &&
+                        !resolution.unit.type_value_exports.contains(member.name.lexeme))
+                        continue; // A type import has no runtime value to bind.
                     const auto exported = resolution.unit.exports.find(member.name.lexeme);
-                    if (exported == resolution.unit.exports.end())
+                    const auto type_value = resolution.unit.type_value_exports.find(member.name.lexeme);
+                    const std::size_t source = exported != resolution.unit.exports.end()
+                        ? exported->second
+                        : type_value != resolution.unit.type_value_exports.end()
+                            ? type_value->second
+                            : std::numeric_limits<std::size_t>::max();
+                    if (source == std::numeric_limits<std::size_t>::max())
                     {
-                        throw VmCompileError("VM: membre non exporte ou introuvable dans le module: " +
+                        throw VmCompileError("VM: membre non exporté ou introuvable dans le module: " +
                                              member.name.lexeme);
                     }
                     const std::string binding_name = member.alias.lexeme.empty() ? member.name.lexeme : member.alias.lexeme;
@@ -597,7 +709,7 @@ LinkedUnit link_unit(LinkContext &context,
                     const LirOperand value = LirOperand::temp(temp++);
                     binding.temps.push_back(value.index);
                     block.instructions.push_back(LirInstruction::make(
-                        LirOpcode::IR_OP_LOAD_GLOBAL, value, {LirOperand::global(exported->second)}));
+                        LirOpcode::IR_OP_LOAD_GLOBAL, value, {LirOperand::global(source)}));
                     block.instructions.push_back(LirInstruction::make(
                         LirOpcode::IR_OP_STORE_GLOBAL, LirOperand::temp(0),
                         {LirOperand::global(target), value}));
@@ -609,6 +721,11 @@ LinkedUnit link_unit(LinkContext &context,
                 for (const auto &[name, global] : resolution.unit.exports)
                 {
                     descriptor.members.push_back({name, global});
+                }
+                for (const auto &[name, global] : resolution.unit.type_value_exports)
+                {
+                    if (!resolution.unit.exports.contains(name))
+                        descriptor.members.push_back({name, global});
                 }
                 const std::size_t descriptor_index = context.module.namespaces.size();
                 context.module.namespaces.push_back(std::move(descriptor));
@@ -650,6 +767,25 @@ LinkedUnit link_unit(LinkContext &context,
     {
         std::string name;
         bool is_public = false;
+        if (const auto *alias = dynamic_cast<TypeAliasDeclStmt *>(statement.get()); alias && alias->is_public)
+        {
+            try
+            {
+                TypeExpr type = resolve_type_aliases(alias->target, type_aliases);
+                result.type_exports.emplace(alias->name.lexeme, type);
+                if (type.kind == TypeExprKind::NAMED)
+                {
+                    const auto value = nominal_values.find(type.name);
+                    if (value != nominal_values.end())
+                        result.type_value_exports.emplace(alias->name.lexeme, value->second);
+                }
+            }
+            catch (const std::invalid_argument &error)
+            {
+                throw VmCompileError("VM: " + std::string(error.what()));
+            }
+            continue;
+        }
         if (auto *variable = dynamic_cast<VarDeclStmt *>(statement.get()))
         {
             name = variable->name.lexeme;
@@ -664,11 +800,21 @@ LinkedUnit link_unit(LinkContext &context,
         {
             name = klass->name.lexeme;
             is_public = klass->is_public;
+            if (is_public)
+            {
+                const auto descriptor = std::find_if(local.classes.begin(), local.classes.end(),
+                    [&](const LirClassDescriptor &item) { return item.name == name; });
+                Token identity = klass->name;
+                identity.lexeme = descriptor->type_identity;
+                result.type_exports.emplace(name, TypeExpr::named(identity));
+            }
         }
         else if (auto *interface = dynamic_cast<InterfaceDeclStmt *>(statement.get()))
         {
             name = interface->name.lexeme;
             is_public = interface->is_public;
+            if (is_public)
+                result.type_exports.emplace(name, type_aliases.at(name));
         }
         if (!is_public)
         {
@@ -680,6 +826,9 @@ LinkedUnit link_unit(LinkContext &context,
         if (global != local.globals.end())
         {
             result.exports[name] = merged.globals.at(global->index);
+            if (dynamic_cast<ClassDeclStmt *>(statement.get()) != nullptr ||
+                dynamic_cast<InterfaceDeclStmt *>(statement.get()) != nullptr)
+                result.type_value_exports[name] = merged.globals.at(global->index);
         }
     }
 
@@ -723,7 +872,7 @@ ModuleBytecode VmCompiler::compile(Program &program)
     }
     if (principal == nullptr)
     {
-        throw VmCompileError("VM: aucun point d'entree 'principal' n'a ete trouve");
+        throw VmCompileError("VM: aucun point d'entrée 'principal' n'a été trouvé");
     }
     if (!principal->params.empty())
     {
@@ -744,7 +893,7 @@ ModuleBytecode VmCompiler::compile(Program &program)
     }
     if (!found)
     {
-        throw VmCompileError("VM: point d'entree bytecode introuvable");
+        throw VmCompileError("VM: point d'entrée bytecode introuvable");
     }
 
     LirToBytecode emitter;

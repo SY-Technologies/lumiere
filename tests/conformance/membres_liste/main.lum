@@ -1,0 +1,40 @@
+// Chaque membre d'une Liste, avec ses cas limites : receveur vide, indice à la
+// borne, et le contrat d'élément que la collection dérivée doit reprendre.
+fonction principal() {
+    soit vide: Liste[Entier] = []
+    afficher(vide.taille())
+    afficher(vide.vide())
+    afficher(vide.contient(1))
+    afficher("[" + vide.joindre(", ") + "]")
+
+    soit nombres: Liste[Entier] = [1, 2, 3]
+    afficher(nombres.taille())
+    afficher(nombres.vide())
+    afficher(nombres.contient(2))
+    afficher(nombres.contient(9))
+    afficher(nombres.joindre(" - "))
+
+    // ajouter rend la nouvelle taille, inserer rend la position écrite.
+    afficher(nombres.ajouter(4))
+    afficher(nombres.inserer(0, 0))
+    afficher(nombres.inserer(nombres.taille(), 9))
+    afficher(nombres.joindre(","))
+
+    afficher(nombres.retirer_a(0))
+    afficher(nombres.retirer_a(nombres.taille() - 1))
+    afficher(nombres.joindre(","))
+
+    soit doublons: Liste[Entier] = [1, 2, 2, 3]
+    soit ensemble = doublons.en_ensemble()
+    afficher(ensemble.taille())
+    afficher(ensemble.joindre(","))
+
+    soit paire: Liste[Texte] = ["a", "b"]
+    soit bloc = paire.en_liste_fixe(2)
+    afficher(bloc.joindre(""))
+    afficher(bloc.taille())
+
+    soit aucun: Liste[Texte] = []
+    afficher(aucun.en_liste_fixe(0).taille())
+    afficher(aucun.en_ensemble().vide())
+}

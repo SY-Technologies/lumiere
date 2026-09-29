@@ -1,0 +1,5 @@
+// Un membre qui n'existe pas sur un Texte.
+fonction principal() {
+    soit t = "bonjour"
+    afficher(t.membre_absent())
+}

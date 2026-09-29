@@ -1,0 +1,173 @@
+// Traiter des commandes contre un stock : valider chaque ligne, calculer le
+// montant et la remise du client, retirer du stock, facturer -- ou refuser
+// avec une raison typée. C'est la forme d'un service métier : des objets à
+// plusieurs champs, des recherches par clé, des échecs qui sont des valeurs,
+// et un programme qui passe son temps dans sa propre logique plutôt que dans
+// une boucle d'arithmétique.
+
+// Le générateur congruentiel classique de rand(). Ses bits de poids faible
+// alternent, donc on tire dans les bits 16 à 30, comme le fait rand().
+classe Hasard {
+    etat: Entier
+
+    fonction suivant(borne: Entier) -> Entier {
+        ici.etat = (ici.etat * 1103515245 + 12345) % 2147483648
+        retourne ici.etat / 65536 % borne
+    }
+}
+
+classe Produit {
+    reference: Texte
+    prix: Entier
+    stock: Entier
+}
+
+classe Ligne {
+    reference: Texte
+    quantite: Entier
+}
+
+classe Client {
+    nom: Texte
+    categorie: Texte
+}
+
+classe Commande {
+    numero: Entier
+    client: Client
+    lignes: Liste[Ligne]
+}
+
+classe ErreurProduitInconnu réalise Erreur {
+    reference: Texte
+}
+
+classe ErreurStockInsuffisant réalise Erreur {
+    reference: Texte
+    manque: Entier
+}
+
+classe ErreurCommandeVide réalise Erreur {
+    numero: Entier
+}
+
+// Les prix sont en centimes, et la remise arrondit à l'entier inférieur.
+fonction remise(client: Client, montant: Entier) -> Entier {
+    retourne agir selon client.categorie {
+        "pro" -> montant * 15 / 100
+        "fidele" -> montant * 5 / 100
+        sinon -> 0
+    }
+}
+
+fonction traiter(commande: Commande, catalogue: Dictionnaire[Texte, Produit])
+    -> Résultat[Entier, ErreurProduitInconnu | ErreurStockInsuffisant | ErreurCommandeVide] {
+    si commande.lignes.vide() {
+        retourne Échec(ErreurCommandeVide(numero: commande.numero))
+    }
+
+    // Tout vérifier avant de rien retirer : une commande refusée ne touche pas
+    // au stock, et deux lignes du même produit se cumulent.
+    soit demande: Dictionnaire[Texte, Entier] = {}
+    pour chaque ligne dans commande.lignes {
+        si non catalogue.contient(ligne.reference) {
+            retourne Échec(ErreurProduitInconnu(reference: ligne.reference en Texte))
+        }
+        si demande.contient(ligne.reference) {
+            demande[ligne.reference] = demande[ligne.reference] + ligne.quantite
+        } sinon {
+            demande[ligne.reference] = ligne.quantite
+        }
+    }
+    pour chaque reference dans demande {
+        soit disponible = catalogue[reference].stock
+        si disponible < demande[reference] {
+            retourne Échec(ErreurStockInsuffisant(reference: reference,
+                                                  manque: demande[reference] - disponible))
+        }
+    }
+
+    soit montant = 0
+    pour chaque reference dans demande {
+        soit produit = catalogue[reference]
+        produit.stock = produit.stock - demande[reference]
+        montant = montant + produit.prix * demande[reference]
+    }
+    retourne Succès(montant - remise(commande.client, montant))
+}
+
+fonction principal() {
+    soit hasard = Hasard(etat: 2026)
+    soit catalogue: Dictionnaire[Texte, Produit] = {}
+    soit index = 0
+    tant que index < 300 {
+        soit reference = "REF-" + index
+        catalogue[reference] = Produit(reference: reference, prix: 100 + hasard.suivant(9900),
+                                       stock: 5 + hasard.suivant(20))
+        index = index + 1
+    }
+
+    soit categories = ["standard", "standard", "fidele", "pro"]
+    soit chiffre = 0
+    soit acceptees = 0
+    soit manque_total = 0
+    soit refus: Dictionnaire[Texte, Entier] = {"inconnu": 0, "stock": 0, "vide": 0}
+    soit par_categorie: Dictionnaire[Texte, Entier] = {"standard": 0, "fidele": 0, "pro": 0}
+
+    soit numero = 0
+    tant que numero < 40000 {
+        // Le réassort : tous les 500 numéros, chaque produit est réapprovisionné.
+        si numero % 500 == 0 {
+            pour chaque reference dans catalogue {
+                soit produit = catalogue[reference]
+                produit.stock = produit.stock + 9
+            }
+        }
+
+        // Une commande sur six est vide, et une référence sur cinquante et une
+        // n'existe pas au catalogue.
+        soit lignes: Liste[Ligne] = []
+        soit nombre_lignes = hasard.suivant(6)
+        soit l = 0
+        tant que l < nombre_lignes {
+            lignes.ajouter(Ligne(reference: "REF-" + hasard.suivant(306), quantite: 1 + hasard.suivant(4)))
+            l = l + 1
+        }
+        soit identifiant = hasard.suivant(500)
+        soit client = Client(nom: "client" + identifiant, categorie: categories[identifiant % 4])
+        soit commande = Commande(numero: numero, client: client, lignes: lignes)
+
+        agir selon traiter(commande, catalogue) {
+            Succès(montant) -> {
+                chiffre = chiffre + montant
+                acceptees = acceptees + 1
+                par_categorie[client.categorie] = par_categorie[client.categorie] + montant
+            }
+            Échec(e: ErreurProduitInconnu) -> {
+                refus["inconnu"] = refus["inconnu"] + 1
+            }
+            Échec(e: ErreurStockInsuffisant) -> {
+                refus["stock"] = refus["stock"] + 1
+                manque_total = manque_total + e.manque
+            }
+            Échec(e: ErreurCommandeVide) -> {
+                refus["vide"] = refus["vide"] + 1
+            }
+        }
+        numero = numero + 1
+    }
+
+    soit stock_restant = 0
+    pour chaque reference dans catalogue {
+        stock_restant = stock_restant + catalogue[reference].stock
+    }
+    afficher("acceptées " + acceptees + " pour " + chiffre)
+    pour chaque raison dans refus {
+        afficher("refus " + raison + " " + refus[raison])
+    }
+    pour chaque categorie dans par_categorie {
+        afficher(categorie + " " + par_categorie[categorie])
+    }
+    afficher("manque " + manque_total)
+    afficher("stock " + stock_restant)
+}

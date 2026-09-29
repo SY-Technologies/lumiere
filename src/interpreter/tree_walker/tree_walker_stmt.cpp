@@ -1,5 +1,7 @@
 #include "lumiere/interpreter/tree_walker/tree_walker.hpp"
 
+#include "lumiere/interpreter/runtime/cycles.hpp"
+
 namespace lumiere
 {
 
@@ -28,7 +30,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     Value value = stmt.initializer ? evaluate(*stmt.initializer) : Value::rien();
@@ -37,7 +39,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     {
         try
         {
-            m_env->define_fixe(stmt.name.lexeme, std::move(value), stmt.type.to_string());
+            m_env->define_fixe(stmt.name.lexeme, std::move(value), resolved_annotation_name(stmt.type));
         }
         catch (const RuntimeError &error)
         {
@@ -48,7 +50,7 @@ void TreeWalker::visit(VarDeclStmt &stmt)
     {
         try
         {
-            m_env->define(stmt.name.lexeme, std::move(value), stmt.type.to_string());
+            m_env->define(stmt.name.lexeme, std::move(value), resolved_annotation_name(stmt.type));
         }
         catch (const RuntimeError &error)
         {
@@ -61,12 +63,12 @@ void TreeWalker::visit(FunctionDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     try
     {
-        m_env->define_fixe(stmt.name.lexeme, Value::fonction(make_declared_function(stmt, m_self, m_env)));
+        m_env->define_fixe(stmt.name.lexeme, Value::fonction(make_declared_function(stmt, m_self, m_env_owner)));
     }
     catch (const RuntimeError &error)
     {
@@ -78,10 +80,10 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
-    std::shared_ptr<LumiereClass> runtime_parent = nullptr;
+    Ref<LumiereClass> runtime_parent = nullptr;
     ClassDeclStmt *parent = nullptr;
     if (!stmt.parent.empty())
     {
@@ -108,21 +110,21 @@ void TreeWalker::visit(ClassDeclStmt &stmt)
                 FunctionDeclStmt *parent_method = find_method_decl(runtime_parent, method->name.lexeme);
                 if (method->is_remplace && parent_method == nullptr)
                 {
-                    throw_runtime_error(method->name, "remplace utilise sans methode parente correspondante: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "remplace utilise sans méthode parente correspondante: " + method->name.lexeme);
                 }
                 if (!method->is_remplace && parent_method != nullptr)
                 {
-                    throw_runtime_error(method->name, "methode parente deja definie; utilisez remplace: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "méthode parente déjà définie; utilisez remplace: " + method->name.lexeme);
                 }
                 if (method->is_remplace && parent_method != nullptr && !method_signatures_match(*parent_method, *method))
                 {
-                    throw_runtime_error(method->name, "la methode remplacee doit conserver la meme signature: " + method->name.lexeme);
+                    throw_runtime_error(method->name, "la méthode remplacee doit conserver la même signature: " + method->name.lexeme);
                 }
             }
         }
     }
 
-    std::shared_ptr<LumiereClass> runtime_class = make_runtime_class(stmt);
+    Ref<LumiereClass> runtime_class = make_runtime_class(stmt);
     validate_class_interfaces(stmt, runtime_class);
 
     try
@@ -139,7 +141,7 @@ void TreeWalker::visit(InterfaceDeclStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.name, "environnement d'execution absent");
+        throw_runtime_error(stmt.name, "environnement d'exécution absent");
     }
 
     try
@@ -154,14 +156,14 @@ void TreeWalker::visit(InterfaceDeclStmt &stmt)
 
 void TreeWalker::visit(TypeAliasDeclStmt &stmt)
 {
-    m_type_aliases.insert_or_assign(stmt.name.lexeme, stmt.target);
+    m_env->define_type_alias(stmt.name.lexeme, stmt.target);
 }
 
 void TreeWalker::visit(ImportStmt &stmt)
 {
     if (m_env == nullptr)
     {
-        throw_runtime_error(stmt.module_name, "environnement d'execution absent");
+        throw_runtime_error(stmt.module_name, "environnement d'exécution absent");
     }
 
     const std::shared_ptr<Module> module = load_module(stmt.module_name);
@@ -175,14 +177,17 @@ void TreeWalker::visit(ImportStmt &stmt)
                     imported_member.alias.lexeme.empty()
                         ? imported_member.name.lexeme
                         : imported_member.alias.lexeme;
-                m_type_aliases.insert_or_assign(
+                m_env->define_type_alias(
                     binding_name,
                     module->type_aliases.at(imported_member.name.lexeme));
+                if (const auto value = module->public_type_values.find(imported_member.name.lexeme);
+                    value != module->public_type_values.end())
+                    m_env->define_fixe(binding_name, value->second);
                 continue;
             }
             if (module->public_members.count(imported_member.name.lexeme) == 0)
             {
-                throw_runtime_error(imported_member.name, "membre non exporte ou introuvable dans le module: " + imported_member.name.lexeme);
+                throw_runtime_error(imported_member.name, "membre non exporté ou introuvable dans le module: " + imported_member.name.lexeme);
             }
 
             const auto member_it = module->members.find(imported_member.name.lexeme);
@@ -212,7 +217,7 @@ void TreeWalker::visit(ImportStmt &stmt)
                                          ? default_module_alias(stmt.module_name.lexeme)
                                          : stmt.alias.lexeme;
 
-    auto namespace_object = std::make_shared<LumiereObject>();
+    auto namespace_object = make_ref<LumiereObject>();
     namespace_object->klass = nullptr;
 
     for (const auto &public_name : module->public_members)
@@ -221,13 +226,24 @@ void TreeWalker::visit(ImportStmt &stmt)
         if (member_it != module->members.end())
         {
             namespace_object->fields[public_name] = member_it->second;
+            if (member_it->second.is_classe() || member_it->second.is_interface())
+            {
+                Token identity = stmt.module_name;
+                identity.lexeme = member_it->second.is_classe()
+                    ? member_it->second.as_classe()->type_identity : member_it->second.as_interface()->type_identity;
+                if (!identity.lexeme.empty())
+                    m_env->define_type_alias(binding_name + '.' + public_name, TypeExpr::named(identity));
+            }
         }
     }
     for (const std::string &name : module->public_type_aliases)
     {
-        m_type_aliases.insert_or_assign(
+        m_env->define_type_alias(
             binding_name + '.' + name,
             module->type_aliases.at(name));
+        if (const auto value = module->public_type_values.find(name);
+            value != module->public_type_values.end())
+            namespace_object->fields.insert_or_assign(name, value->second);
     }
 
     try
@@ -257,10 +273,16 @@ void TreeWalker::visit(IfStmt &stmt)
 
 void TreeWalker::visit(ForStmt &stmt)
 {
-    const std::vector<Value> items = enumerate_iterable(evaluate(*stmt.iterable), stmt.variable);
+    const std::vector<Value> items = enumerate_iterable(evaluate(*stmt.iterable),
+                                                        stmt.iterable->start_token());
 
     for (const Value &item : items)
     {
+        // The same back edge the VM collects on: between two iterations nothing
+        // is part-way through an update, so the counts the collector reads are
+        // settled. Without this a loop that builds cycles grows without bound
+        // until the program ends, however short-lived each cycle is.
+        collect_cycles_if_due();
         ScopeGuard guard(m_env, m_env_owner);
         m_env->define(stmt.variable.lexeme, item);
 
@@ -283,6 +305,7 @@ void TreeWalker::visit(WhileStmt &stmt)
 {
     while (is_truthy(evaluate(*stmt.condition)))
     {
+        collect_cycles_if_due();
         try
         {
             execute(*stmt.body);

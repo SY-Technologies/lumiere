@@ -1,0 +1,7 @@
+// Une valeur qui n'a aucune conversion vers la cible nomme les deux types. Les
+// moteurs le formulaient chacun à sa manière, et l'un invoquait un texte pour
+// refuser un Entier.
+fonction principal() {
+    soit drapeau: Universel = vrai
+    afficher(drapeau en Entier)
+}

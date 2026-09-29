@@ -1,0 +1,53 @@
+importer LumiDessin
+importer Collections.{étendue}
+
+fonction executer() -> Résultat[Rien, LumiDessin.ErreurImage] {
+    soit toile = LumiDessin.canevas(600, 600)
+    toile.effacer(LumiDessin.couleur(12, 14, 36))
+
+    soit palette = [
+        LumiDessin.couleur(255, 99, 132),
+        LumiDessin.couleur(255, 159, 64),
+        LumiDessin.couleur(255, 221, 89),
+        LumiDessin.couleur(99, 222, 160),
+        LumiDessin.couleur(74, 158, 255),
+        LumiDessin.couleur(178, 102, 255)
+    ]
+
+    soit t = toile.crayon()
+    t.régler_épaisseur(1.5)
+
+    soit repetitions = 36
+    soit pas_angle = 10.0
+
+    pour chaque i dans étendue(0, repetitions, 1) {
+        t.régler_couleur(palette[i % palette.taille()])
+        pour chaque cote dans étendue(0, 4, 1) {
+            t.avancer(190.0)
+            t.tourner_droite(90.0)
+        }
+        t.tourner_gauche(pas_angle)
+    }
+
+    soit t2 = toile.crayon()
+    t2.régler_épaisseur(2.0)
+    t2.régler_couleur(LumiDessin.couleur(255, 255, 255, 180))
+    pour chaque i dans étendue(0, 24, 1) {
+        pour chaque cote dans étendue(0, 6, 1) {
+            t2.avancer(60.0)
+            t2.tourner_droite(60.0)
+        }
+        t2.tourner_gauche(15.0)
+    }
+
+    toile.enregistrer_png("gallery/turtle_rosette.png") ou propager
+
+    retourne Succès(rien)
+}
+
+fonction principal() {
+    agir selon executer() {
+        Succès(_) -> afficher("rosette enregistrée")
+        Échec(e) -> afficher("erreur: " + e.cause)
+    }
+}

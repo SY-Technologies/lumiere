@@ -249,6 +249,11 @@ SemanticTypeRef TypeInterner::intern(const SemanticTypeKind kind,
     return type;
 }
 
+void TypeInterner::adopt(const TypeInterner &other)
+{
+    m_types = other.m_types;
+}
+
 bool same_type(const SemanticTypeRef &left, const SemanticTypeRef &right) noexcept
 {
     return left == right;

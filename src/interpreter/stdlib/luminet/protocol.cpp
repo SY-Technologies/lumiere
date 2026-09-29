@@ -47,7 +47,7 @@ std::vector<std::pair<std::string, std::string>> expect_header_entries(IRuntime 
     }
 
     std::vector<std::pair<std::string, std::string>> headers;
-    for (const auto &entry : value.as_dictionnaire()->entries)
+    for (const auto &entry : value.as_dictionnaire()->items())
     {
         if (!entry.first.is_texte() || !entry.second.is_texte())
         {
@@ -62,19 +62,20 @@ Value make_text_dictionary_value(IRuntime &runtime,
                                  const std::vector<std::pair<std::string, std::string>> &entries,
                                  const RuntimeSite &site)
 {
-    auto dict = std::make_shared<DictData>();
+    auto dict = make_ref<DictData>();
     for (const auto &entry : entries)
     {
-        dict->entries.push_back({Value::texte(entry.first), Value::texte(entry.second)});
+        // A repeated header name must not create a second entry under the same key.
+        dict->set(Value::texte(entry.first), Value::texte(entry.second));
     }
     Value result = Value::dictionnaire(std::move(dict));
     runtime.annotate_value(result, "Dictionnaire[Texte, Texte]", site);
     return result;
 }
 
-std::shared_ptr<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes)
+Ref<ListeData> bytes_to_list(const std::vector<unsigned char> &bytes)
 {
-    auto result = std::make_shared<ListeData>();
+    auto result = make_ref<ListeData>();
     result->elements.reserve(bytes.size());
     for (unsigned char byte : bytes)
     {
@@ -182,12 +183,20 @@ Value make_udp_packet_bytes_value(IRuntime &runtime,
     return Value::objet(std::move(object));
 }
 
-void bind_object_method(const std::shared_ptr<LumiereObject> &object,
+void bind_object_method(const Ref<LumiereObject> &object,
                         const NativeFunctionFactory &make_native_function,
                         const std::string &name,
                         LumiereFunction::NativeHandler handler)
 {
-    object->fields[name] = Value::fonction(make_native_function(std::move(handler)));
+    auto function = make_native_function(std::move(handler));
+    // A handler bound here reaches the instance, and the native state hanging
+    // off it, through raw pointers -- never through a Ref of its own, which the
+    // collector could not see inside the std::function. This single declared
+    // reference is what keeps both alive, and it is an edge tracing follows and
+    // a collection can break. Declaring it once here keeps the detail out of
+    // the forty-odd binding sites.
+    function->native_captures.push_back(object);
+    object->fields[name] = Value::fonction(std::move(function));
 }
 
 std::string header_value_or_empty(const std::vector<std::pair<std::string, std::string>> &headers,
@@ -644,6 +653,13 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         }
     }
 
+    // A header has already been read at this point, so the peer has committed
+    // to sending a frame: any further truncation here (extended length, the
+    // masking key, the payload itself) is a peer that started a frame and
+    // then vanished mid-way through it, not a clean close at a frame
+    // boundary. Reporting that as std::nullopt -- this function's "no more
+    // frames, channel ended gracefully" signal -- would silently discard a
+    // genuine protocol violation as if nothing had gone wrong.
     const bool masked = (header[1] & 0x80) != 0;
     uint64_t payload_length = header[1] & 0x7f;
     if (payload_length == 126)
@@ -651,7 +667,8 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
         unsigned char ext[2];
         if (!recv_exact_bytes(fd, pending_bytes, ext, sizeof(ext)))
         {
-            return std::nullopt;
+            throw NetworkFailure(
+                context + " a reçu une trame websocket incomplète");
         }
         payload_length = (static_cast<uint64_t>(ext[0]) << 8) | ext[1];
     }
@@ -665,13 +682,15 @@ std::optional<WebSocketFrame> recv_websocket_frame(IRuntime &runtime,
     std::array<unsigned char, 4> masking_key{};
     if (masked && !recv_exact_bytes(fd, pending_bytes, masking_key.data(), masking_key.size()))
     {
-        return std::nullopt;
+        throw NetworkFailure(
+            context + " a reçu une trame websocket incomplète");
     }
 
     std::vector<unsigned char> payload(payload_length);
     if (payload_length > 0 && !recv_exact_bytes(fd, pending_bytes, payload.data(), payload.size()))
     {
-        return std::nullopt;
+        throw NetworkFailure(
+            context + " a reçu une trame websocket incomplète");
     }
     if (masked)
     {

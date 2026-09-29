@@ -1,0 +1,6 @@
+// Hors d'une boucle, ceci ne produisait aucun diagnostic : le tree-walker
+// lançait un signal que personne n'attrapait et le processus se terminait sur
+// « terminate called after throwing an instance of 'lumiere::BreakSignal' ».
+fonction principal() {
+    arrêter
+}

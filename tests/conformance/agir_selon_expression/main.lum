@@ -1,0 +1,21 @@
+// 'agir selon' est une expression autant qu'une instruction. Les positions
+// réunies ici sont celles dont un diagnostic nomme le premier token : ce qui
+// est itéré, un indice, et l'opérande d'une opération servant d'indice.
+fonction principal() {
+    soit n = 1
+
+    pour chaque x dans agir selon n { 1 -> [1, 2]  sinon -> [3] } {
+        afficher(x)
+    }
+
+    soit noms: Dictionnaire[Entier, Texte] = {0: "zéro", 1: "un"}
+    afficher(noms[agir selon n { 1 -> 1  sinon -> 0 }])
+
+    soit valeurs: Liste[Entier] = [10, 20, 30]
+    afficher(valeurs[(agir selon n { 1 -> 0  sinon -> 1 }) + 1])
+
+    valeurs[agir selon n { 1 -> 2  sinon -> 0 }] = 99
+    afficher(valeurs.joindre(","))
+
+    afficher(valeurs.contient(agir selon n { 1 -> 99  sinon -> 0 }))
+}
