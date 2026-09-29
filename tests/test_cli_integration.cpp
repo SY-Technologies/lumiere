@@ -32,6 +32,26 @@ std::string read_file(const std::filesystem::path &path)
     return buffer.str();
 }
 
+// A path embedded in Lumière *source* text (not a shell command line --
+// that is shell_quote's job) has to escape the Lumière lexer's own
+// \n/\t/\\/\" syntax: on Windows, path.string() contains raw
+// backslashes ("C:\Users\...") that the lexer otherwise tries to parse
+// as escape sequences (producing "échappement invalide" errors).
+std::string lumiere_string_literal_text(const std::string &raw)
+{
+    std::string escaped;
+    escaped.reserve(raw.size());
+    for (const char ch : raw)
+    {
+        if (ch == '\\' || ch == '"')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
+}
+
 std::string shell_quote(const std::string &text)
 {
 #ifdef _WIN32
@@ -2455,8 +2475,8 @@ TEST(CliIntegration, ExecutesBuiltinModulesEndToEnd)
         "  }\n"
         "}\n"
         "fonction principal() {\n"
-        "  afficher(valeur_fichier(Fichier.existe(\"" + note_file.string() + "\")))\n"
-        "  afficher(valeur_fichier(Fichier.lire_texte(\"" + note_file.string() + "\")))\n"
+        "  afficher(valeur_fichier(Fichier.existe(\"" + lumiere_string_literal_text(note_file.string()) + "\")))\n"
+        "  afficher(valeur_fichier(Fichier.lire_texte(\"" + lumiere_string_literal_text(note_file.string()) + "\")))\n"
         "}\n");
 
     const CommandResult result = run_cli("--tree-walker --run " + shell_quote((root / "main.lum").string()), root);
@@ -2485,7 +2505,7 @@ TEST(CliIntegration, BothBackendsPreserveNativeNominalTypeIdentity)
         "  afficher(instant est T.Instant)\n"
         "  afficher(intervalle est Intervalle)\n"
         "  afficher(Instant() est Moment)\n"
-        "  soit lecture = lire_texte(\"" + missing.string() + "\")\n"
+        "  soit lecture = lire_texte(\"" + lumiere_string_literal_text(missing.string()) + "\")\n"
         "  agir selon lecture {\n"
         "    Succès(_) -> afficher(faux)\n"
         "    Échec(erreur) -> afficher(erreur est ErreurLecture)\n"
