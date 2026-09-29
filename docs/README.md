@@ -13,6 +13,7 @@ These notes are intentionally small. Each file focuses on one area so that the d
 - [Language Reference](../lumiere_spec.md)
 - [Command-Line Reference](./cli.md)
 - [Tooling Architecture](./tooling-architecture.md)
+- [Tooling v2 Specification](./tooling-v2-spec.md)
 - [Release Scaffolding](./release-scaffolding.md)
 - [Architecture Overview](./architecture-overview.md)
 - [Stdlib / Backend Architecture](./stdlib-backend-architecture.md)
