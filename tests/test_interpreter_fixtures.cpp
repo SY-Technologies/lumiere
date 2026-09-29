@@ -6481,8 +6481,8 @@ TEST(InterpreterStandardIO, SupportsOptionalReadPrompts)
     const auto [output, completed] = execute_program_with_input(
         "fonction principal() {\n"
         "  soit champ = \"Nom\"\n"
-        "  soit nom = lire(champ + \": \")\n"
-        "  soit age = lire_entier(\"\")\n"
+        "  soit nom = lire(champ + \": \") ou propager\n"
+        "  soit age = lire_entier(\"\") ou propager\n"
         "  afficher(nom, age)\n"
         "}\n",
         "Ada\n36\n");
