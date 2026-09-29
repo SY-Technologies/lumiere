@@ -81,6 +81,27 @@ TEST(Numeric, DecimalTextReadsBackAsTheSameValue)
     }
 }
 
+// parse_decimal's contract (see its docstring): no leading whitespace, no
+// locale dependence, no C hex-float syntax, subnormals accepted rather than
+// refused. Platform-independent so it pins the strtod_l fallback used where
+// Apple's libc++ has no floating-point std::from_chars just as much as the
+// from_chars path used everywhere else.
+TEST(Numeric, ParseDecimalRejectsWhatFromCharsRejects)
+{
+    EXPECT_FALSE(parse_decimal(" 1.5").has_value());
+    EXPECT_FALSE(parse_decimal("\t1.5").has_value());
+    EXPECT_FALSE(parse_decimal("0x1p0").has_value());
+    EXPECT_FALSE(parse_decimal("-0x1p0").has_value());
+    EXPECT_FALSE(parse_decimal("").has_value());
+    EXPECT_FALSE(parse_decimal("1.5 ").has_value());
+    EXPECT_FALSE(parse_decimal("abc").has_value());
+
+    ASSERT_TRUE(parse_decimal("5e-324").has_value());
+    EXPECT_EQ(*parse_decimal("5e-324"), 5e-324);
+    ASSERT_TRUE(parse_decimal("-1.5").has_value());
+    EXPECT_EQ(*parse_decimal("-1.5"), -1.5);
+}
+
 TEST(Numeric, DecimalTextKeeps0Point1Plus0Point2Honest)
 {
     // The whole point: this is not 0.3, and the runtime no longer says it is.

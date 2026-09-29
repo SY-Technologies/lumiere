@@ -5,11 +5,17 @@
 #include <limits>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <system_error>
+
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 
 namespace lumiere::numeric
 {
@@ -214,9 +220,56 @@ inline std::optional<double> parse_decimal(const std::string &text)
     }
 
     double value = 0.0;
+#if defined(__APPLE__)
+    // Apple's libc++.dylib does not ship the floating-point std::from_chars
+    // overload until macOS 26; requiring that as this project's minimum
+    // supported macOS version is not reasonable, so this platform falls
+    // back to strtod_l instead. It is made to match from_chars(general) on
+    // every point that motivated choosing from_chars over stod above:
+    //   - locale: strtod_l is passed the "C" locale explicitly, so the
+    //     decimal point is always '.', never whatever the environment uses.
+    //   - leading whitespace: strtod_l skips it silently, from_chars does
+    //     not, so it is rejected by hand before strtod_l ever sees it.
+    //   - hex floats ("0x1p0"): strtod_l accepts C's hex-float syntax,
+    //     chars_format::general does not, so it is rejected by hand too.
+    //   - exceptions: strtod_l signals failure through its end pointer,
+    //     the same as from_chars, and never throws.
+    // Overflowing to +/-HUGE_VAL is caught by the isfinite check below,
+    // the same way it already catches from_chars producing an infinity --
+    // HUGE_VAL is a real infinity on this platform, so no separate errno
+    // check is needed, which sidesteps the fact that whether strtod sets
+    // ERANGE for an in-range subnormal such as 5e-324 is implementation
+    // defined and must not cause that value to be rejected.
+    if (body.empty() || std::isspace(static_cast<unsigned char>(body.front())))
+    {
+        return std::nullopt;
+    }
+    std::string_view magnitude = body;
+    if (magnitude.front() == '-')
+    {
+        magnitude.remove_prefix(1);
+    }
+    if (magnitude.size() >= 2 && magnitude[0] == '0' && (magnitude[1] == 'x' || magnitude[1] == 'X'))
+    {
+        return std::nullopt;
+    }
+
+    static const locale_t c_locale = ::newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(0));
+    char *end = nullptr;
+    value = ::strtod_l(body.data(), &end, c_locale);
+    if (end != body.data() + body.size())
+    {
+        return std::nullopt;
+    }
+#else
     const auto [end, failure] =
         std::from_chars(body.data(), body.data() + body.size(), value, std::chars_format::general);
-    if (failure != std::errc{} || end != body.data() + body.size() || !std::isfinite(value))
+    if (failure != std::errc{} || end != body.data() + body.size())
+    {
+        return std::nullopt;
+    }
+#endif
+    if (!std::isfinite(value))
     {
         return std::nullopt;
     }
