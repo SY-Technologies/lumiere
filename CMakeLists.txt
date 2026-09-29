@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.23)
 
+# Must be set before project(): floating-point std::from_chars/std::to_chars
+# (used for Decimal parsing, include/lumiere/interpreter/runtime/numeric.hpp)
+# only exist in Apple's libc++.dylib from macOS 13.3 onward and are gated
+# behind an availability check tied to the deployment target. Without this,
+# the effective minimum is whatever a given runner/toolchain defaults to --
+# which differs enough between GitHub's Intel and Apple Silicon macOS
+# runners that the exact same source built fine on one and failed to
+# compile on the other.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
 project(LUMIERE VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
