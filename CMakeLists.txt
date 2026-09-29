@@ -273,6 +273,22 @@ target_link_libraries(lumiere_cli PRIVATE LUMIERE::lumiere)
 target_compile_definitions(lumiere_cli PRIVATE LUMIERE_VERSION="${PROJECT_VERSION}")
 
 # -----------------------------
+# Bundled time zone database (third_party/zoneinfo/README.md)
+# -----------------------------
+#
+# Temps resolves named zones (Fuseau("Europe/Paris"), ...) against a
+# compiled IANA tzdata tree it finds next to the running executable --
+# Windows has no system tzdata to fall back to the way Linux/macOS do.
+# Copied rather than installed-only so a build-tree run (tests, `cmake
+# --build . && ./lumiere ...`) also finds it, not just an installed one.
+set(LUMIERE_ZONEINFO_SOURCE_DIR "${PROJECT_SOURCE_DIR}/third_party/zoneinfo")
+add_custom_command(TARGET lumiere_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${LUMIERE_ZONEINFO_SOURCE_DIR}" "$<TARGET_FILE_DIR:lumiere_cli>/zoneinfo"
+    COMMENT "Copying bundled zoneinfo next to lumiere_cli"
+)
+
+# -----------------------------
 # Install + package export
 # -----------------------------
 
@@ -284,6 +300,8 @@ install(TARGETS lumiere lumiere_cli
 )
 
 install(DIRECTORY include/lumiere DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(DIRECTORY "${LUMIERE_ZONEINFO_SOURCE_DIR}/" DESTINATION "${CMAKE_INSTALL_BINDIR}/zoneinfo")
 
 install(EXPORT LUMIERETargets
     FILE      LUMIERETargets.cmake
@@ -379,6 +397,14 @@ if(BUILD_TESTING)
         )
 
         add_dependencies(lumiere_unit_tests lumiere_cli)
+
+        # Interpreter fixture tests exercise Temps in-process (not just
+        # through the CLI), so the unit test binary needs its own copy too.
+        add_custom_command(TARGET lumiere_unit_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${LUMIERE_ZONEINFO_SOURCE_DIR}" "$<TARGET_FILE_DIR:lumiere_unit_tests>/zoneinfo"
+            COMMENT "Copying bundled zoneinfo next to lumiere_unit_tests"
+        )
 
         if(MSVC)
             target_compile_options(lumiere_unit_tests PRIVATE /utf-8)
