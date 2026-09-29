@@ -1,11 +1,9 @@
 # Lumiere Docs
 
-This folder contains short design notes for two goals:
-
-1. Explain how Lumiere is built, subsystem by subsystem.
-2. Explain the C++ techniques used in those subsystems and why they were chosen.
-
-These notes are intentionally small. Each file focuses on one area so that the docs can grow with the codebase instead of turning into one large stale overview.
+This folder holds short design notes: how Lumiere is built, subsystem by
+subsystem, and the C++ techniques used to build it and why they were chosen.
+Each file sticks to one area, so the docs can grow alongside the codebase
+instead of calcifying into one big stale overview.
 
 ## Suggested reading order
 
@@ -39,11 +37,6 @@ These notes are intentionally small. Each file focuses on one area so that the d
 
 ## Doc style
 
-Each micro doc tries to answer four questions:
-
-- What problem does this subsystem solve?
-- How is it structured in this repository?
-- What are the key tradeoffs?
-- What C++ ideas are worth learning from it?
-
-When the implementation changes, these docs should change with it.
+Each doc covers what problem the subsystem solves, how it's structured here,
+the key tradeoffs, and any C++ ideas worth learning from it. Keep them in sync
+with the implementation as it changes.
