@@ -8,18 +8,18 @@ Lumière is written in French: its syntax, its standard library and every
 diagnostic it produces, down to the accents.
 
 It aims to be correct before it is fast. Semantics are specified rather than
-left to whichever engine ran the program, the tree-walker and the bytecode VM
-must agree on values, evaluation order and the exact wording of every error, and
-a change is not finished until both engines and the sanitizers pass.
+left to whichever engine ran the program: the tree-walker and the bytecode VM
+have to agree on values, evaluation order and the exact wording of every error,
+and a change isn't finished until both engines and the sanitizers pass.
 
-**Performance target: within the interpreter tier, and ahead of CPython on the
-benchmark suite.** An earlier version of this file aimed at Go. That target was
-withdrawn once it was measured: Go compiles ahead of time to native code, and no
+The performance target is within the interpreter tier, ahead of CPython on the
+benchmark suite. An earlier version of this file aimed at Go; that got dropped
+once it was actually measured. Go compiles ahead of time to native code, and no
 interpreter that dispatches one instruction at a time comes within two orders of
 magnitude of it. Reaching it would mean a native backend and a precise garbage
 collector, which is a different project. `scripts/compare-languages.py` measures
 the real gap against whatever compilers are installed, and
-[`RUNTIME_HARDENING.md`](./RUNTIME_HARDENING.md) records the measurements and the
+[`RUNTIME_HARDENING.md`](./RUNTIME_HARDENING.md) has the measurements and the
 reasoning behind the revised target.
 
 ## Docs
@@ -216,12 +216,10 @@ Multi-OS release scaffolding is documented in [`docs/release-scaffolding.md`](./
 Installation, architecture compatibility, and source-build fallbacks are
 documented in [`INSTALL.md`](./INSTALL.md).
 
-In short:
-
-- CI builds and tests on Linux, macOS, and Windows.
-- Tagged releases package artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`.
-- Platforms without matching artifacts, including Raspberry Pi `aarch64`, can build from source.
-- Release assets are published on the GitHub Releases page for this repository after pushing a `v*` tag.
+CI builds and tests on Linux, macOS, and Windows. Tagging a release packages
+artifacts for `linux-x86_64`, `macos-x86_64`, `macos-arm64`, and `windows-x86_64`
+and publishes them on this repository's GitHub Releases page. Platforms without
+a matching artifact, Raspberry Pi `aarch64` included, build from source.
 
 Quick install:
 
