@@ -78,6 +78,14 @@ void close_socket_fd(SocketHandle &fd)
 
 int getaddrinfo_with_timeout(const char *host, const char *service, const addrinfo *hints, addrinfo **result, int64_t timeout_ms)
 {
+    // Every other call site in this module reaches getaddrinfo_with_timeout
+    // only after its own initialize_socket_platform() call, so this was
+    // masked in production; a direct caller (a test, or a future one) has
+    // no such guarantee. On Windows, skipping it means ::getaddrinfo fails
+    // with WSANOTINITIALISED (10093) since WSAStartup was never called.
+    // std::call_once inside makes this a cheap no-op everywhere else.
+    initialize_socket_platform();
+
     auto request = std::make_shared<AddrInfoRequest>();
     const std::string host_copy = host != nullptr ? host : std::string();
     const bool has_host = host != nullptr;
