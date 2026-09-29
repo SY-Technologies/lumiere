@@ -1,5 +1,9 @@
 # Lumiere Tooling Architecture
 
+> This document records the implemented first-generation architecture. The
+> persistent workspace and language-service replacement is specified in
+> [Lumiere Tooling v2 Specification](./tooling-v2-spec.md).
+
 ## Goals
 
 Lumiere tooling must remain:

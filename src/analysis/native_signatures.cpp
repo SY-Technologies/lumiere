@@ -103,7 +103,7 @@ const std::vector<NativeCallableSpec> &core_native_signatures()
         },
         {
             "lire",
-            {},
+            {parameter("invite", "Texte", true)},
             generic(
                 "Résultat",
                 {named("Texte"), named("ErreurEntrée")}),
@@ -112,7 +112,7 @@ const std::vector<NativeCallableSpec> &core_native_signatures()
         },
         {
             "lire_entier",
-            {},
+            {parameter("invite", "Texte", true)},
             generic(
                 "Résultat",
                 {named("Entier"), named("ErreurEntrée")}),
