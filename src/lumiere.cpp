@@ -451,7 +451,8 @@ int run_repl()
         }
         try
         {
-            if (const auto result = interpreter.execute_incremental(*program); result.has_value())
+            if (const auto result = interpreter.execute_incremental(*program);
+                result.has_value() && !result->is_rien())
             {
                 std::cout << result->to_string() << '\n';
             }

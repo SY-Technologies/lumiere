@@ -48,9 +48,25 @@ void require_no_args(const std::vector<Value> &args, const std::string &name)
     }
 }
 
+void print_optional_prompt(const std::vector<Value> &args, const std::string &name)
+{
+    if (args.size() > 1)
+    {
+        throw VmRuntimeError("VM: " + name + " accepte au plus 1 argument");
+    }
+    if (!args.empty())
+    {
+        if (!args[0].is_texte())
+        {
+            throw VmRuntimeError("VM: " + name + " attend une invite de type Texte");
+        }
+        std::cout << args[0].as_texte();
+    }
+}
+
 Value lire(const std::vector<Value> &args)
 {
-    require_no_args(args, "lire");
+    print_optional_prompt(args, "lire");
     std::string line;
     if (!std::getline(std::cin, line))
     {
@@ -63,7 +79,7 @@ Value lire(const std::vector<Value> &args)
 
 Value lire_entier(const std::vector<Value> &args)
 {
-    require_no_args(args, "lire_entier");
+    print_optional_prompt(args, "lire_entier");
     std::string line;
     if (!std::getline(std::cin, line))
     {
